@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="yunta">
+  <!-- fondo -->
+  <circle cx="256" cy="256" r="248" fill="#1f2937"/>
+  <circle cx="256" cy="256" r="248" fill="none" stroke="#f5eeda" stroke-width="6"/>
+
+  <!-- yunta de madera -->
+  <path d="M118,168 Q256,108 394,168" fill="none" stroke="#b45309" stroke-width="24" stroke-linecap="round"/>
+  <path d="M118,168 Q256,108 394,168" fill="none" stroke="#92400e" stroke-width="6" stroke-dasharray="2 10" stroke-linecap="round"/>
+  <!-- correas que bajan al cuello de cada buey -->
+  <path d="M138,180 Q132,225 138,262" fill="none" stroke="#b45309" stroke-width="10" stroke-linecap="round"/>
+  <path d="M374,180 Q380,225 374,262" fill="none" stroke="#b45309" stroke-width="10" stroke-linecap="round"/>
+  <!-- anillo central de la yunta -->
+  <circle cx="256" cy="140" r="13" fill="none" stroke="#f5eeda" stroke-width="5"/>
+
+  <!-- buey izquierdo (perfil mirando a la derecha) -->
+  <g fill="#f5eeda">
+    <!-- cuerno -->
+    <path d="M152,206 Q118,172 128,138 Q152,148 162,178 Q166,194 172,206 Z"/>
+    <!-- oreja -->
+    <path d="M150,214 Q128,206 126,190 Q144,192 156,204 Z"/>
+    <!-- cabeza -->
+    <path d="M150,208 Q136,300 162,332 Q184,348 206,332 Q232,300 218,208 Q184,186 150,208 Z"/>
+    <!-- hocico -->
+    <ellipse cx="198" cy="328" rx="20" ry="15" fill="#e7dcc0"/>
+    <circle cx="204" cy="330" r="3.5" fill="#1f2937"/>
+    <!-- ojo -->
+    <circle cx="193" cy="242" r="6.5" fill="#1f2937"/>
+    <!-- cuello -->
+    <path d="M120,262 L138,262 L142,300 Q128,304 118,296 Z"/>
+  </g>
+
+  <!-- buey derecho (espejo) -->
+  <g fill="#f5eeda" transform="translate(512,0) scale(-1,1)">
+    <path d="M152,206 Q118,172 128,138 Q152,148 162,178 Q166,194 172,206 Z"/>
+    <path d="M150,214 Q128,206 126,190 Q144,192 156,204 Z"/>
+    <path d="M150,208 Q136,300 162,332 Q184,348 206,332 Q232,300 218,208 Q184,186 150,208 Z"/>
+    <ellipse cx="198" cy="328" rx="20" ry="15" fill="#e7dcc0"/>
+    <circle cx="204" cy="330" r="3.5" fill="#1f2937"/>
+    <circle cx="193" cy="242" r="6.5" fill="#1f2937"/>
+    <path d="M120,262 L138,262 L142,300 Q128,304 118,296 Z"/>
+  </g>
+
+  <!-- nombre -->
+  <text x="256" y="452" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif"
+        font-size="66" font-style="italic" fill="#f5eeda" letter-spacing="6">yunta</text>
+</svg>

@@ -1,5 +1,7 @@
 # yunta
 
+![logo](docs/logo.svg)
+
 Agente de código para terminal, agnóstico al proveedor del modelo.
 
 *Yunta*: pareja de bueyes unidos para trabajar juntos — tú y el agente, sin importar

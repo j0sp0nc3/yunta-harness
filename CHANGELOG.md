@@ -152,6 +152,17 @@ Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
 ---
 
+## [0.2.2] — 2026-09-06
+
+### Agregado
+- `docs/logo.svg` — identidad gráfica: dos cabezas de buey en silueta
+  (estilo grabado, inspirado en la estética de mascotas de proyectos
+  libres) unidas por una yunta de madera curva con anillo central.
+  Paleta: pizarra oscura `#1f2937`, crema `#f5eeda`, madera `#b45309`.
+- Logo integrado en la cabecera de `README.md`.
+
+---
+
 ## Convenciones para futuros cambios
 
 1. Toda modificación se registra en este archivo: qué cambió, en qué archivo y por qué.
