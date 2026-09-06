@@ -17,10 +17,12 @@ class SlidingWindow:
         if len(messages) <= self.max_messages:
             return messages
         excess = len(messages) - self.max_messages
-        cut = 0
-        for i, m in enumerate(messages[:excess + 10]):
-            if m.role == Role.USER and not m.has_tool_result():
-                cut = i + 1
-                if cut >= excess:
-                    break
-        return messages[cut:] if cut else messages[excess:]
+        # límite seguro: el índice del primer mensaje user (sin tool_results)
+        # que esté en o después del exceso; nunca deja un assistant o
+        # tool_result huérfano al inicio de lo que queda.
+        cut = excess
+        for i in range(excess, len(messages)):
+            if messages[i].role == Role.USER and not messages[i].has_tool_result():
+                cut = i
+                break
+        return messages[cut:]

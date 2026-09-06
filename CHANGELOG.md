@@ -90,6 +90,56 @@ Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
 ---
 
+## [0.1.1 — difusión] — 2026-09-06
+
+### Agregado
+- `pyproject.toml` — paquete instalable (`pip install -e .`) con entry point
+  `yunta` y extra `dev` (pytest).
+- `yunta/cli.py` — REPL movido a módulo instalable; `main.py` queda como
+  wrapper fino.
+- `.gitignore`.
+- Repo git inicializado; commit base `584a8ae`.
+
+### Modificado
+- `docs/PLAN.md` — Fase 8 en progreso con estado de empaquetado.
+
+### Integración multi-IDE (verificada contra documentación oficial)
+- **ZCode**: lee `AGENTS.md` de la raíz — ya presente.
+- **Antigravity**: soporta `AGENTS.md`/`GEMINI.md` en la raíz del workspace
+  (además de `.agents/rules/`) — ya compatible sin cambios.
+
+### Verificación
+- `pip install -e .` OK; `from yunta.cli import main` OK; entry point
+  responde con error claro sin `LLM_MODEL`; `pytest` → 4 passed.
+
+---
+
+## [0.2.0] — 2026-09-06
+
+### Agregado
+- **Diff unificado en la aprobación de `write_file`**: `agent.py` calcula el
+  diff (difflib) contra el contenido actual del archivo y lo muestra antes
+  del y/n. `confirm` ahora recibe `(name, detail)`.
+- **Carga de `AGENTS.md` del proyecto** en el system prompt (`cli.py`):
+  si existe `AGENTS.md` en el directorio de trabajo, se adjunta como
+  contexto del proyecto.
+- `tests/test_agent.py` (6), `tests/test_tools.py` (5), `tests/test_compact.py` (3).
+
+### Corregido
+- **Bug en `SlidingWindow.compact`**: cortaba *después* del mensaje user
+  seguro, dejando un mensaje assistant (o tool_result huérfano) al inicio
+  del historial restante. Ahora corta *en* el primer user seguro desde el
+  exceso. Detectado por `test_sliding_window_cuts_at_safe_boundary`.
+
+### Modificado
+- `pyproject.toml` → versión 0.2.0.
+
+### Verificación
+- `pytest` → 18 passed (provider 4, agent 6, tools 5, compact 3).
+- Compilación sin errores.
+
+---
+
 ## Convenciones para futuros cambios
 
 1. Toda modificación se registra en este archivo: qué cambió, en qué archivo y por qué.

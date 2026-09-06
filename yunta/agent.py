@@ -1,3 +1,7 @@
+import difflib
+import json
+from pathlib import Path
+
 from .api import Block, BlockType, Message, Response, Role, StopReason
 from .tools import registry
 
@@ -63,8 +67,9 @@ class Agent:
         if tool is None:
             return f"unknown tool: {name}", True
 
+        detail = self._tool_detail(name, raw_input)
         print(f"[tool] {name} {raw_input}")
-        if tool.requires_approval and not self._approve(name, raw_input):
+        if tool.requires_approval and not self._approve(name, detail):
             return "user denied this tool call", True
 
         try:
@@ -72,8 +77,31 @@ class Agent:
         except Exception as e:
             return f"{type(e).__name__}: {e}", True
 
-    def _approve(self, name: str, raw_input: str) -> bool:
-        if self.confirm is None:
-            answer = input(f"¿Ejecutar {name}? [y/N] ").strip().lower()
-            return answer == "y"
-        return self.confirm(name, raw_input)
+    @staticmethod
+    def _tool_detail(name: str, raw_input: str) -> str:
+        if name != "write_file":
+            return ""
+        try:
+            args = json.loads(raw_input or "{}")
+            path, content = args.get("path", ""), args.get("content", "")
+        except json.JSONDecodeError:
+            return ""
+        if not path:
+            return ""
+        p = Path(path)
+        old = p.read_text(encoding="utf-8", errors="replace") if p.exists() else ""
+        diff = difflib.unified_diff(
+            old.splitlines(keepends=True),
+            content.splitlines(keepends=True),
+            fromfile=f"a/{path}",
+            tofile=f"b/{path}",
+        )
+        return "".join(diff)
+
+    def _approve(self, name: str, detail: str) -> bool:
+        if self.confirm is not None:
+            return self.confirm(name, detail)
+        if detail:
+            print(detail)
+        answer = input(f"¿Ejecutar {name}? [y/N] ").strip().lower()
+        return answer == "y"

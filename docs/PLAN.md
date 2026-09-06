@@ -36,13 +36,13 @@ trabaja con el mismo harness.
 | 5 | Compactación sliding window (`compact.py`) | ✅ v0.1.0 |
 | 6 | REPL + README + verificación | ✅ v0.1.0 |
 | 7 | Validación multi-proveedor | ✅ v0.1.1 — 4 tests: traducción openai, mismo core anthropic, endpoint custom (Ollama/vLLM/OpenRouter), error claro sin `LLM_MODEL`. Nota: validado hasta la capa de traducción; falta smoke con API real (requiere credenciales) |
-| 8 | Difusión: empaquetar y compartir con otros IDEs/equipos | 🔨 en progreso — objetivo: integración en ZCode + Antigravity |
+| 8 | Difusión: empaquetar y compartir con otros IDEs/equipos | 🔨 en progreso — empaquetado listo (v0.1.1: `pyproject.toml`, entry point `yunta`, git base `584a8ae`). Pendiente: probar en ZCode y Antigravity con modelos reales |
 
 ## Backlog (candidatos, no comprometidos)
 
-- Diff unificado en la aprobación de `write_file` (hoy solo y/n).
-- Carga de contexto de proyecto estilo `AGENTS.md` en el system prompt del propio harness.
-- Suite de tests con pytest (incluyendo el provider falso del smoke test). *(parcial: `tests/test_provider.py` cubre el provider; falta agent loop y tools)*
+- ~~Diff unificado en la aprobación de `write_file`~~ ✅ v0.2.0
+- ~~Carga de contexto de proyecto estilo `AGENTS.md` en el system prompt~~ ✅ v0.2.0
+- ~~Suite de tests con pytest~~ ✅ v0.2.0 (18 tests: provider, agent loop, tools, compactación)
 - Memoria persistente entre sesiones.
 - Subagentes con contexto propio.
 - Streaming de respuestas.

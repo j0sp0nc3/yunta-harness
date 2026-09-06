@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 
 from .agent import Agent
 from .provider import LiteLLMProvider
@@ -10,9 +11,20 @@ Sé conciso. Si un tool falla, el error vuelve a tu contexto: ajústalo y reinte
 Responde en el idioma del usuario."""
 
 
+def load_system_prompt() -> str:
+    prompt = SYSTEM_PROMPT
+    agents_md = Path("AGENTS.md")
+    if agents_md.exists():
+        prompt += "\n\n# Contexto del proyecto (AGENTS.md)\n\n" + agents_md.read_text(
+            encoding="utf-8"
+        )
+    return prompt
+
+
 def main():
-    provider = LiteLLMProvider(system=SYSTEM_PROMPT)
-    agent = Agent(provider=provider, system=SYSTEM_PROMPT)
+    system = load_system_prompt()
+    provider = LiteLLMProvider(system=system)
+    agent = Agent(provider=provider, system=system)
 
     print(f"yunta — modelo: {provider.model()}")
     print("Escribe tu consulta, /clear para limpiar, /exit para salir.\n")
