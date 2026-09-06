@@ -393,3 +393,30 @@ agente en la siguiente — auto-mejora sin infraestructura pesada.
    requiere importar un SDK concreto fuera de un adaptador, el diseño se revisa.
 4. Verificación mínima antes de registrar un cambio: compilar + smoke test del
    bucle con provider falso.
+
+
+## [0.10.0] – 2026-09-06
+
+### Agregado
+- **Interrupción limpia de turnos con KeyboardInterrupt (`Ctrl+C`)** (`yunta/agent.py`):
+  - Captura controlada de `KeyboardInterrupt` en el bucle principal de ejecución de turnos `_loop()`.
+  - Preservación estricta de la invariante de roles alternados de la conversación: si el turno se interrumpe después de un mensaje de usuario o tool results, se añade un mensaje con rol `ASSISTANT` y contenido `"[interrumpido por el usuario]"`.
+  - Retorno limpio de la respuesta acumulada hasta el momento de la interrupción.
+- **REPL interactivo resiliente** (`yunta/cli.py`):
+  - Manejo de `KeyboardInterrupt` alrededor de `agent.send(prompt)` en el bucle de interacción para regresar inmediatamente al prompt `> ` sin abortar el proceso ni perder el historial previo.
+  - Reconfiguración automática de `stdout` y `stderr` a UTF-8 en consolas Windows (`sys.stdout.reconfigure(encoding="utf-8", errors="replace")`) para evitar fallos por caracteres especiales en diffs o tool calls.
+- **Resiliencia de conectividad y reintentos automáticos** (`yunta/provider.py`):
+  - Manejo de backoff con reintentos para errores transitorios de rate limit (`429`) y congestión del servidor (`503`, `MidStreamFallbackError`).
+- **Tests unitarios** (`tests/test_agent.py`):
+  - Test `test_keyboard_interrupt_in_loop_preserves_assistant_message` validando la captura no destructiva, mensaje final de asistente y conservación de roles.
+
+### Modificado
+- `yunta/agent.py`: soporte de interrupción limpia y preservación de mensajes en `_loop()`.
+- `yunta/cli.py`: soporte de `Ctrl+C` en el REPL y codificación UTF-8 en Windows.
+- `yunta/provider.py`: reintentos automáticos ante 429 y 503.
+- `docs/PLAN.md`: actualización de estado a v0.10.0.
+
+### Verificación
+- 54 tests pasando al 100% en `pytest` (`tests/test_agent.py`, `tests/test_tools.py`, `tests/test_mcp.py`, `tests/test_provider.py`, etc.).
+- Compilación sintáctica verificada con `py_compile`.
+- Implementación realizada mediante dogfooding utilizando la herramienta `str_replace` recientemente creada.

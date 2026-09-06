@@ -55,7 +55,22 @@ class LiteLLMProvider(Provider):
         if on_text is not None:
             kwargs["stream"] = True
             kwargs["stream_options"] = {"include_usage": True}
-            return self._consume_stream(litellm.completion(**kwargs), on_text)
+            import time
+            for attempt in range(5):
+                try:
+                    return self._consume_stream(litellm.completion(**kwargs), on_text)
+                except Exception as e:
+                    err_str = str(e).lower()
+                    err_name = type(e).__name__
+                    is_retryable = any(
+                        x in err_str or x in err_name.lower()
+                        for x in ["429", "503", "unavailable", "exhausted", "ratelimit", "serviceunavailable", "midstreamfallback"]
+                    )
+                    if is_retryable and attempt < 4:
+                        print(f"\n[Retrying API in {(attempt+1)*5}s due to: {err_name}]")
+                        time.sleep((attempt + 1) * 5)
+                        continue
+                    raise
 
         resp = litellm.completion(**kwargs)
         choice = resp.choices[0]

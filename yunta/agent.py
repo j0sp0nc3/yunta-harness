@@ -40,48 +40,59 @@ class Agent:
 
     def _loop(self) -> str:
         final_text = []
-        for _ in range(self.max_turns):
-            if self.compactor:
-                self.messages = self.compactor.compact(self.messages)
+        try:
+            for _ in range(self.max_turns):
+                if self.compactor:
+                    self.messages = self.compactor.compact(self.messages)
 
-            try:
-                supports_stream = (
-                    "on_text" in inspect.signature(self.provider.send).parameters
-                )
-            except (TypeError, ValueError):
-                supports_stream = False
-            self._streamed = False
-            if supports_stream:
-                resp = self.provider.send(self.messages, self._definitions(), on_text=self._stream_text)
-            else:
-                resp = self.provider.send(self.messages, self._definitions())
-            self.messages.append(Message(role=Role.ASSISTANT, content=resp.content))
-
-            tool_results = []
-            has_tool_call = False
-            for b in resp.content:
-                if b.type == BlockType.TEXT and b.text:
-                    if self._streamed:
-                        print()
-                    else:
-                        print(b.text)
-                    final_text.append(b.text)
-                elif b.type == BlockType.TOOL_USE:
-                    has_tool_call = True
-                    result, is_err = self._execute_tool(b.tool_name, b.tool_input)
-                    tool_results.append(
-                        Block(
-                            type=BlockType.TOOL_RESULT,
-                            tool_use_id=b.tool_use_id,
-                            tool_result=result,
-                            is_error=is_err,
-                        )
+                try:
+                    supports_stream = (
+                        "on_text" in inspect.signature(self.provider.send).parameters
                     )
+                except (TypeError, ValueError):
+                    supports_stream = False
+                self._streamed = False
+                if supports_stream:
+                    resp = self.provider.send(self.messages, self._definitions(), on_text=self._stream_text)
+                else:
+                    resp = self.provider.send(self.messages, self._definitions())
+                self.messages.append(Message(role=Role.ASSISTANT, content=resp.content))
 
-            if resp.stop_reason != StopReason.TOOL_USE or not has_tool_call:
-                return "\n".join(final_text).strip()
+                tool_results = []
+                has_tool_call = False
+                for b in resp.content:
+                    if b.type == BlockType.TEXT and b.text:
+                        if self._streamed:
+                            print()
+                        else:
+                            print(b.text)
+                        final_text.append(b.text)
+                    elif b.type == BlockType.TOOL_USE:
+                        has_tool_call = True
+                        result, is_err = self._execute_tool(b.tool_name, b.tool_input)
+                        tool_results.append(
+                            Block(
+                                type=BlockType.TOOL_RESULT,
+                                tool_use_id=b.tool_use_id,
+                                tool_result=result,
+                                is_error=is_err,
+                            )
+                        )
 
-            self.messages.append(Message(role=Role.USER, content=tool_results))
+                if resp.stop_reason != StopReason.TOOL_USE or not has_tool_call:
+                    return "\n".join(final_text).strip()
+
+                self.messages.append(Message(role=Role.USER, content=tool_results))
+        except KeyboardInterrupt:
+            print("\n(interrumpido por el usuario)")
+            if self.messages and self.messages[-1].role == Role.USER:
+                self.messages.append(
+                    Message(
+                        role=Role.ASSISTANT,
+                        content=[Block(type=BlockType.TEXT, text="[interrumpido por el usuario]")],
+                    )
+                )
+            return "\n".join(final_text).strip() or "[interrumpido por el usuario]"
 
         return "\n".join(final_text).strip()
 
