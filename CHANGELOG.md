@@ -416,6 +416,8 @@ agente en la siguiente — auto-mejora sin infraestructura pesada.
 - `yunta/cli.py`: soporte de `Ctrl+C` en el REPL y codificación UTF-8 en Windows.
 - `yunta/provider.py`: reintentos automáticos ante 429 y 503.
 - `docs/PLAN.md`: actualización de estado a v0.10.0.
+- `docs/architecture.md` y `docs/architecture_en.md`: especificación técnica de arquitectura bilingüe (ES/EN) con diagrama Mermaid y desglose de capas.
+- `README.md` y `README_en.md`: guía de usuario bilingüe completa con detalles de configuración de modelos, comandos, aprobaciones con diff unificado, memoria y MCP.
 
 ### Verificación
 - 54 tests pasando al 100% en `pytest` (`tests/test_agent.py`, `tests/test_tools.py`, `tests/test_mcp.py`, `tests/test_provider.py`, etc.).
