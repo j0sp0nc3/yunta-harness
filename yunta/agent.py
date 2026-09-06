@@ -106,20 +106,32 @@ class Agent:
 
     @staticmethod
     def _tool_detail(name: str, raw_input: str) -> str:
-        if name != "write_file":
+        if name not in ("write_file", "str_replace"):
             return ""
         try:
             args = json.loads(raw_input or "{}")
-            path, content = args.get("path", ""), args.get("content", "")
         except json.JSONDecodeError:
             return ""
+
+        path = args.get("path", "")
         if not path:
             return ""
+
         p = Path(path)
         old = p.read_text(encoding="utf-8", errors="replace") if p.exists() else ""
+
+        if name == "write_file":
+            new_content = args.get("content", "")
+        elif name == "str_replace":
+            old_str = args.get("old_str", "")
+            new_str = args.get("new_str", "")
+            if not old_str or old.count(old_str) != 1:
+                return ""
+            new_content = old.replace(old_str, new_str, 1)
+
         diff = difflib.unified_diff(
             old.splitlines(keepends=True),
-            content.splitlines(keepends=True),
+            new_content.splitlines(keepends=True),
             fromfile=f"a/{path}",
             tofile=f"b/{path}",
         )

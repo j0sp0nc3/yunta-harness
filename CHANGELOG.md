@@ -361,6 +361,30 @@ agente en la siguiente — auto-mejora sin infraestructura pesada.
 
 ---
 
+## [0.9.0] — 2026-09-06
+
+### Agregado
+- **Edición quirúrgica de archivos `str_replace`** (`yunta/tools/files.py`):
+  - Tool `str_replace(path, old_str, new_str)` inspirada en el estándar de Anthropic (SWE-bench / Claude Code).
+  - Validación determinista de unicidad:
+    - Falla con error descriptivo si `old_str` no existe en el archivo.
+    - Falla con advertencia de ambigüedad si `old_str` aparece múltiples veces, solicitando más líneas de contexto circundante.
+    - Reemplazo exacto preservando indentación y codificación UTF-8 cuando hay una coincidencia única.
+  - Soporte de previsualización de diffs unificados en `Agent._tool_detail` (`yunta/agent.py`) antes de la aprobación del usuario.
+- `tests/test_tools.py` y `tests/test_agent.py`: 5 nuevos tests unitarios (éxito, no encontrado, ambigüedad, archivo inexistente y visualización de diff en el agente). 53 tests totales en la suite.
+
+### Proceso — cuarta ronda de dogfooding
+- Implementado por **yunta mismo** (Gemini 3.6 Flash vía Antigravity):
+  - El agente inspeccionó `yunta/tools/files.py` y `yunta/agent.py`.
+  - Creó la implementación completa de `str_replace` y su integración de diffs.
+  - Escribió la suite de pruebas unitarias y ejecutó la verificación.
+
+### Verificación
+- `pytest` → 53 passed (100% verde).
+- Compilación de los 15 archivos Python (`py_compile`).
+
+---
+
 ## Convenciones para futuros cambios
 
 1. Toda modificación se registra en este archivo: qué cambió, en qué archivo y por qué.
