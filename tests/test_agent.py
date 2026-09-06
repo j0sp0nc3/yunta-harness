@@ -129,6 +129,37 @@ def test_write_file_approval_shows_diff():
             os.remove("t_diff.txt")
 
 
+def test_str_replace_approval_shows_diff(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "t_str.txt").write_text("linea vieja\n", encoding="utf-8")
+    p = FakeProvider(
+        [
+            Response(
+                content=[
+                    tool_use(
+                        "1",
+                        "str_replace",
+                        '{"path":"t_str.txt","old_str":"linea vieja","new_str":"linea nueva"}',
+                    )
+                ],
+                stop_reason=StopReason.TOOL_USE,
+            ),
+            Response(content=[Block(type=BlockType.TEXT, text="ok")], stop_reason=StopReason.END_TURN),
+        ]
+    )
+    seen = {}
+
+    def confirm(name, detail):
+        seen["name"], seen["detail"] = name, detail
+        return True
+
+    a = Agent(provider=p, system="s", confirm=confirm)
+    a.send("reemplaza")
+    assert seen["name"] == "str_replace"
+    assert "-linea vieja" in seen["detail"]
+    assert "+linea nueva" in seen["detail"]
+
+
 def test_max_turns_cap():
     resp = Response(
         content=[tool_use("1", "read_file", '{"path":"README.md"}')],
