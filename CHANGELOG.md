@@ -398,6 +398,7 @@ agente en la siguiente — auto-mejora sin infraestructura pesada.
 ## [0.10.0] – 2026-09-06
 
 ### Agregado
+- **Licencia MIT formal** (`LICENSE`): Incorporación formal del archivo de licencia MIT al repositorio.
 - **Interrupción limpia de turnos con KeyboardInterrupt (`Ctrl+C`)** (`yunta/agent.py`):
   - Captura controlada de `KeyboardInterrupt` en el bucle principal de ejecución de turnos `_loop()`.
   - Preservación estricta de la invariante de roles alternados de la conversación: si el turno se interrumpe después de un mensaje de usuario o tool results, se añade un mensaje con rol `ASSISTANT` y contenido `"[interrumpido por el usuario]"`.
