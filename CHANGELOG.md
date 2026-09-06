@@ -190,6 +190,36 @@ Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
 ---
 
+## [0.3.0] — 2026-09-06
+
+### Agregado
+- **Capa de auto-feedback** (`yunta/feedback.py`): el harness se mejora a
+  sí mismo entre sesiones.
+  - Al salir (`/exit`), el modelo auto-evalúa la sesión (TAREA /
+    RESULTADO / LECCION) y se persiste en `.yunta/learnings.md`.
+  - Al arrancar, las últimas 5 lecciones se inyectan en el system
+    prompt ("Lecciones de sesiones anteriores — aprendidas por ti mismo").
+  - Best-effort: fallos de red o formato se ignoran sin romper el cierre.
+- **Guardas de honestidad** en `SYSTEM_PROMPT` (derivadas del incidente
+  de alucinación detectado en la demo): prohibido narrar acciones no
+  ejecutadas con tools reales; verificación obligatoria tras editar.
+- `tests/test_feedback.py` (6 tests).
+
+### Motivo
+Durante la demo real, un prompt mínimo indujo al modelo a fabricar una
+transcripción entera de acciones nunca ejecutadas. Dos conclusiones que
+esta versión materializa: (1) el prompt debe exigir verificación y
+honestidad sobre tools; (2) las lecciones de cada sesión deben volver al
+agente en la siguiente — auto-mejora sin infraestructura pesada.
+
+### Validación
+- Circuito real con GLM-4.7 (Z.ai Coding Plan): historial de sesión →
+  auto-evaluación → lección persistida → inyección verificada en el
+  system prompt del arranque siguiente.
+- `pytest` → 24 passed.
+
+---
+
 ## Convenciones para futuros cambios
 
 1. Toda modificación se registra en este archivo: qué cambió, en qué archivo y por qué.

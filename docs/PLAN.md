@@ -43,7 +43,8 @@ trabaja con el mismo harness.
 - ~~Diff unificado en la aprobación de `write_file`~~ ✅ v0.2.0
 - ~~Carga de contexto de proyecto estilo `AGENTS.md` en el system prompt~~ ✅ v0.2.0
 - ~~Suite de tests con pytest~~ ✅ v0.2.0 (18 tests: provider, agent loop, tools, compactación)
-- Memoria persistente entre sesiones.
+- ~~Auto-feedback del harness (lecciones entre sesiones)~~ ✅ v0.3.0 (`.yunta/learnings.md` + guardas de honestidad)
+- Memoria persistente entre sesiones *(parcialmente cubierto por auto-feedback; queda recall/remember por tool)*
 - Subagentes con contexto propio.
 - Streaming de respuestas.
 - Soporte MCP.
