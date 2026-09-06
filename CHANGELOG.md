@@ -140,6 +140,18 @@ Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
 ---
 
+## [0.2.1 — publicación] — 2026-09-06
+
+### Publicado
+- Repo público: **https://github.com/j0sp0nc3/yunta-harness**
+- Rama `master`, historial completo (v0.1.1 → v0.2.0) con autoría real.
+- Autenticación GitHub CLI configurada para futuras operaciones.
+
+### Verificación
+- `gh repo view` confirma: PUBLIC, rama master, commits `945a049` y `1ae1d8f`.
+
+---
+
 ## Convenciones para futuros cambios
 
 1. Toda modificación se registra en este archivo: qué cambió, en qué archivo y por qué.

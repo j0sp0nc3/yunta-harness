@@ -36,7 +36,7 @@ trabaja con el mismo harness.
 | 5 | Compactación sliding window (`compact.py`) | ✅ v0.1.0 |
 | 6 | REPL + README + verificación | ✅ v0.1.0 |
 | 7 | Validación multi-proveedor | ✅ v0.1.1 — 4 tests: traducción openai, mismo core anthropic, endpoint custom (Ollama/vLLM/OpenRouter), error claro sin `LLM_MODEL`. Nota: validado hasta la capa de traducción; falta smoke con API real (requiere credenciales) |
-| 8 | Difusión: empaquetar y compartir con otros IDEs/equipos | 🔨 en progreso — empaquetado listo (v0.1.1: `pyproject.toml`, entry point `yunta`, git base `584a8ae`). Pendiente: probar en ZCode y Antigravity con modelos reales |
+| 8 | Difusión: empaquetar y compartir con otros IDEs/equipos | 🔨 en progreso — **publicado en https://github.com/j0sp0nc3/yunta-harness** (público, v0.2.0). Pendiente: probar en ZCode y Antigravity con modelos reales |
 
 ## Backlog (candidatos, no comprometidos)
 
