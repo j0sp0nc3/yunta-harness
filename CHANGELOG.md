@@ -312,6 +312,29 @@ agente en la siguiente — auto-mejora sin infraestructura pesada.
 
 ---
 
+## [0.7.0] — 2026-09-06
+
+### Agregado
+- **Streaming de respuestas y reensamblado de tool calls** (`yunta/provider.py`, `yunta/agent.py`):
+  - `Provider.send(..., on_text=None)`: soporte opcional de streaming en la interfaz neutral.
+  - `LiteLLMProvider._consume_stream()`: procesa stream de tokens en tiempo real invocando `on_text`.
+  - Reensamblado robusto de tool calls fragmentados: agrupa chunks por `index`, reconstruyendo `tool_name` y concatenando fragmentos de `tool_input` (`function.arguments`) hasta finalizar la llamada.
+  - Soporte de `stream_options={"include_usage": True}` para acumulación exacta de métricas de tokens en streams.
+  - Salvaguarda de `StopReason.TOOL_USE` si el proveedor emite finish_reason no específico cuando hay tool calls presentes.
+- `tests/test_provider.py`: tests unitarios de streaming de texto puro y streaming de tool calls fragmentados (45 tests totales en la suite).
+
+### Modificado
+- `yunta/agent.py`:
+  - Detección dinámica de soporte de streaming (`on_text` en firma del provider) manteniendo estricta compatibilidad con providers síncronos/mocks (`FakeProvider`).
+  - Reseteo adecuado de `_streamed` antes de la llamada para evitar salida duplicada en consola.
+
+### Verificación
+- `pytest` → 45 passed (100% verde).
+- Compilación sin errores (`py_compile` en los 14 archivos Python).
+- Smoke test end-to-end con `gemini/gemini-3.6-flash` en Antigravity completando llamada a `write_file` y `read_file` con streaming en tiempo real.
+
+---
+
 ## Convenciones para futuros cambios
 
 1. Toda modificación se registra en este archivo: qué cambió, en qué archivo y por qué.

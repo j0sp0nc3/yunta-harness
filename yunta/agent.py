@@ -1,4 +1,5 @@
 import difflib
+import inspect
 import json
 from pathlib import Path
 
@@ -43,14 +44,27 @@ class Agent:
             if self.compactor:
                 self.messages = self.compactor.compact(self.messages)
 
-            resp = self.provider.send(self.messages, self._definitions())
+            try:
+                supports_stream = (
+                    "on_text" in inspect.signature(self.provider.send).parameters
+                )
+            except (TypeError, ValueError):
+                supports_stream = False
+            self._streamed = False
+            if supports_stream:
+                resp = self.provider.send(self.messages, self._definitions(), on_text=self._stream_text)
+            else:
+                resp = self.provider.send(self.messages, self._definitions())
             self.messages.append(Message(role=Role.ASSISTANT, content=resp.content))
 
             tool_results = []
             has_tool_call = False
             for b in resp.content:
                 if b.type == BlockType.TEXT and b.text:
-                    print(b.text)
+                    if self._streamed:
+                        print()
+                    else:
+                        print(b.text)
                     final_text.append(b.text)
                 elif b.type == BlockType.TOOL_USE:
                     has_tool_call = True
@@ -70,6 +84,10 @@ class Agent:
             self.messages.append(Message(role=Role.USER, content=tool_results))
 
         return "\n".join(final_text).strip()
+
+    def _stream_text(self, delta: str) -> None:
+        print(delta, end="", flush=True)
+        self._streamed = True
 
     def _execute_tool(self, name: str, raw_input: str) -> tuple[str, bool]:
         tool = registry.get(name)
