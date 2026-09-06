@@ -246,6 +246,39 @@ agente en la siguiente — auto-mejora sin infraestructura pesada.
 
 ---
 
+## [0.5.0] — 2026-09-06
+
+### Agregado
+- **Memoria persistente entre sesiones** (`yunta/tools/memory.py`):
+  - `remember(content, kind?, tags?)`: guarda en `.yunta/memory.json`
+    (configurable vía `MEMORY_PATH`); kind: fact/preference/decision.
+  - `recall(query)`: búsqueda case-insensitive por palabras en content y
+    tags, máximo 10 más recientes, formato `[fecha] (kind) content [tags]`.
+- `tests/test_memory.py` (5 tests).
+
+### Proceso — segunda ronda de dogfooding
+- Implementado por **yunta mismo** (GLM-4.7): leyó convenciones, escribió
+  tool + tests, detectó por sí solo que faltaba el import en `cli.py`
+  (la lección de v0.4.0 se aplicó sin que se lo pidiera explícitamente),
+  lo corrigió por la vía autorizada y verificó las 7 tools registradas.
+- Desviación de alcance detectada en revisión humana: el agente también
+  subió `version` en `pyproject.toml` a 0.5.0 (no autorizado; la intención
+  era correcta según convención y se conserva). Sin otros cambios fuera
+  de alcance; sin archivos temporales residuales.
+- El agente además auto-limpió una línea confusa en su propio test antes
+  de cerrar.
+
+### Modificado
+- `yunta/cli.py`: importa `memory`.
+- `pyproject.toml`: versión 0.5.0.
+
+### Verificación
+- `pytest` → 34 passed. Registro de 7 tools en el REPL verificado.
+- Prueba funcional real: remember→persistencia en JSON→recall con match,
+  case-insensitive y sin resultados. CHANGELOG y docs actualizados a mano.
+
+---
+
 ## Convenciones para futuros cambios
 
 1. Toda modificación se registra en este archivo: qué cambió, en qué archivo y por qué.
