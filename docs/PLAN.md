@@ -3,7 +3,7 @@
 Plan de la iniciativa y su estado. Se comparte junto con el código para que
 cualquier persona, IDE o modelo sepa hacia dónde va el proyecto y qué falta.
 
-Estado actual: **Fase 1-8 completadas (v0.7.0)**. Actualizar este archivo al
+Estado actual: **Fase 1-8 y Backlog fundacional completados (v0.8.0)**. Actualizar este archivo al
 cambiar de fase, junto con `CHANGELOG.md`.
 
 ---
@@ -47,7 +47,7 @@ trabaja con el mismo harness.
 - ~~Memoria persistente entre sesiones~~ ✅ v0.5.0 (tools `remember`/`recall` en `.yunta/memory.json`, vía dogfooding)
 - ~~Subagentes con contexto propio~~ ✅ v0.6.0 (`delegate_research` read-only, vía dogfooding incluyendo primer cambio al core)
 - ~~Streaming de respuestas~~ ✓ v0.7.0
-- Soporte MCP.
+- ~~Soporte MCP~~ ✓ v0.8.0
 
 ## Reglas que gobiernan el plan
 

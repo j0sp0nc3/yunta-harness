@@ -3,6 +3,7 @@ from pathlib import Path
 
 from .agent import Agent
 from .feedback import FeedbackStore
+from .mcp import load_mcp_servers
 from .provider import LiteLLMProvider
 from .tools import bash, delegate, files, memory, search  # noqa: F401 — registro vía decoradores
 
@@ -35,40 +36,45 @@ def main():
     system = load_system_prompt(feedback)
     provider = LiteLLMProvider(system=system)
     delegate.set_provider(provider)
+    mcp_clients = load_mcp_servers()
     agent = Agent(provider=provider, system=system)
 
     print(f"yunta — modelo: {provider.model()}")
     print("Escribe tu consulta, /clear para limpiar, /exit para salir.\n")
 
-    while True:
-        try:
-            prompt = input("> ").strip()
-        except (EOFError, KeyboardInterrupt):
+    try:
+        while True:
+            try:
+                prompt = input("> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
+
+            if not prompt:
+                continue
+            if prompt == "/exit":
+                if agent.messages:
+                    feedback.summarize(provider, agent.messages)
+                break
+            if prompt == "/clear":
+                agent.messages.clear()
+                print("(historial limpio)\n")
+                continue
+            if prompt == "/tokens":
+                u = provider.total_usage
+                print(f"in={u.input_tokens} out={u.output_tokens}\n")
+                continue
+
+            try:
+                agent.send(prompt)
+            except SystemExit:
+                raise
+            except Exception as e:
+                print(f"error: {e}", file=sys.stderr)
             print()
-            break
-
-        if not prompt:
-            continue
-        if prompt == "/exit":
-            if agent.messages:
-                feedback.summarize(provider, agent.messages)
-            break
-        if prompt == "/clear":
-            agent.messages.clear()
-            print("(historial limpio)\n")
-            continue
-        if prompt == "/tokens":
-            u = provider.total_usage
-            print(f"in={u.input_tokens} out={u.output_tokens}\n")
-            continue
-
-        try:
-            agent.send(prompt)
-        except SystemExit:
-            raise
-        except Exception as e:
-            print(f"error: {e}", file=sys.stderr)
-        print()
+    finally:
+        for c in mcp_clients:
+            c.close()
 
 
 if __name__ == "__main__":

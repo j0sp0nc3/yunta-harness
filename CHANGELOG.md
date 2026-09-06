@@ -335,6 +335,32 @@ agente en la siguiente — auto-mejora sin infraestructura pesada.
 
 ---
 
+## [0.8.0] — 2026-09-06
+
+### Agregado
+- **Soporte MCP (Model Context Protocol) sobre stdio** (`yunta/mcp.py`):
+  - Cliente `MCPClient` minimalista (~100 líneas) implementado exclusivamente con la librería estándar de Python (`subprocess`, `json`), sin dependencias externas ni SDKs pesados.
+  - Handshake de inicialización JSON-RPC 2.0 (`initialize` y `notifications/initialized`).
+  - Auto-descubrimiento de herramientas vía `tools/list` desde configuración `.yunta/mcp.json`.
+  - Integración transparente en el `registry` de Yunta con prefijo de espacio de nombres `mcp__<servidor>__<tool>`.
+  - Ejecución de llamadas a herramientas (`tools/call`) canalizadas a través del bucle con los permisos de Yunta.
+  - Ciclo de vida y cierre limpio de subprocesos (`close()`) al finalizar la sesión del CLI.
+  - Formato estándar de configuración compatible con el ecosistema MCP (Claude Desktop / Cursor / VS Code).
+- `tests/test_mcp.py`: 3 tests unitarios cubriendo handshake, auto-descubrimiento, ejecución de tools, manejo de errores JSON-RPC y degradación silenciosa sin configuración (48 tests totales en la suite).
+
+### Modificado
+- `yunta/cli.py`: integra `load_mcp_servers()` al inicio y limpieza en bloque `finally`.
+- `README.md`: documentación de configuración de servidores MCP.
+- `docs/PLAN.md`: ítem de Soporte MCP completado en el backlog.
+- `.gitignore`: exclusión de `.yunta/`.
+
+### Verificación
+- `pytest` → 48 passed (100% verde).
+- Compilación de los 15 archivos Python (`py_compile`).
+- Smoke test end-to-end con servidor MCP real ejecutando `consultar_clima` y respuesta del modelo Gemini 3.6 Flash vía Yunta en Antigravity.
+
+---
+
 ## Convenciones para futuros cambios
 
 1. Toda modificación se registra en este archivo: qué cambió, en qué archivo y por qué.

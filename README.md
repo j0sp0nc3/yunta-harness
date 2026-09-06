@@ -68,6 +68,25 @@ Reglas de diseño:
 - Los errores de tools vuelven al contexto como resultados — el modelo reintenta.
 - Sin frameworks: el bucle, los permisos y el contexto son tuyos.
 
+
+## Soporte MCP (Model Context Protocol)
+
+Yunta puede conectarse a servidores MCP locales (`stdio`) sin necesidad de librerías externas.
+Configura tus servidores en `.yunta/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "servidor_ejemplo": {
+      "command": "python",
+      "args": ["ruta/al/servidor.py"]
+    }
+  }
+}
+```
+
+Las herramientas del servidor se registrarán automáticamente con el prefijo `mcp__<servidor>__<nombre_tool>`.
+
 ## Extender
 
 Nueva tool: crea un archivo en `yunta/tools/` y usa el decorador.
