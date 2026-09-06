@@ -220,6 +220,32 @@ agente en la siguiente — auto-mejora sin infraestructura pesada.
 
 ---
 
+## [0.4.0] — 2026-09-06
+
+### Agregado
+- **Tools de búsqueda** (`yunta/tools/search.py`):
+  - `grep`: regex recursivo sobre directorio, salida `ruta:linea: texto`,
+    `max_results` (default 50), regex inválido → `ValueError`.
+  - `glob`: patrones tipo `**/*.py` vía `Path.glob`, rutas POSIX ordenadas.
+- `tests/test_search.py` (5 tests).
+
+### Proceso — primer dogfooding del harness
+- Implementado por **yunta mismo** (GLM-4.7 vía Coding Plan): leyó las
+  convenciones del repo (AGENTS.md + files.py), escribió tool + tests,
+  verificó con pytest y respetó el alcance (solo 2 archivos nuevos).
+- Revisión humana posterior encontró 1 hueco de integración: `cli.py`
+  no importaba `search`, por lo que el REPL real no registraba las tools
+  (los tests del agente las importaban directamente y lo enmascaraban).
+  Corregido agregando el import.
+
+### Modificado
+- `yunta/cli.py`: importa `search` junto a `bash`/`files`.
+
+### Verificación
+- `pytest` → 29 passed. Registro de tools del REPL verificado.
+
+---
+
 ## Convenciones para futuros cambios
 
 1. Toda modificación se registra en este archivo: qué cambió, en qué archivo y por qué.
