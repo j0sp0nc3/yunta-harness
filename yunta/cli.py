@@ -32,6 +32,12 @@ def load_system_prompt(feedback: FeedbackStore | None = None) -> str:
 
 
 def main():
+    if sys.platform == "win32":
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
     feedback = FeedbackStore()
     system = load_system_prompt(feedback)
     provider = LiteLLMProvider(system=system)
@@ -67,6 +73,8 @@ def main():
 
             try:
                 agent.send(prompt)
+            except KeyboardInterrupt:
+                print()
             except SystemExit:
                 raise
             except Exception as e:

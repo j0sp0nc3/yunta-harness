@@ -3,7 +3,7 @@
 Plan de la iniciativa y su estado. Se comparte junto con el código para que
 cualquier persona, IDE o modelo sepa hacia dónde va el proyecto y qué falta.
 
-Estado actual: **Fase 1-8 y Backlog fundacional completados (v0.9.0)**. Actualizar este archivo al
+Estado actual: **Fase 1-8 y Backlog fundacional completados (v0.10.0)**. Actualizar este archivo al
 cambiar de fase, junto con `CHANGELOG.md`.
 
 ---
@@ -49,6 +49,7 @@ trabaja con el mismo harness.
 - ~~Streaming de respuestas~~ ✓ v0.7.0
 - ~~Soporte MCP~~ ✓ v0.8.0
 - ~~Edición quirúrgica str_replace (Dogfooding Gemini)~~ ✓ v0.9.0
+- ~~Interrupción limpia de turnos (Ctrl+C / KeyboardInterrupt)~~ – v0.10.0
 
 ## Reglas que gobiernan el plan
 

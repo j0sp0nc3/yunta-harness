@@ -171,3 +171,23 @@ def test_max_turns_cap():
     a.send("loop")
     # 3 turnos: user + 3x(assistant+toolresult) = 7 mensajes
     assert len(a.messages) == 7
+
+
+def test_keyboard_interrupt_in_loop_preserves_assistant_message(capsys):
+    from yunta.api import Role
+
+    class InterruptProvider:
+        def send(self, messages, tools, on_text=None):
+            raise KeyboardInterrupt("interrumpido")
+
+    p = InterruptProvider()
+    a = Agent(provider=p, system="s")
+    out = a.send("haz algo")
+
+    assert "interrumpido" in out
+    captured = capsys.readouterr()
+    assert "interrumpido" in captured.out
+    assert len(a.messages) == 2
+    assert a.messages[0].role == Role.USER
+    assert a.messages[-1].role == Role.ASSISTANT
+    assert a.messages[-1].content[0].text == "[interrumpido por el usuario]"
