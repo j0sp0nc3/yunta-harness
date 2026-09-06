@@ -163,6 +163,16 @@ Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
 ---
 
+## [0.2.3] — 2026-09-06
+
+### Modificado
+- **Logo oficial reemplazado**: `docs/logo.png` (1024×559, generado con
+  modelo de imagen y curado por el autor) pasa a ser el logo del proyecto
+  en el README. El boceto vectorial previo queda como `docs/logo.svg`
+  (referencia de paleta y composición).
+
+---
+
 ## Convenciones para futuros cambios
 
 1. Toda modificación se registra en este archivo: qué cambió, en qué archivo y por qué.

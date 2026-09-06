@@ -1,6 +1,6 @@
 # yunta
 
-![logo](docs/logo.svg)
+![logo](docs/logo.png)
 
 Agente de código para terminal, agnóstico al proveedor del modelo.
 
