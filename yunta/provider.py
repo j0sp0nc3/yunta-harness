@@ -13,7 +13,7 @@ _FINISH_REASONS = {
 
 
 class Provider:
-    def send(self, messages: list[Message], tools: list[ToolDef]) -> Response: ...
+    def send(self, messages: list[Message], tools: list[ToolDef], on_text=None) -> Response: ...
     def model(self) -> str: ...
 
 
@@ -38,7 +38,7 @@ class LiteLLMProvider(Provider):
     def model(self) -> str:
         return self._model
 
-    def send(self, messages: list[Message], tools: list[ToolDef]) -> Response:
+    def send(self, messages: list[Message], tools: list[ToolDef], on_text=None) -> Response:
         kwargs = {
             "model": self._model,
             "messages": self._to_litellm(messages),
@@ -51,6 +51,11 @@ class LiteLLMProvider(Provider):
         api_key = os.environ.get("LLM_API_KEY")
         if api_key:
             kwargs["api_key"] = api_key
+
+        if on_text is not None:
+            kwargs["stream"] = True
+            kwargs["stream_options"] = {"include_usage": True}
+            return self._consume_stream(litellm.completion(**kwargs), on_text)
 
         resp = litellm.completion(**kwargs)
         choice = resp.choices[0]
@@ -74,6 +79,60 @@ class LiteLLMProvider(Provider):
                 input_tokens=getattr(u, "prompt_tokens", 0) or 0,
                 output_tokens=getattr(u, "completion_tokens", 0) or 0,
             )
+            self.total_usage = self.total_usage.add(out.usage)
+        return out
+
+    def _consume_stream(self, stream, on_text) -> Response:
+        text: list[str] = []
+        calls: dict = {}
+        finish_reason = None
+        usage = None
+        for chunk in stream:
+            if getattr(chunk, "usage", None) is not None:
+                u = chunk.usage
+                usage = Usage(
+                    input_tokens=getattr(u, "prompt_tokens", 0) or 0,
+                    output_tokens=getattr(u, "completion_tokens", 0) or 0,
+                )
+            for choice in chunk.choices or []:
+                if choice.finish_reason:
+                    finish_reason = choice.finish_reason
+                delta = getattr(choice, "delta", None)
+                if delta is None:
+                    continue
+                if delta.content:
+                    on_text(delta.content)
+                    text.append(delta.content)
+                for tc in delta.tool_calls or []:
+                    slot = calls.setdefault(tc.index, {"id": "", "name": "", "args": []})
+                    if tc.id:
+                        slot["id"] = tc.id
+                    fn = getattr(tc, "function", None)
+                    if fn is None:
+                        continue
+                    if fn.name and not slot["name"]:
+                        slot["name"] = fn.name
+                    if fn.arguments:
+                        slot["args"].append(fn.arguments)
+
+        stop_reason = _FINISH_REASONS.get(finish_reason, StopReason.OTHER)
+        if calls and stop_reason != StopReason.TOOL_USE:
+            stop_reason = StopReason.TOOL_USE
+        out = Response(stop_reason=stop_reason)
+        if text:
+            out.content.append(Block(type=BlockType.TEXT, text="".join(text)))
+        for idx in sorted(calls):
+            c = calls[idx]
+            out.content.append(
+                Block(
+                    type=BlockType.TOOL_USE,
+                    tool_use_id=c["id"],
+                    tool_name=c["name"],
+                    tool_input="".join(c["args"]),
+                )
+            )
+        if usage is not None:
+            out.usage = usage
             self.total_usage = self.total_usage.add(out.usage)
         return out
 

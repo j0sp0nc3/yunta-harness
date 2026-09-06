@@ -90,3 +90,93 @@ def test_missing_model_fails_clearly():
     )
     assert r.returncode != 0
     assert "LLM_MODEL" in r.stderr
+
+
+def test_streaming_text():
+    os.environ["LLM_MODEL"] = "openai/gpt-4o"
+    stream_chunks = [
+        SimpleNamespace(
+            choices=[SimpleNamespace(delta=SimpleNamespace(content="Hola ", tool_calls=None), finish_reason=None)],
+            usage=None,
+        ),
+        SimpleNamespace(
+            choices=[SimpleNamespace(delta=SimpleNamespace(content="mundo", tool_calls=None), finish_reason=None)],
+            usage=None,
+        ),
+        SimpleNamespace(
+            choices=[SimpleNamespace(delta=None, finish_reason="stop")],
+            usage=SimpleNamespace(prompt_tokens=8, completion_tokens=4),
+        ),
+    ]
+
+    litellm.completion = lambda **kwargs: stream_chunks
+    p = LiteLLMProvider(system="sys")
+    streamed = []
+    r = p.send(MSGS[:1], tools=[], on_text=streamed.append)
+
+    assert "".join(streamed) == "Hola mundo"
+    assert len(r.content) == 1
+    assert r.content[0].text == "Hola mundo"
+    assert r.stop_reason.value == "end_turn"
+    assert r.usage.input_tokens == 8
+    assert p.total_usage.output_tokens == 4
+
+
+def test_streaming_tool_call_fragmented():
+    os.environ["LLM_MODEL"] = "openai/gpt-4o"
+    stream_chunks = [
+        SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(
+                        content=None,
+                        tool_calls=[
+                            SimpleNamespace(
+                                index=0,
+                                id="call_abc",
+                                function=SimpleNamespace(name="read_file", arguments='{"pa'),
+                            )
+                        ],
+                    ),
+                    finish_reason=None,
+                )
+            ],
+            usage=None,
+        ),
+        SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(
+                        content=None,
+                        tool_calls=[
+                            SimpleNamespace(
+                                index=0,
+                                id=None,
+                                function=SimpleNamespace(name=None, arguments='th": "foo.py"}'),
+                            )
+                        ],
+                    ),
+                    finish_reason=None,
+                )
+            ],
+            usage=None,
+        ),
+        SimpleNamespace(
+            choices=[SimpleNamespace(delta=None, finish_reason="tool_calls")],
+            usage=SimpleNamespace(prompt_tokens=15, completion_tokens=10),
+        ),
+    ]
+
+    litellm.completion = lambda **kwargs: stream_chunks
+    p = LiteLLMProvider(system="sys")
+    r = p.send(MSGS[:1], tools=registry.definitions(), on_text=lambda t: None)
+
+    assert len(r.content) == 1
+    call = r.content[0]
+    assert call.type.value == "tool_use"
+    assert call.tool_name == "read_file"
+    assert call.tool_use_id == "call_abc"
+    assert call.tool_input == '{"path": "foo.py"}'
+    assert r.stop_reason.value == "tool_use"
+    assert r.usage.input_tokens == 15
+    assert p.total_usage.output_tokens == 10

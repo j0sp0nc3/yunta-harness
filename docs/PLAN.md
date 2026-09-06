@@ -3,7 +3,7 @@
 Plan de la iniciativa y su estado. Se comparte junto con el código para que
 cualquier persona, IDE o modelo sepa hacia dónde va el proyecto y qué falta.
 
-Estado actual: **Fase 1-6 completadas (v0.1.0)**. Actualizar este archivo al
+Estado actual: **Fase 1-8 completadas (v0.7.0)**. Actualizar este archivo al
 cambiar de fase, junto con `CHANGELOG.md`.
 
 ---
@@ -36,7 +36,7 @@ trabaja con el mismo harness.
 | 5 | Compactación sliding window (`compact.py`) | ✅ v0.1.0 |
 | 6 | REPL + README + verificación | ✅ v0.1.0 |
 | 7 | Validación multi-proveedor | ✅ v0.1.1 — 4 tests: traducción openai, mismo core anthropic, endpoint custom (Ollama/vLLM/OpenRouter), error claro sin `LLM_MODEL`. Nota: validado hasta la capa de traducción; falta smoke con API real (requiere credenciales) |
-| 8 | Difusión: empaquetar y compartir con otros IDEs/equipos | 🔨 en progreso — publicado en github.com/j0sp0nc3/yunta-harness. **Validado en ZCode + GLM-4.7 (Z.ai Coding Plan)** ✅. Pendiente: Antigravity con otro modelo |
+| 8 | Difusión: empaquetar y compartir con otros IDEs/equipos | ✓ v0.7.0 — publicado en github.com/j0sp0nc3/yunta-harness. **Validado en ZCode + GLM-4.7** ✓ y en **Antigravity + Gemini 3.6 Flash** ✓ |
 
 ## Backlog (candidatos, no comprometidos)
 
@@ -46,7 +46,7 @@ trabaja con el mismo harness.
 - ~~Auto-feedback del harness (lecciones entre sesiones)~~ ✅ v0.3.0 (`.yunta/learnings.md` + guardas de honestidad)
 - ~~Memoria persistente entre sesiones~~ ✅ v0.5.0 (tools `remember`/`recall` en `.yunta/memory.json`, vía dogfooding)
 - ~~Subagentes con contexto propio~~ ✅ v0.6.0 (`delegate_research` read-only, vía dogfooding incluyendo primer cambio al core)
-- Streaming de respuestas.
+- ~~Streaming de respuestas~~ ✓ v0.7.0
 - Soporte MCP.
 
 ## Reglas que gobiernan el plan
