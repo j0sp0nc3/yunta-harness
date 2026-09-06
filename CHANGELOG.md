@@ -173,6 +173,23 @@ Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
 ---
 
+## [0.2.4] — 2026-09-06
+
+### Agregado
+- `scripts/prueba_glm.py` — prueba de integración de bucle completo
+  (write_file con diff + read_file + respuesta) contra un modelo real.
+- `Provider.system` — propiedad pública (antes `._system`).
+
+### Validación real (Fase 8)
+- **ZCode + GLM-4.7 (Z.ai, vía Coding Plan)**: prueba completa OK.
+  Config: `LLM_MODEL=openai/glm-4.7`,
+  `LLM_API_BASE=https://api.z.ai/api/coding/paas/v4`, `LLM_API_KEY`.
+  Resultado: archivo creado y leído por el modelo, 3192/137 tokens.
+- Nota: el prefijo nativo `zai/` requiere saldo API por consumo; el
+  Coding Plan funciona por el endpoint OpenAI-compatible de arriba.
+
+---
+
 ## Convenciones para futuros cambios
 
 1. Toda modificación se registra en este archivo: qué cambió, en qué archivo y por qué.

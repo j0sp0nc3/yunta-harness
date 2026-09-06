@@ -31,6 +31,10 @@ class LiteLLMProvider(Provider):
         self._system = system
         self.total_usage = Usage()
 
+    @property
+    def system(self) -> str:
+        return self._system
+
     def model(self) -> str:
         return self._model
 
