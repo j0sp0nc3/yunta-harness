@@ -279,6 +279,39 @@ agente en la siguiente — auto-mejora sin infraestructura pesada.
 
 ---
 
+## [0.6.0] — 2026-09-06
+
+### Agregado
+- **Subagente de investigación read-only** (`yunta/tools/delegate.py`):
+  - Tool `delegate_research(task)`: crea un `Agent` interno restringido a
+    `read_file`/`grep`/`glob`, max_turns 15, y devuelve sus hallazgos.
+  - Provider inyectado vía `set_provider()` desde el CLI (sin providers
+    por defecto: sin configurar, error claro).
+- `Agent(tools=...)`: parámetro opcional de subconjunto de tools — primer
+  cambio al core vía dogfooding. Sin el parámetro, comportamiento idéntico.
+- `tests/test_delegate.py` (9 tests: subset, global, ejecución del
+  subagente, entradas inválidas, sin configurar).
+
+### Proceso — tercera ronda de dogfooding
+- Implementado por **yunta mismo** (GLM-4.7), esta vez tocando el core
+  (`agent.py`). Mitigaciones: especificación exacta + restricción dura de
+  no romper los 34 tests existentes (cumplida: pasaron sin modificarse).
+- El agente pasó por un borrador defectuoso de `agent.py` que se
+  autocorrigió en el turno siguiente; el diff final es quirúrgico.
+- Registró solo read-only tools en el subagente; wiring del CLI correcto.
+- Validación end-to-end real con GLM-4.7: la raíz delegó y el subagente
+  investigó usando exclusivamente glob/grep/read_file (sin bash ni
+  writes), devolviendo hallazgos exactos sobre el propio repo.
+
+### Modificado
+- `yunta/agent.py`: `__init__` acepta `tools` opcional; `_definitions()`.
+- `yunta/cli.py`: importa `delegate` y llama `set_provider(provider)`.
+
+### Verificación
+- `pytest` → 43 passed. 8 tools registradas en el REPL.
+
+---
+
 ## Convenciones para futuros cambios
 
 1. Toda modificación se registra en este archivo: qué cambió, en qué archivo y por qué.

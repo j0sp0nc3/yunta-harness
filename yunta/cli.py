@@ -4,7 +4,7 @@ from pathlib import Path
 from .agent import Agent
 from .feedback import FeedbackStore
 from .provider import LiteLLMProvider
-from .tools import bash, files, memory, search  # noqa: F401 — registro vía decoradores
+from .tools import bash, delegate, files, memory, search  # noqa: F401 — registro vía decoradores
 
 SYSTEM_PROMPT = """Eres un agente de código que opera en la terminal del usuario.
 Trabajas iterando: lees archivos, ejecutas comandos y editas código usando tus tools.
@@ -34,6 +34,7 @@ def main():
     feedback = FeedbackStore()
     system = load_system_prompt(feedback)
     provider = LiteLLMProvider(system=system)
+    delegate.set_provider(provider)
     agent = Agent(provider=provider, system=system)
 
     print(f"yunta — modelo: {provider.model()}")

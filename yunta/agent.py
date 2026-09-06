@@ -14,6 +14,7 @@ class Agent:
         compactor=None,
         max_turns: int = 30,
         confirm=None,
+        tools: list | None = None,
     ):
         self.provider = provider
         self.system = system
@@ -21,6 +22,7 @@ class Agent:
         self.max_turns = max_turns
         self.confirm = confirm
         self.messages: list[Message] = []
+        self._tools_subset = list(tools) if tools is not None else None
 
     def send(self, prompt: str) -> str:
         self.messages.append(
@@ -28,13 +30,20 @@ class Agent:
         )
         return self._loop()
 
+    def _definitions(self) -> list:
+        if self._tools_subset is None:
+            return registry.definitions()
+        return [
+            t for t in registry.definitions() if t.name in {tool.name for tool in self._tools_subset}
+        ]
+
     def _loop(self) -> str:
         final_text = []
         for _ in range(self.max_turns):
             if self.compactor:
                 self.messages = self.compactor.compact(self.messages)
 
-            resp = self.provider.send(self.messages, registry.definitions())
+            resp = self.provider.send(self.messages, self._definitions())
             self.messages.append(Message(role=Role.ASSISTANT, content=resp.content))
 
             tool_results = []
