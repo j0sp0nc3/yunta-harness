@@ -4,7 +4,7 @@ from pathlib import Path
 from .agent import Agent
 from .feedback import FeedbackStore
 from .provider import LiteLLMProvider
-from .tools import bash, files  # noqa: F401 — registro vía decoradores
+from .tools import bash, files, search  # noqa: F401 — registro vía decoradores
 
 SYSTEM_PROMPT = """Eres un agente de código que opera en la terminal del usuario.
 Trabajas iterando: lees archivos, ejecutas comandos y editas código usando tus tools.
