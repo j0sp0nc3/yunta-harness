@@ -23,6 +23,12 @@ trabajar.
    (qué, dónde, por qué) antes de considerar el trabajo terminado.
 5. **Mantener minimalismo**: si un cambio agrega más de ~100 líneas, justificar
    por qué no puede hacerse más simple.
+6. **Soberanía del Backlog y Especificaciones (Read-Only)**: Los archivos de
+   planificación estratégica y backlog (`docs/PLAN.md`, especificaciones formales)
+   son de **solo lectura** para el agente durante el desarrollo. El agente **NUNCA**
+   debe auto-modificar el backlog, eliminar tareas pendientes ni alterar requerimientos
+   para acomodarlos al código sin instrucción humana expresa. El código se adapta
+   a la especificación, jamás la especificación al código.
 
 ## Cómo extender
 
