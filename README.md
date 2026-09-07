@@ -4,6 +4,10 @@
 
 ![logo](docs/logo.png)
 
+[![PyPI version](https://img.shields.io/pypi/v/yunta-harness.svg)](https://pypi.org/project/yunta-harness/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 **Harness de agente de código para terminal, agnóstico al proveedor del modelo.**
 
 *Yunta*: pareja de bueyes unidos para trabajar juntos — tú y el agente, sin importar qué modelo tire del otro lado.
@@ -48,15 +52,15 @@ Diseñado desde cero para ser independiente de cualquier proveedor de modelos: e
 
 Requiere Python 3.11 o superior.
 
+### Desde PyPI (Recomendado):
 ```bash
-git clone https://github.com/j0sp0nc3/yunta.git
-cd yunta
-pip install -r requirements.txt
+pip install yunta-harness
 ```
 
-O instala en modo editable:
-
+### Desde el repositorio fuente (Desarrollo):
 ```bash
+git clone https://github.com/j0sp0nc3/yunta-harness.git
+cd yunta-harness
 pip install -e .
 ```
 
