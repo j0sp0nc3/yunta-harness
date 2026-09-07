@@ -6,6 +6,60 @@ Esta guía te llevará paso a paso desde la instalación inicial hasta dominar e
 
 ---
 
+## Paso 0: Modelo Mental — ¿Qué es y qué NO es Yunta?
+
+Antes de tocar código, es fundamental entender la frontera entre tu herramienta y tu software:
+
+| Concepto | Lo que ES Yunta | Lo que NO ES Yunta |
+| :--- | :--- | :--- |
+| **Naturaleza** | Arnés/Harness de desarrollo asistido (CLI) | Framework de runtime (como LangChain, AutoGen o CrewAI) |
+| **Ubicación** | Tu terminal de trabajo (el banco del carpintero) | El servidor donde corre tu producto final (el mueble) |
+| **Acción** | `view_file`, `str_replace`, `bash`, `pytest` | Servidor web, daemon de producción o bot en la nube |
+| **Entregable** | Código limpio, testeado y comiteado para tu repo | Una aplicación que depende de Yunta para funcionar |
+
+> 💡 **La Regla de Oro**:  
+> *"Si estás pensando en cómo corre esto en producción, estás antes de usar Yunta. Si estás pensando en qué código necesitas escribir, es momento de abrir Yunta."*
+
+### Metodología de 5 Fases para Proyectos Nuevos
+
+1. **Fase 0: Definición de Frontera (en `AGENTS.md`)**:
+   - ¿Qué problema resuelve? (1 párrafo claro).
+   - ¿Cuál es el deliverable final? (código, librería, módulos).
+   - ¿Dónde se ejecuta en producción? (ej. Power Automate, AWS Lambda, Docker, React) — *NO en Yunta*.
+   - ¿Qué está fuera de alcance (*Out of Scope*)? (no crear daemons locales para Yunta).
+2. **Fase 1: Estructura Mínima**:
+   - Crear carpetas `src/`, `tests/` y `AGENTS.md`.
+3. **Fase 2: Definir Contratos (sin implementar lógica)**:
+   - Crear `src/api.py` con las `dataclasses` y tipos canónicos.
+4. **Fase 3: Primera Tarea de Desarrollo con Yunta**:
+   - Abrir `yunta` en la terminal y dar la instrucción acotada al contrato.
+5. **Fase 4: Verificación y Documentación**:
+   - Correr la suite de pruebas del proyecto y documentar el deploy a producción.
+
+### Plantilla Base: `AGENTS.md` para tus Proyectos
+
+Copia y pega este bloque en la raíz de cualquier proyecto que vayas a desarrollar con Yunta:
+
+```markdown
+# AGENTS.md — [Nombre del Proyecto]
+
+## 1. Misión y Entorno de Ejecución (Runtime Boundary)
+- **Propósito**: [Descripción concisa en 1 párrafo]
+- **Runtime de Producción**: [Ej. Power Automate + Dataverse / AWS Lambda / Docker / FastAPI] (NO en Yunta).
+- **Rol de Yunta**: Harness de desarrollo (herramientas de lectura, edición quirúrgica y pruebas).
+
+## 2. Entregables (Deliverables)
+- Código fuente en `src/`
+- Suite de pruebas unitarias en `tests/`
+- Tipos y contratos en `src/api.py`
+
+## 3. Fuera de Alcance (Out of Scope)
+- NUNCA crear servicios daemon ni daemons de terminal para Yunta.
+- No asumir autenticaciones locales que corresponden al runtime de producción.
+```
+
+---
+
 ## Paso 1: Requisitos Previos e Instalación
 
 Yunta requiere **Python 3.11 o superior**.
