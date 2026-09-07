@@ -478,6 +478,7 @@ publicación).
 ## [1.0.1] — 2026-09-07
 
 ### Agregado
+- **Métricas livianas de eficiencia de recursos**: Telemetría 100% en memoria en `yunta/api.py` (`Usage`), cálculo de Cache Hit Rate, cálculo de tokens brutos transferidos frente a chat crudo sin harness, desglose por tipo de herramienta y errores en `yunta/agent.py`, comandos `/tokens` y `/metrics` enriquecidos en `yunta/cli.py`, y 5 tests unitarios en `tests/test_metrics.py`. Cero llamadas adicionales a APIs, cero latencia y cero dependencias.
 - **Guardrail ontológico y flujo de 5 fases**:
   - `yunta/cli.py`: refuerzo de `SYSTEM_PROMPT` con frontera explícita entre el harness de desarrollo y el runtime de producción (evita que el modelo cree daemons o servicios locales para Yunta).
   - `tests/test_agent.py`: test unitario de regresión `test_system_prompt_ontological_boundary()`.

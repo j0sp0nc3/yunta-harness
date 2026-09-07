@@ -51,7 +51,7 @@ def main():
     agent = Agent(provider=provider, system=system)
 
     print(f"yunta — modelo: {provider.model()}")
-    print("Escribe tu consulta, /clear para limpiar, /exit para salir.\n")
+    print("Escribe tu consulta, /tokens o /metrics para telemetría, /clear para limpiar, /exit para salir.\n")
 
     try:
         while True:
@@ -71,10 +71,9 @@ def main():
                 agent.messages.clear()
                 print("(historial limpio)\n")
                 continue
-            if prompt == "/tokens":
-                u = provider.total_usage
-                cached_info = f" (cached={u.cached_tokens})" if u.cached_tokens else ""
-                print(f"in={u.input_tokens}{cached_info} out={u.output_tokens}\n")
+            if prompt in ("/tokens", "/metrics"):
+                u = agent.total_usage
+                print(u.format_summary() + "\n")
                 continue
 
             try:

@@ -3,7 +3,7 @@ import inspect
 import json
 from pathlib import Path
 
-from .api import Block, BlockType, Message, Response, Role, StopReason
+from .api import Block, BlockType, Message, Response, Role, StopReason, Usage
 from .tools import registry
 
 
@@ -24,8 +24,10 @@ class Agent:
         self.confirm = confirm
         self.messages: list[Message] = []
         self._tools_subset = list(tools) if tools is not None else None
+        self.usage = Usage()
 
     def send(self, prompt: str) -> str:
+        self.usage.turns += 1
         self.messages.append(
             Message(role=Role.USER, content=[Block(type=BlockType.TEXT, text=prompt)])
         )
@@ -56,6 +58,8 @@ class Agent:
                     resp = self.provider.send(self.messages, self._definitions(), on_text=self._stream_text)
                 else:
                     resp = self.provider.send(self.messages, self._definitions())
+                if not hasattr(self.provider, "total_usage") and getattr(resp, "usage", None):
+                    self.usage = self.usage.add(resp.usage)
                 self.messages.append(Message(role=Role.ASSISTANT, content=resp.content))
 
                 tool_results = []
@@ -101,18 +105,23 @@ class Agent:
         self._streamed = True
 
     def _execute_tool(self, name: str, raw_input: str) -> tuple[str, bool]:
+        self.usage.tool_counts[name] = self.usage.tool_counts.get(name, 0) + 1
         tool = registry.get(name)
         if tool is None:
+            self.usage.tool_errors += 1
             return f"unknown tool: {name}", True
 
         detail = self._tool_detail(name, raw_input)
         print(f"[tool] {name} {raw_input}")
         if tool.requires_approval and not self._approve(name, detail):
+            self.usage.tool_errors += 1
             return "user denied this tool call", True
 
         try:
-            return tool.fn(raw_input), False
+            res = tool.fn(raw_input)
+            return res, False
         except Exception as e:
+            self.usage.tool_errors += 1
             return f"{type(e).__name__}: {e}", True
 
     @staticmethod
@@ -155,3 +164,18 @@ class Agent:
             print(detail)
         answer = input(f"¿Ejecutar {name}? [y/N] ").strip().lower()
         return answer == "y"
+
+    @property
+    def total_usage(self) -> Usage:
+        p_usage = getattr(self.provider, "total_usage", None)
+        in_tok = p_usage.input_tokens if p_usage else self.usage.input_tokens
+        out_tok = p_usage.output_tokens if p_usage else self.usage.output_tokens
+        cached_tok = p_usage.cached_tokens if p_usage else self.usage.cached_tokens
+        return Usage(
+            input_tokens=in_tok,
+            output_tokens=out_tok,
+            cached_tokens=cached_tok,
+            tool_counts=dict(self.usage.tool_counts),
+            tool_errors=self.usage.tool_errors,
+            turns=self.usage.turns,
+        )
