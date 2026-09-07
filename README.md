@@ -28,6 +28,12 @@ Diseñado desde cero para ser independiente de cualquier proveedor de modelos: e
 
 ---
 
+## Guía Rápida Paso a Paso
+
+👉 ¿Primera vez usando Yunta? Sigue la **[Guía Paso a Paso Completa (docs/quickstart.md)](docs/quickstart.md)** para aprender desde la configuración del modelo hasta el flujo de edición con diffs y comandos del REPL.
+
+---
+
 ## Instalación
 
 Requiere Python 3.11 o superior.
