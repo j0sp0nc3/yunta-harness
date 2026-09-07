@@ -202,3 +202,24 @@ def test_system_prompt_ontological_boundary():
     assert "banco de herramientas" in prompt
     assert "NO el runtime de la aplicación" in prompt
     assert "NUNCA crees servicios, daemons ni plugins" in prompt
+
+
+def test_load_system_prompt_custom_override(monkeypatch, tmp_path):
+    from pathlib import Path
+    from yunta.cli import load_system_prompt
+
+    # 1. Override vía variable de entorno YUNTA_SYSTEM_PROMPT
+    monkeypatch.setenv("YUNTA_SYSTEM_PROMPT", "prompt personalizado")
+    prompt = load_system_prompt()
+    assert prompt.startswith("prompt personalizado")
+
+    # 2. Override vía archivo ~/.yunta/system_prompt.md
+    monkeypatch.delenv("YUNTA_SYSTEM_PROMPT", raising=False)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    dot_yunta = tmp_path / ".yunta"
+    dot_yunta.mkdir(parents=True, exist_ok=True)
+    (dot_yunta / "system_prompt.md").write_text("prompt archivo", encoding="utf-8")
+
+    prompt_file = load_system_prompt()
+    assert prompt_file.startswith("prompt archivo")
+
