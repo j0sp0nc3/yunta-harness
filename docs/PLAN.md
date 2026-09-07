@@ -3,7 +3,7 @@
 Plan de la iniciativa y su estado. Se comparte junto con el código para que
 cualquier persona, IDE o modelo sepa hacia dónde va el proyecto y qué falta.
 
-Estado actual: **v1.0.1 — API pública congelada** (fases 1-8, backlog fundacional y roadmap E1-E3 completados). Actualizar este archivo al
+Estado actual: **v1.0.2 — Publicado en PyPI** (fases 1-8, backlog fundacional y roadmap E1-E7 completados al 100%). Actualizar este archivo al
 cambiar de fase, junto con `CHANGELOG.md`.
 
 ## Roadmap de evolución (post-backlog)

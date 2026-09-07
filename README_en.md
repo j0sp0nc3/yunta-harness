@@ -4,6 +4,10 @@
 
 ![logo](docs/logo.png)
 
+[![PyPI version](https://img.shields.io/pypi/v/yunta-harness.svg)](https://pypi.org/project/yunta-harness/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 **Terminal coding agent harness, strictly model-provider agnostic.**
 
 *Yunta*: a team of oxen yoked together to plow the field — you and the agent, no matter which model pulls from the other side.
@@ -48,15 +52,15 @@ Designed from the ground up to be completely independent of any single model pro
 
 Requires Python 3.11 or higher.
 
+### From PyPI (Recommended):
 ```bash
-git clone https://github.com/j0sp0nc3/yunta.git
-cd yunta
-pip install -r requirements.txt
+pip install yunta-harness
 ```
 
-Or install in editable mode:
-
+### From source repository (Development):
 ```bash
+git clone https://github.com/j0sp0nc3/yunta-harness.git
+cd yunta-harness
 pip install -e .
 ```
 
