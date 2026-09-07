@@ -385,16 +385,6 @@ agente en la siguiente — auto-mejora sin infraestructura pesada.
 
 ---
 
-## Convenciones para futuros cambios
-
-1. Toda modificación se registra en este archivo: qué cambió, en qué archivo y por qué.
-2. Los números de versión siguen SemVer: `mayor.minor.parche`.
-3. El harness no debe ganar dependencias de proveedores específicos: si un cambio
-   requiere importar un SDK concreto fuera de un adaptador, el diseño se revisa.
-4. Verificación mínima antes de registrar un cambio: compilar + smoke test del
-   bucle con provider falso.
-
-
 ## [0.10.0] – 2026-09-06
 
 ### Agregado
@@ -449,3 +439,14 @@ agente en la siguiente — auto-mejora sin infraestructura pesada.
 - 57 tests pasando al 100% en `pytest` (54 existentes + 3 nuevos tests unitarios).
 - Compilación y verificación sintáctica con `py_compile` y `compileall`.
 - Implementado de forma autónoma mediante dogfooding con Yunta.
+
+---
+
+## Convenciones para futuros cambios
+
+1. Toda modificación se registra en este archivo: qué cambió, en qué archivo y por qué.
+2. Los números de versión siguen SemVer: `mayor.minor.parche`.
+3. El harness no debe ganar dependencias de proveedores específicos: si un cambio
+   requiere importar un SDK concreto fuera de un adaptador, el diseño se revisa.
+4. Verificación mínima antes de registrar un cambio: compilar + smoke test del
+   bucle con provider falso.
