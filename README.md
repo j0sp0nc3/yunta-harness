@@ -18,6 +18,7 @@ Diseñado desde cero para ser independiente de cualquier proveedor de modelos: e
 - **Minimalismo Extremo (~500 líneas)**: Sin frameworks de agentes pesados (sin LangChain ni CrewAI). Código comprensible, auditable y fácil de hackear.
 - **Edición Quirúrgica de Código (`str_replace`)**: Edita fragmentos exactos de archivos validando unicidad de contexto al estilo de Anthropic Claude Code y SWE-bench.
 - **Aprobaciones Humanas con Diff Unificado**: Visualiza exactamente qué líneas se agregarán o eliminarán antes de confirmar la escritura o ejecución.
+- **Prompt Caching Agnóstico**: Inyección de puntos de corte de caché (`cache_control`) para Anthropic Claude y detección automática en OpenAI/DeepSeek/Gemini, ahorrando hasta 90% en tokens de entrada y reduciendo la latencia.
 - **Interrupción Limpia (`Ctrl+C`)**: Cancela un turno largo o llamada a herramienta en cualquier momento sin perder la sesión del REPL ni romper el historial de la conversación.
 - **Soporte Nativo de MCP (Model Context Protocol)**: Conecta servidores MCP externos vía `stdio` JSON-RPC 2.0 sin librerías adicionales.
 - **Memoria Persistente y Aprendizaje Continuo**: Recuerda hechos clave entre sesiones (`.yunta/memory.json`) y acumula lecciones aprendidas (`.yunta/learnings.md`).

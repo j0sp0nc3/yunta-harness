@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import yunta.tools.bash  # noqa: F401,E402
 import yunta.tools.files  # noqa: F401,E402
-from yunta.api import Block, BlockType, Message, Role  # noqa: E402
+from yunta.api import Block, BlockType, Message, Role, Usage  # noqa: E402
 from yunta.provider import LiteLLMProvider  # noqa: E402
 from yunta.tools import registry  # noqa: E402
 
@@ -57,7 +57,10 @@ def test_openai_translation():
     p = LiteLLMProvider(system="sys")
     r = p.send(MSGS, tools=registry.definitions())
     lm = captured["messages"]
-    assert lm[0] == {"role": "system", "content": "sys"}
+    assert lm[0] == {
+        "role": "system",
+        "content": [{"type": "text", "text": "sys", "cache_control": {"type": "ephemeral"}}],
+    }
     assert lm[1] == {"role": "user", "content": "hola"}
     assert lm[2]["tool_calls"][0]["function"]["name"] == "read_file"
     assert lm[3] == {"role": "tool", "tool_call_id": "t1", "content": "contenido"}
@@ -180,3 +183,30 @@ def test_streaming_tool_call_fragmented():
     assert r.stop_reason.value == "tool_use"
     assert r.usage.input_tokens == 15
     assert p.total_usage.output_tokens == 10
+
+
+def test_system_prompt_includes_cache_control():
+    os.environ["LLM_MODEL"] = "openai/gpt-4o"
+    p = LiteLLMProvider(system="sys")
+    assert p._to_litellm([])[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_usage_accumulates_cached_tokens():
+    assert Usage(input_tokens=10, output_tokens=5, cached_tokens=8).add(Usage(cached_tokens=4)).cached_tokens == 12
+
+
+def test_provider_tracks_cached_tokens():
+    os.environ["LLM_MODEL"] = "openai/gpt-4o"
+    fake_usage = SimpleNamespace(
+        prompt_tokens=10,
+        completion_tokens=5,
+        prompt_tokens_details=SimpleNamespace(cached_tokens=7),
+    )
+    litellm.completion = lambda **kwargs: SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="ok", tool_calls=None), finish_reason="stop")],
+        usage=fake_usage,
+    )
+    p = LiteLLMProvider(system="sys")
+    r = p.send(MSGS[:1], tools=[])
+    assert r.usage.cached_tokens == 7
+    assert p.total_usage.cached_tokens == 7

@@ -65,6 +65,7 @@ Define las estructuras inmutables de comunicación independientes de cualquier A
 ### 3.2. Capa de Proveedor (`yunta/provider.py`)
 - Actúa como la única frontera que interactúa con [LiteLLM](https://docs.litellm.ai/).
 - Traduce los mensajes neutrales a esquemas compatibles con OpenAI, Anthropic, Gemini, DeepSeek, etc.
+- **Prompt Caching Agnóstico**: Estructuración del system prompt con `cache_control: {"type": "ephemeral"}` para activar el caché de prefijos en Anthropic Claude y extracción normalizada de `cached_tokens` para OpenAI, DeepSeek y Gemini.
 - **Streaming y Reensamblado de Fragmentos**: Reensambla fragmentos parciales de texto y llamadas a herramientas divididas en streaming (`streaming tool call chunks`).
 - **Auto-Retry Resiliente**: Captura de forma transparente fallos transitorios (`429 Too Many Requests`, `503 Service Unavailable`, `MidStreamFallbackError`) aplicando retroceso exponencial progresivo.
 

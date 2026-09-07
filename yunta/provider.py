@@ -90,9 +90,16 @@ class LiteLLMProvider(Provider):
 
         u = resp.usage
         if u is not None:
+            cached = (
+                getattr(getattr(u, "prompt_tokens_details", None), "cached_tokens", 0)
+                or getattr(u, "cache_read_input_tokens", 0)
+                or getattr(u, "prompt_cache_hit_tokens", 0)
+                or 0
+            )
             out.usage = Usage(
                 input_tokens=getattr(u, "prompt_tokens", 0) or 0,
                 output_tokens=getattr(u, "completion_tokens", 0) or 0,
+                cached_tokens=cached or 0,
             )
             self.total_usage = self.total_usage.add(out.usage)
         return out
@@ -105,9 +112,16 @@ class LiteLLMProvider(Provider):
         for chunk in stream:
             if getattr(chunk, "usage", None) is not None:
                 u = chunk.usage
+                cached = (
+                    getattr(getattr(u, "prompt_tokens_details", None), "cached_tokens", 0)
+                    or getattr(u, "cache_read_input_tokens", 0)
+                    or getattr(u, "prompt_cache_hit_tokens", 0)
+                    or 0
+                )
                 usage = Usage(
                     input_tokens=getattr(u, "prompt_tokens", 0) or 0,
                     output_tokens=getattr(u, "completion_tokens", 0) or 0,
+                    cached_tokens=cached or 0,
                 )
             for choice in chunk.choices or []:
                 if choice.finish_reason:
@@ -152,7 +166,18 @@ class LiteLLMProvider(Provider):
         return out
 
     def _to_litellm(self, messages: list[Message]) -> list[dict]:
-        out = [{"role": "system", "content": self._system}] if self._system else []
+        out = [
+            {
+                "role": "system",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": self._system,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+            }
+        ] if self._system else []
         for m in messages:
             if m.role == Role.ASSISTANT:
                 out.append(self._assistant_msg(m))

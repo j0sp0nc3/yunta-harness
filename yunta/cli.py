@@ -68,7 +68,8 @@ def main():
                 continue
             if prompt == "/tokens":
                 u = provider.total_usage
-                print(f"in={u.input_tokens} out={u.output_tokens}\n")
+                cached_info = f" (cached={u.cached_tokens})" if u.cached_tokens else ""
+                print(f"in={u.input_tokens}{cached_info} out={u.output_tokens}\n")
                 continue
 
             try:

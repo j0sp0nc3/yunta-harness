@@ -18,6 +18,7 @@ Designed from the ground up to be completely independent of any single model pro
 - **Ultra-Minimal Core (~500 lines)**: Zero heavy agent frameworks (no LangChain, no CrewAI). Clean, auditable, hackable code.
 - **Surgical Code Editing (`str_replace`)**: Deterministically edits exact file fragments with uniqueness verification, adhering to Anthropic Claude Code and SWE-bench standards.
 - **Human-in-the-Loop Unified Diffs**: Inspect exactly which lines will be added or removed before approving write operations.
+- **Agnostic Prompt Caching**: Automatic injection of cache breakpoints (`cache_control`) for Anthropic Claude and automatic prefix caching support for OpenAI/DeepSeek/Gemini, cutting input token costs by up to 90% and reducing latency.
 - **Graceful Interrupt Handling (`Ctrl+C`)**: Cancel a long turn or running tool call instantly without crashing your REPL session or corrupting conversation history.
 - **Native MCP (Model Context Protocol) Support**: Connect local `stdio` MCP servers over JSON-RPC 2.0 without third-party agent libraries.
 - **Persistent Memory & Compound Learning**: Preserve key project facts across sessions (`.yunta/memory.json`) and store learned lessons (`.yunta/learnings.md`).
