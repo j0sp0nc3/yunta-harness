@@ -28,6 +28,12 @@ Designed from the ground up to be completely independent of any single model pro
 
 ---
 
+## Step-by-Step Quickstart
+
+👉 First time using Yunta? Follow the **[Complete Step-by-Step Guide (docs/quickstart_en.md)](docs/quickstart_en.md)** to learn everything from setting up your model to surgical diff editing and REPL controls.
+
+---
+
 ## Installation
 
 Requires Python 3.11 or higher.

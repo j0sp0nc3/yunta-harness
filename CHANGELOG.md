@@ -477,6 +477,9 @@ publicación).
 
 ## [1.0.1] — 2026-09-07
 
+### Agregado
+- **Guía paso a paso bilingüe**: Creación de `docs/quickstart.md` y `docs/quickstart_en.md`, tutorial detallado desde la instalación y configuración de modelos (Gemini, Claude, GPT-4o, Ollama, DeepSeek) hasta la verificación con `scripts/prueba_proveedor.py`, flujo de turnos interactivo, aprobaciones con diff unificado, comandos del REPL (`/tokens`, `Ctrl+C`, `/clear`, `/exit`) y uso avanzado con `AGENTS.md` y MCP.
+
 ### Corregido
 - **CI fallaba en Python 3.10**: bug upstream en litellm 1.100.0 —
   `llms/anthropic/experimental_pass_through/context_management/editors/compact.py`
