@@ -3,14 +3,14 @@
 Plan de la iniciativa y su estado. Se comparte junto con el código para que
 cualquier persona, IDE o modelo sepa hacia dónde va el proyecto y qué falta.
 
-Estado actual: **v1.0.0 — API pública congelada** (fases 1-8, backlog fundacional y roadmap E1-E3 completados). Actualizar este archivo al
+Estado actual: **v1.0.1 — API pública congelada** (fases 1-8, backlog fundacional y roadmap E1-E3 completados). Actualizar este archivo al
 cambiar de fase, junto con `CHANGELOG.md`.
 
 ## Roadmap de evolución (post-backlog)
 
 | # | Item | Estado |
 |---|------|--------|
-| E1 | CI con GitHub Actions (tests Python 3.10-3.13 en cada push/PR) | ✅ v1.0.0 |
+| E1 | CI con GitHub Actions (tests Python 3.11-3.13 en cada push/PR) | ✅ v1.0.0 |
 | E2 | Congelar API pública (superficie estable en `yunta/__init__.py`) | ✅ v1.0.0 |
 | E3 | Matriz de proveedores (`docs/PROVEEDORES.md` + `scripts/prueba_proveedor.py`) | ✅ v1.0.0 — GLM y Gemini verificados; resto pendiente comunitario |
 | E4 | Publicación en PyPI (`pip install yunta`) | ⬜ pendiente — último del roadmap: requiere decidir cuenta/nombres de publicación; los endpoints de pago para prueba quedan a discreción del publicador |
@@ -28,7 +28,7 @@ trabaja con el mismo harness.
 
 | Decisión | Elección | Motivo |
 |---|---|---|
-| Lenguaje | Python 3.10+ | Alcance multi-IDE/multi-modelo, ecosistema |
+| Lenguaje | Python 3.11+ | Alcance multi-IDE/multi-modelo, ecosistema |
 | Acceso a modelos | LiteLLM | 100+ proveedores con una sola interfaz, tool calling unificado, validado en producción |
 | Alcance v1 | Núcleo mínimo | Loop + tools + permisos + compactación; nada más |
 | Estilo | ~500 líneas, comentarios mínimos | Legibilidad y facilidad de adopción |

@@ -97,3 +97,39 @@ Define las estructuras inmutables de comunicación independientes de cualquier A
 ### 3.7. Memoria y Auto-Feedback (`yunta/feedback.py`)
 - Al finalizar una sesión (`/exit`), el agente analiza los patrones de éxito/error de la conversación y sintetiza aprendizajes operativos en `.yunta/learnings.md`.
 - En la siguiente sesión, `load_system_prompt()` inyecta estas lecciones aprendidas en el preámbulo, logrando auto-mejora continua sin necesidad de reentrenamiento.
+
+
+### 3.8. Superficie de API Pública Congelada (`yunta/__init__.py`)
+A partir de la versión **v1.0.0**, Yunta congela y expone formalmente su superficie pública estable:
+- **Núcleo de Ejecución**: `Agent`, `Block`, `BlockType`, `Message`, `Response`, `Role`, `StopReason`, `ToolDef`, `Usage`.
+- **Estrategias de Compactación**: `NoCompaction`, `SlidingWindow`.
+- **Capa de Modelos**: `LiteLLMProvider`.
+- **Ciclo de Feedback**: `FeedbackStore`.
+
+**Contrato de Estabilidad**: Cualquier cambio que altere los argumentos o contratos de esta superficie requerirá un salto de versión mayor (`2.0`). Esto permite utilizar a Yunta no solo como CLI interactivo, sino también como librería Python embebible dentro de otros sistemas o herramientas de automatización.
+
+### 3.9. Integración Continua (CI con GitHub Actions)
+El repositorio incorpora un pipeline automatizado de integración continua en [`.github/workflows/ci.yml`](../.github/workflows/ci.yml):
+- **Matriz de Entornos**: Pruebas automáticas sobre **Python 3.11, 3.12 y 3.13** en `ubuntu-latest` en cada `push` a `master` y en cada `pull_request`.
+- **Ejecución Zero-Credentials**: La suite completa de 57 tests se ejecuta sin necesidad de claves de API externas configurando `LLM_MODEL: ci-placeholder`, ya que todas las interacciones de red están aisladas y probadas mediante mocks en la capa neutral.
+- **Compilación Estricta**: Verificación sintáctica con `py_compile` de todo el árbol de código antes de la ejecución de `pytest`.
+
+### 3.10. Matriz de Proveedores y Prueba Universal
+Yunta mantiene una matriz viva de compatibilidad de modelos en [`docs/PROVEEDORES.md`](PROVEEDORES.md) respaldada por el script ejecutable [`scripts/prueba_proveedor.py`](../scripts/prueba_proveedor.py):
+- Valida el ciclo completo contra cualquier proveedor configurado mediante variables de entorno (`LLM_MODEL`, `LLM_API_KEY`, `LLM_API_BASE`):
+  1. Envío inicial de tarea.
+  2. Ejecución de Tool Call real (`write_file`).
+  3. Inspección y lectura real (`read_file`).
+  4. Confirmación de respuesta final por parte del modelo.
+  5. Limpieza automática de artefactos de prueba.
+
+---
+
+## 4. Filosofía y Enfoque: Spec-Driven Development (SDD)
+
+Yunta adopta formalmente el paradigma de **Desarrollo Guiado por Especificaciones (Spec-Driven Development)**:
+- La especificación del proyecto (`AGENTS.md`) actúa como contrato inviolable que gobierna el comportamiento del agente.
+- Las herramientas operan mediante contratos de datos estrictos (JSON-Schema).
+- La modificación de código es determinista y quirúrgica (`str_replace`), auditada interactivamente con Diffs unificados.
+- El éxito se certifica exclusivamente mediante oráculos ejecutables (`pytest`).
+- Para una presentación completa y detallada de la arquitectura SDD, consulta [Yunta & Spec-Driven Development (docs/sdd.md)](sdd.md).

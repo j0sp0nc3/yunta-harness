@@ -1,9 +1,9 @@
 [project]
 name = "yunta"
-version = "1.0.0"
+version = "1.0.1"
 description = "Harness de agente de código para terminal, agnóstico al proveedor del modelo"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = ["litellm>=1.40.0"]
 

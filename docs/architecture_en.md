@@ -97,3 +97,39 @@ Defines immutable communication schemas independent of any external LLM library:
 ### 3.7. Memory & Auto-Feedback (`yunta/feedback.py`)
 - On session close (`/exit`), analyzes conversation trajectories and extracts actionable learnings stored in `.yunta/learnings.md`.
 - On future startup, `load_system_prompt()` injects these learnings into the system preamble, providing autonomous compounding improvement.
+
+
+### 3.8. Frozen Public API Surface (`yunta/__init__.py`)
+Starting with **v1.0.0**, Yunta formally freezes and exports its stable public surface:
+- **Core Execution**: `Agent`, `Block`, `BlockType`, `Message`, `Response`, `Role`, `StopReason`, `ToolDef`, `Usage`.
+- **Context Compaction**: `NoCompaction`, `SlidingWindow`.
+- **Model Provider**: `LiteLLMProvider`.
+- **Feedback Store**: `FeedbackStore`.
+
+**Stability Guarantee**: Any breaking changes to this public interface will strictly require a major version bump (`2.0`). This guarantees Yunta can be used both as a terminal CLI and as an embeddable Python library inside custom tooling.
+
+### 3.9. Continuous Integration (CI with GitHub Actions)
+The repository includes an automated CI pipeline in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml):
+- **Matrix Testing**: Automated validation across **Python 3.11, 3.12, and 3.13** on `ubuntu-latest` on every `push` to `master` and on `pull_request`.
+- **Zero-Credential Testing**: The entire 57-test suite runs without external API keys using `LLM_MODEL: ci-placeholder`, as provider interactions are decoupled and mocked through neutral abstractions.
+- **Strict Syntax Compilation**: Pre-test validation using `py_compile` across the entire codebase.
+
+### 3.10. Provider Matrix and Universal Verification
+Yunta maintains a live model compatibility matrix in [`docs/PROVEEDORES.md`](PROVEEDORES.md) paired with a universal verification script [`scripts/prueba_proveedor.py`](../scripts/prueba_proveedor.py):
+- Validates the end-to-end tool-calling loop against any configured model:
+  1. Task prompt submission.
+  2. Real tool call execution (`write_file`).
+  3. Real verification read (`read_file`).
+  4. Final synthesis and confirmation by the LLM.
+  5. Automatic test artifact cleanup.
+
+---
+
+## 4. Design Philosophy: Spec-Driven Development (SDD)
+
+Yunta formally implements the **Spec-Driven Development (SDD)** paradigm:
+- Project specifications (`AGENTS.md`) act as inviolable architectural contracts.
+- Tools operate via rigorous data contracts (JSON-Schema).
+- Code edits are deterministic and surgical (`str_replace`), verified interactively with Git-style unified diffs.
+- Task completion is certified strictly through executable test oracles (`pytest`).
+- For a comprehensive presentation of the SDD architecture, read [Yunta & Spec-Driven Development (docs/sdd_en.md)](sdd_en.md).

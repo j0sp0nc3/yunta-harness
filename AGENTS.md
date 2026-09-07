@@ -43,6 +43,6 @@ Más un smoke test del bucle con provider falso (ver `CHANGELOG.md` § 0.1.0).
 
 ## Entorno
 
-- Python 3.10+, dependencias solo en `requirements.txt` (hoy: `litellm`).
+- Python 3.11+, dependencias solo en `requirements.txt` (hoy: `litellm`).
 - Variables: `LLM_MODEL` (obligatoria), `LLM_API_KEY`, `LLM_API_BASE` (opcionales,
   según proveedor — ver README para ejemplos).

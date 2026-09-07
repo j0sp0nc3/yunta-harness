@@ -30,7 +30,7 @@ Diseñado desde cero para ser independiente de cualquier proveedor de modelos: e
 
 ## Instalación
 
-Requiere Python 3.10 o superior.
+Requiere Python 3.11 o superior.
 
 ```bash
 git clone https://github.com/j0sp0nc3/yunta.git
@@ -49,6 +49,7 @@ pip install -e .
 ## Configuración de Modelos
 
 Yunta **no tiene modelos por defecto**: tú eliges quién tira del carro configurando tu entorno.
+Consulta la [Matriz de Proveedores Verificados](docs/PROVEEDORES.md) para ver la lista de modelos probados con el script de prueba universal (`scripts/prueba_proveedor.py`).
 
 ### Google Gemini
 ```bash
@@ -103,6 +104,28 @@ yunta
 - `/tokens`: Muestra el consumo acumulado de tokens (entrada y salida) de la sesión.
 - `/exit`: Guarda lecciones aprendidas en `.yunta/learnings.md` y finaliza la sesión.
 - `Ctrl+C`: Interrumpe el turno en curso de forma limpia y regresa al prompt `> ` sin tumbar la sesión.
+
+---
+
+---
+
+## Uso como Librería en Python (API v1.0)
+
+A partir de la versión 1.0.0, puedes importar y embeber a Yunta directamente en tus scripts o aplicaciones:
+
+```python
+from yunta import Agent, LiteLLMProvider, FeedbackStore
+
+# Inicializa el proveedor usando la variable de entorno LLM_MODEL
+provider = LiteLLMProvider(system="Eres un asistente técnico conciso.")
+
+# Instancia el agente con aprobaciones automáticas o personalizadas
+agent = Agent(provider=provider, system=provider.system, confirm=lambda name, detail: True)
+
+# Envía un mensaje y recibe la respuesta estructurada
+respuesta = agent.send("Lista los archivos en el directorio actual")
+print(respuesta)
+```
 
 ---
 

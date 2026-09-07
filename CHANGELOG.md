@@ -449,6 +449,7 @@ agente en la siguiente — auto-mejora sin infraestructura pesada.
 - **CI (GitHub Actions)**: `.github/workflows/ci.yml` — tests en Python
   3.10-3.13 en cada push/PR. La suite no requiere credenciales (LiteLLM
   se intercepta en tests).
+- **Documentación v1.0.0 unificada**: `docs/architecture.md` y `docs/architecture_en.md` actualizados con la especificación de API pública congelada, pipeline de CI y sección de Spec-Driven Development. `README.md` y `README_en.md` actualizados con guía de uso como librería Python embebible y enlace a matriz de proveedores.
 - **Matriz de proveedores**: `docs/PROVEEDORES.md` +
   `scripts/prueba_proveedor.py` (prueba universal: tool call real +
   lectura + verificación). GLM-4.7 (Z.ai Coding Plan) re-verificado con
@@ -471,6 +472,24 @@ publicación).
 ### Verificación
 - `pytest` → 57 passed. Prueba universal GLM-4.7 → OK.
 - El push de esta versión dispara el primer run del CI.
+
+---
+
+## [1.0.1] — 2026-09-07
+
+### Corregido
+- **CI fallaba en Python 3.10**: bug upstream en litellm 1.100.0 —
+  `llms/anthropic/experimental_pass_through/context_management/editors/compact.py`
+  importa `typing.NotRequired`, inexistente en 3.10, pese a que litellm
+  declara `requires-python >=3.10`.
+
+### Modificado
+- Piso de Python subido a **3.11**: `pyproject.toml` (`requires-python`),
+  matriz del CI (3.11/3.12/3.13) y README/AGENTS.
+- Nota: si litellm corrige el bug upstream, se puede restaurar 3.10.
+
+### Verificación
+- El push de esta versión dispara el CI; verde en 3.11-3.13 confirma.
 
 ---
 
