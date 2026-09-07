@@ -478,6 +478,10 @@ publicación).
 ## [1.0.1] — 2026-09-07
 
 ### Agregado
+- **Guardrail ontológico y flujo de 5 fases**:
+  - `yunta/cli.py`: refuerzo de `SYSTEM_PROMPT` con frontera explícita entre el harness de desarrollo y el runtime de producción (evita que el modelo cree daemons o servicios locales para Yunta).
+  - `tests/test_agent.py`: test unitario de regresión `test_system_prompt_ontological_boundary()`.
+  - `docs/quickstart.md` y `docs/quickstart_en.md`: adición del **Paso 0** con la tabla *Lo que ES vs Lo que NO ES Yunta*, la *Regla de Oro*, metodología de 5 fases y plantilla `AGENTS.md` para proyectos de clientes.
 - **Harness para SDD en portadas**: Actualización del título principal y adición de sección destacada en `README.md` y `README_en.md` posicionando formalmente a Yunta como el Harness de Agente de Código para Spec-Driven Development (SDD), vinculándolo con la arquitectura y guías de `docs/sdd.md`.
 - **Guía paso a paso bilingüe**: Creación de `docs/quickstart.md` y `docs/quickstart_en.md`, tutorial detallado desde la instalación y configuración de modelos (Gemini, Claude, GPT-4o, Ollama, DeepSeek) hasta la verificación con `scripts/prueba_proveedor.py`, flujo de turnos interactivo, aprobaciones con diff unificado, comandos del REPL (`/tokens`, `Ctrl+C`, `/clear`, `/exit`) y uso avanzado con `AGENTS.md` y MCP.
 

@@ -7,6 +7,7 @@ sys.path.insert(0, ".")
 
 from yunta.agent import Agent
 from yunta.api import Block, BlockType, Response, StopReason
+from yunta.tools import bash, files  # noqa: F401
 
 
 class FakeProvider:
@@ -191,3 +192,13 @@ def test_keyboard_interrupt_in_loop_preserves_assistant_message(capsys):
     assert a.messages[0].role == Role.USER
     assert a.messages[-1].role == Role.ASSISTANT
     assert a.messages[-1].content[0].text == "[interrumpido por el usuario]"
+
+
+def test_system_prompt_ontological_boundary():
+    from yunta.cli import load_system_prompt
+
+    prompt = load_system_prompt()
+    assert "Frontera de rol y entorno de ejecución" in prompt
+    assert "banco de herramientas" in prompt
+    assert "NO el runtime de la aplicación" in prompt
+    assert "NUNCA crees servicios, daemons ni plugins" in prompt
