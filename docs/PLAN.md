@@ -3,8 +3,17 @@
 Plan de la iniciativa y su estado. Se comparte junto con el código para que
 cualquier persona, IDE o modelo sepa hacia dónde va el proyecto y qué falta.
 
-Estado actual: **Fase 1-8 y Backlog fundacional completados (v0.11.0)**. Actualizar este archivo al
+Estado actual: **v1.0.0 — API pública congelada** (fases 1-8, backlog fundacional y roadmap E1-E3 completados). Actualizar este archivo al
 cambiar de fase, junto con `CHANGELOG.md`.
+
+## Roadmap de evolución (post-backlog)
+
+| # | Item | Estado |
+|---|------|--------|
+| E1 | CI con GitHub Actions (tests Python 3.10-3.13 en cada push/PR) | ✅ v1.0.0 |
+| E2 | Congelar API pública (superficie estable en `yunta/__init__.py`) | ✅ v1.0.0 |
+| E3 | Matriz de proveedores (`docs/PROVEEDORES.md` + `scripts/prueba_proveedor.py`) | ✅ v1.0.0 — GLM y Gemini verificados; resto pendiente comunitario |
+| E4 | Publicación en PyPI (`pip install yunta`) | ⬜ pendiente — último del roadmap: requiere decidir cuenta/nombres de publicación; los endpoints de pago para prueba quedan a discreción del publicador |
 
 ---
 

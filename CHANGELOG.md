@@ -442,6 +442,37 @@ agente en la siguiente — auto-mejora sin infraestructura pesada.
 
 ---
 
+## [1.0.0] — 2026-09-07
+
+### Agregado
+- **CI (GitHub Actions)**: `.github/workflows/ci.yml` — tests en Python
+  3.10-3.13 en cada push/PR. La suite no requiere credenciales (LiteLLM
+  se intercepta en tests).
+- **Matriz de proveedores**: `docs/PROVEEDORES.md` +
+  `scripts/prueba_proveedor.py` (prueba universal: tool call real +
+  lectura + verificación). GLM-4.7 (Z.ai Coding Plan) re-verificado con
+  el script universal: RESULTADO OK.
+- Congelación de API: exports estables en `yunta/__init__.py` (núcleo,
+  compactación, provider, FeedbackStore; `Response`/`Usage` añadidos).
+
+### Declaración de estabilidad (1.0)
+Superficie pública estable: `Agent(provider, system, compactor,
+max_turns, confirm, tools)`, `Provider.send(messages, tools, on_text)`,
+`LiteLLMProvider`, tipos de `api.py`, `FeedbackStore`,
+`@registry.register`, estrategias de compactación. Cambios que rompan
+esta interfaz requieren versión mayor (2.0).
+
+### Roadmap de evolución
+E1 CI ✅ · E2 API congelada ✅ · E3 matriz ✅ (GLM+Gemini verificados,
+resto comunitario) · E4 PyPI pendiente (último, por decidir cuenta de
+publicación).
+
+### Verificación
+- `pytest` → 57 passed. Prueba universal GLM-4.7 → OK.
+- El push de esta versión dispara el primer run del CI.
+
+---
+
 ## Convenciones para futuros cambios
 
 1. Toda modificación se registra en este archivo: qué cambió, en qué archivo y por qué.
