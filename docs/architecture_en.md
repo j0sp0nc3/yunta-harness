@@ -65,6 +65,7 @@ Defines immutable communication schemas independent of any external LLM library:
 ### 3.2. Provider Abstraction Layer (`yunta/provider.py`)
 - The single isolation boundary interfacing with [LiteLLM](https://docs.litellm.ai/).
 - Translates neutral messages to schemas expected by OpenAI, Anthropic, Gemini, DeepSeek, etc.
+- **Agnostic Prompt Caching**: Formats the system prompt with `cache_control: {"type": "ephemeral"}` to activate prefix caching for Anthropic Claude and extracts normalized `cached_tokens` across OpenAI, DeepSeek, and Gemini.
 - **Streaming & Chunk Reassembly**: Rebuilds fragmented text chunks and split tool calls from streaming responses.
 - **Resilient Auto-Retry**: Transparently handles transient errors (`429 Too Many Requests`, `503 Service Unavailable`, `MidStreamFallbackError`) using progressive exponential backoff.
 

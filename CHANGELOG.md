@@ -423,3 +423,29 @@ agente en la siguiente — auto-mejora sin infraestructura pesada.
 - 54 tests pasando al 100% en `pytest` (`tests/test_agent.py`, `tests/test_tools.py`, `tests/test_mcp.py`, `tests/test_provider.py`, etc.).
 - Compilación sintáctica verificada con `py_compile`.
 - Implementación realizada mediante dogfooding utilizando la herramienta `str_replace` recientemente creada.
+
+
+## [0.11.0] – 2026-09-06
+
+### Agregado
+- **Prompt Caching nativo y agnóstico al LLM** (`yunta/provider.py` y `yunta/api.py`):
+  - Inyección de punto de corte de caché estructurado (`cache_control: {"type": "ephemeral"}`) en el system prompt dentro de `_to_litellm()`.
+  - Activación automática de Prompt Caching en Anthropic Claude (reducción de hasta 90% en costo de tokens cacheados y aceleración de latencia TTFT del 50-80%).
+  - Compatibilidad transparente sin errores en OpenAI, DeepSeek, Google Gemini y proveedores locales (Ollama/vLLM), aprovechando su caching automático a nivel de prefijo.
+  - Normalización de métricas de telemetría de caché en `yunta/api.py` (`Usage.cached_tokens`).
+  - Extracción unificada de tokens cacheados desde LiteLLM soportando `prompt_tokens_details.cached_tokens`, `cache_read_input_tokens` y `prompt_cache_hit_tokens` tanto en respuestas síncronas como en streaming.
+- **Visibilidad de ahorro en el REPL** (`yunta/cli.py`):
+  - El comando `/tokens` ahora desglosa el ahorro de caché: `in=<tokens> (cached=<cached_tokens>) out=<output_tokens>`.
+- **Tests unitarios** (`tests/test_provider.py`):
+  - `test_system_prompt_includes_cache_control`: valida la presencia de `cache_control` en el system prompt.
+  - `test_usage_accumulates_cached_tokens`: valida la acumulación en el método `Usage.add()`.
+  - `test_provider_tracks_cached_tokens`: valida la extracción y suma en `provider.total_usage`.
+
+### Modificado
+- `pyproject.toml`: versión actualizada a `0.11.0`.
+- `docs/PLAN.md`: actualizado estado a v0.11.0.
+
+### Verificación
+- 57 tests pasando al 100% en `pytest` (54 existentes + 3 nuevos tests unitarios).
+- Compilación y verificación sintáctica con `py_compile` y `compileall`.
+- Implementado de forma autónoma mediante dogfooding con Yunta.
