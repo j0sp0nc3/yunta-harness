@@ -14,7 +14,7 @@ cambiar de fase, junto con `CHANGELOG.md`.
 | E2 | Congelar API pública (superficie estable en `yunta/__init__.py`) | ✅ v1.0.0 |
 | E3 | Matriz de proveedores (`docs/PROVEEDORES.md` + `scripts/prueba_proveedor.py`) | ✅ v1.0.0 — GLM y Gemini verificados; resto pendiente comunitario |
 | E4 | Publicación en PyPI (`pip install yunta`) | ⬜ pendiente — último del roadmap: requiere decidir cuenta/nombres de publicación; los endpoints de pago para prueba quedan a discreción del publicador |
-| E5 | Métricas livianas de eficiencia de recursos (`Usage` in-memory, telemetría de herramientas y ahorro frente a chat crudo) | ⬜ backlog (candidato v1.1.0: 0 coste API, cálculo en memoria) |
+| E5 | Métricas livianas de eficiencia de recursos (`Usage` in-memory, telemetría de herramientas y ahorro frente a chat crudo) | ✅ v1.0.1 — in-memory en `api.py`/`agent.py`, `/tokens` y `/metrics` enriquecidos, 5 tests unitarios |
 | E6 | Guardrail ontológico y frontera de ejecución (harness vs. runtime) | ✅ v1.0.1 — `SYSTEM_PROMPT` blindado, Paso 0 en quickstart, plantilla `AGENTS.md` y test de regresión |
 | E7 | Modularización y jerarquía del System Prompt (separación de prompt base + override global `~/.yunta/system_prompt.md`) | ⬜ backlog (candidato v1.1.0) |
 
@@ -63,7 +63,7 @@ trabaja con el mismo harness.
 - ~~Edición quirúrgica str_replace (Dogfooding Gemini)~~ ✓ v0.9.0
 - ~~Interrupción limpia de turnos (Ctrl+C / KeyboardInterrupt)~~ – v0.10.0
 - ~~Prompt Caching agnóstico al LLM (Anthropic/OpenAI/DeepSeek/Gemini)~~ – v0.11.0
-- **Métricas livianas de eficiencia de recursos (v1.1.0 candidato)**: Telemetría 100% en memoria en `yunta/api.py` (`Usage`), midiendo Cache Hit Rate, ahorro de tokens de entrada frente a chat crudo y conteo de llamadas a herramientas vía `/tokens` o `/metrics` con cero llamadas adicionales a APIs.
+- ~~Métricas livianas de eficiencia de recursos~~ ✅ v1.0.1 (in-memory en `yunta/api.py`, comandos `/tokens` y `/metrics` en `yunta/cli.py`, 5 tests en `tests/test_metrics.py`)
 - ~~Workflow de proyectos y guardrail ontológico~~ ✅ v1.0.1 (guardrail en `yunta/cli.py`, Paso 0 en `docs/quickstart.md`, plantilla `AGENTS.md` y test en `tests/test_agent.py`)
 - **Modularización del System Prompt (v1.1.0 candidato)**: Extraer `SYSTEM_PROMPT` de `yunta/cli.py` a un módulo/recurso dedicado, permitiendo override o extensión global (`~/.yunta/system_prompt.md` o `YUNTA_SYSTEM_PROMPT`) sin tocar el código fuente.
 
