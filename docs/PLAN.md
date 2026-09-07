@@ -13,7 +13,7 @@ cambiar de fase, junto con `CHANGELOG.md`.
 | E1 | CI con GitHub Actions (tests Python 3.11-3.13 en cada push/PR) | ✅ v1.0.0 |
 | E2 | Congelar API pública (superficie estable en `yunta/__init__.py`) | ✅ v1.0.0 |
 | E3 | Matriz de proveedores (`docs/PROVEEDORES.md` + `scripts/prueba_proveedor.py`) | ✅ v1.0.0 — GLM y Gemini verificados; resto pendiente comunitario |
-| E4 | Publicación en PyPI (`pip install yunta`) | ⬜ pendiente — último del roadmap: requiere decidir cuenta/nombres de publicación; los endpoints de pago para prueba quedan a discreción del publicador |
+| E4 | Publicación en PyPI (`pip install yunta-harness`) | ✅ v1.0.2 — empaquetado como `yunta-harness`, workflow `.github/workflows/publish.yml` y guía `docs/pypi_release.md` |
 | E5 | Métricas livianas de eficiencia de recursos (`Usage` in-memory, telemetría de herramientas y ahorro frente a chat crudo) | ✅ v1.0.1 — in-memory en `api.py`/`agent.py`, `/tokens` y `/metrics` enriquecidos, 5 tests unitarios |
 | E6 | Guardrail ontológico y frontera de ejecución (harness vs. runtime) | ✅ v1.0.1 — `SYSTEM_PROMPT` blindado, Paso 0 en quickstart, plantilla `AGENTS.md` y test de regresión |
 | E7 | Modularización y jerarquía del System Prompt (separación de prompt base + override global `~/.yunta/system_prompt.md`) | ✅ v1.0.2 — implementado vía Dogfooding autónomo con Yunta |
