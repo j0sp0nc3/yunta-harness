@@ -1,17 +1,57 @@
 [project]
-name = "yunta"
-version = "1.0.1"
-description = "Harness de agente de código para terminal, agnóstico al proveedor del modelo"
+name = "yunta-harness"
+version = "1.0.2"
+description = "Harness de agente de código para terminal, agnóstico al proveedor del modelo y guiado por especificaciones (SDD)"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-dependencies = ["litellm>=1.40.0"]
+authors = [
+    { name = "Jose Ponce", email = "j0sp0nc3@users.noreply.github.com" }
+]
+keywords = [
+    "ai-agent",
+    "coding-agent",
+    "harness",
+    "cli",
+    "sdd",
+    "spec-driven-development",
+    "litellm",
+    "developer-tools",
+    "pair-programming"
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = [
+    "litellm>=1.40.0",
+]
 
 [project.scripts]
 yunta = "yunta.cli:main"
 
+[project.urls]
+Homepage = "https://github.com/j0sp0nc3/yunta-harness"
+Repository = "https://github.com/j0sp0nc3/yunta-harness.git"
+Documentation = "https://github.com/j0sp0nc3/yunta-harness/blob/master/docs/quickstart.md"
+Changelog = "https://github.com/j0sp0nc3/yunta-harness/blob/master/CHANGELOG.md"
+Issues = "https://github.com/j0sp0nc3/yunta-harness/issues"
+
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = [
+    "pytest>=8.0",
+    "build>=1.0.0",
+    "twine>=5.0.0",
+]
 
 [build-system]
 requires = ["setuptools>=68"]

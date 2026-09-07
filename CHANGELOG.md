@@ -478,6 +478,7 @@ publicación).
 ## [1.0.2] — 2026-09-07
 
 ### Agregado
+- **Empaquetado y Publicación en PyPI (E4)**: Metadatos completos en `pyproject.toml` bajo el nombre `yunta-harness` (con comando CLI `yunta`), pipeline de publicación automatizada en `.github/workflows/publish.yml` y guías bilingües de release en `docs/pypi_release.md` y `docs/pypi_release_en.md`.
 - **Gobernanza del Backlog (Regla Inviolable 6 en AGENTS.md)**: Formalizada la regla de soberanía de especificaciones: los archivos de planificación y backlog (`docs/PLAN.md`) son estrictamente de solo lectura durante tareas de desarrollo; el agente nunca debe auto-modificar el backlog ni alterar requerimientos sin instrucción humana explícita.
 - **Modularización y jerarquía de System Prompt (E7)** (`yunta/cli.py`):
   - Jerarquía de resolución para el system prompt base:
