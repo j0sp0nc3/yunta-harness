@@ -445,6 +445,7 @@ agente en la siguiente — auto-mejora sin infraestructura pesada.
 ## [1.0.0] — 2026-09-07
 
 ### Agregado
+- **Documentación y Presentación SDD (Spec-Driven Development)**: Creación de `docs/sdd.md` y `docs/sdd_en.md`, cruzando la arquitectura del harness con el desarrollo guiado por especificaciones (los 6 pilares: contratos en `AGENTS.md`, esquemas JSON-Schema/MCP, edición quirúrgica con `str_replace`, oráculo ejecutable con `pytest`, Prompt Caching económico y anti-regresión con `learnings.md`).
 - **CI (GitHub Actions)**: `.github/workflows/ci.yml` — tests en Python
   3.10-3.13 en cada push/PR. La suite no requiere credenciales (LiteLLM
   se intercepta en tests).

@@ -8,6 +8,8 @@ Terminal coding agent harness, strictly model-provider agnostic.
 
 *Yunta*: a team of oxen yoked together to plow the field — you and the agent, no matter which model pulls from the other side.
 
+> 🎯 **Spec-Driven Development (SDD)**: Yunta is purpose-built to turn formal specifications (`AGENTS.md`) into verified software through surgical editing (`str_replace`), test oracles (`pytest`), and Prompt Caching. [Read the full SDD Architecture & Presentation](docs/sdd_en.md).
+
 Designed from the ground up to be completely independent of any single model provider: all LLM connectivity is handled 100% through [LiteLLM](https://docs.litellm.ai/docs/), meaning any supported provider works simply by changing an environment variable.
 
 ---

@@ -8,6 +8,8 @@ Agente de código para terminal, agnóstico al proveedor del modelo.
 
 *Yunta*: pareja de bueyes unidos para trabajar juntos — tú y el agente, sin importar qué modelo tire del otro lado.
 
+> 🎯 **Spec-Driven Development (SDD)**: Yunta está diseñado para transformar especificaciones formales (`AGENTS.md`) en software verificado mediante edición quirúrgica (`str_replace`), oráculo de pruebas (`pytest`) y Prompt Caching. [Ver presentación y arquitectura SDD completa](docs/sdd.md).
+
 Diseñado desde cero para ser independiente de cualquier proveedor de modelos: el acceso a los LLMs es 100% vía [LiteLLM](https://docs.litellm.ai/docs/), por lo que cualquier proveedor soportado funciona cambiando una variable de entorno.
 
 ---
