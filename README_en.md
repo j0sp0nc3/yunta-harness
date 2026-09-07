@@ -1,14 +1,24 @@
-# yunta
+# Yunta: The Spec-Driven Development (SDD) Harness
 
 **English** | [Español](README.md)
 
 ![logo](docs/logo.png)
 
-Terminal coding agent harness, strictly model-provider agnostic.
+**Terminal coding agent harness, strictly model-provider agnostic.**
 
 *Yunta*: a team of oxen yoked together to plow the field — you and the agent, no matter which model pulls from the other side.
 
-> 🎯 **Spec-Driven Development (SDD)**: Yunta is purpose-built to turn formal specifications (`AGENTS.md`) into verified software through surgical editing (`str_replace`), test oracles (`pytest`), and Prompt Caching. [Read the full SDD Architecture & Presentation](docs/sdd_en.md).
+## 🎯 Yunta: The Spec-Driven Development (SDD) Harness
+
+In **Spec-Driven Development (SDD)**, code is not generated through ad-hoc guessing or intuition, but derived from formal specifications and verifiable contracts. Yunta operates as the **execution and verification harness**:
+
+- 📋 **Strict Specification Consumption**: Reads `AGENTS.md` and repository guidelines on every cycle as the single source of truth.
+- 🔬 **Surgical Code Editing (`str_replace`)**: Prevents file drift and accidental rewrites through exact string matching and uniqueness checks.
+- 🛡️ **Human-in-the-Loop Diff Approvals**: Interactive unified diff previews before executing or writing changes to disk.
+- ⚡ **Agnostic Prompt Caching**: Maintains large specifications in active context with up to 90% savings in input tokens and lower latency.
+- 🔄 **Closed-Loop Verification**: The agent autonomously verifies changes against the test suite (`pytest`) before completing tasks.
+
+👉 **[See Full Yunta + SDD Guide and Presentation](docs/sdd_en.md)**
 
 Designed from the ground up to be completely independent of any single model provider: all LLM connectivity is handled 100% through [LiteLLM](https://docs.litellm.ai/docs/), meaning any supported provider works simply by changing an environment variable.
 

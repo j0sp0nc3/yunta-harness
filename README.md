@@ -1,14 +1,24 @@
-# yunta
+# Yunta: El Harness para Spec-Driven Development (SDD)
 
 [English](README_en.md) | **Español**
 
 ![logo](docs/logo.png)
 
-Agente de código para terminal, agnóstico al proveedor del modelo.
+**Harness de agente de código para terminal, agnóstico al proveedor del modelo.**
 
 *Yunta*: pareja de bueyes unidos para trabajar juntos — tú y el agente, sin importar qué modelo tire del otro lado.
 
-> 🎯 **Spec-Driven Development (SDD)**: Yunta está diseñado para transformar especificaciones formales (`AGENTS.md`) en software verificado mediante edición quirúrgica (`str_replace`), oráculo de pruebas (`pytest`) y Prompt Caching. [Ver presentación y arquitectura SDD completa](docs/sdd.md).
+## 🎯 Yunta: El Harness para Spec-Driven Development (SDD)
+
+En la metodología **Spec-Driven Development (SDD)**, el código no se genera por intuición o prompts ad-hoc, sino a partir de especificaciones formales y contratos verificables. Yunta actúa como el **harness de ejecución y verificación**:
+
+- 📋 **Consumo Estricto de Especificaciones**: Lee `AGENTS.md` y especificaciones del proyecto en cada ciclo como única fuente de verdad.
+- 🔬 **Edición Quirúrgica (`str_replace`)**: Previene la degradación del código mediante reemplazos exactos con validación estricta de unicidad.
+- 🛡️ **Aprobaciones Humanas en Tiempo Real**: Visualización interactiva de `git diff` antes de autorizar cualquier escritura o comando.
+- ⚡ **Prompt Caching Agnóstico**: Permite iterar continuamente contra especificaciones y arquitecturas extensas con hasta un 90% de ahorro en costos y latencia.
+- 🔄 **Bucle Cerrado de Verificación**: El agente valida autónomamente sus cambios contra la suite de pruebas (`pytest`) antes de dar por cerrada la tarea.
+
+👉 **[Ver la Guía y Presentación Completa de Yunta + SDD](docs/sdd.md)**
 
 Diseñado desde cero para ser independiente de cualquier proveedor de modelos: el acceso a los LLMs es 100% vía [LiteLLM](https://docs.litellm.ai/docs/), por lo que cualquier proveedor soportado funciona cambiando una variable de entorno.
 
