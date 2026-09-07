@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 
@@ -25,7 +26,15 @@ Reglas de honestidad y verificación:
 
 
 def load_system_prompt(feedback: FeedbackStore | None = None) -> str:
-    prompt = SYSTEM_PROMPT
+    env_prompt = os.environ.get("YUNTA_SYSTEM_PROMPT")
+    user_prompt_file = Path.home() / ".yunta" / "system_prompt.md"
+    if env_prompt:
+        prompt = env_prompt
+    elif user_prompt_file.exists():
+        prompt = user_prompt_file.read_text(encoding="utf-8")
+    else:
+        prompt = SYSTEM_PROMPT
+
     agents_md = Path("AGENTS.md")
     if agents_md.exists():
         prompt += "\n\n# Contexto del proyecto (AGENTS.md)\n\n" + agents_md.read_text(

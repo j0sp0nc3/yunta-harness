@@ -475,6 +475,24 @@ publicación).
 
 ---
 
+## [1.0.2] — 2026-09-07
+
+### Agregado
+- **Modularización y jerarquía de System Prompt (E7)** (`yunta/cli.py`):
+  - Jerarquía de resolución para el system prompt base:
+    1. Variable de entorno `YUNTA_SYSTEM_PROMPT` si está definida.
+    2. Archivo de usuario `~/.yunta/system_prompt.md` si existe.
+    3. `SYSTEM_PROMPT` por defecto (fallback inmutable con frontera ontológica y reglas de honestidad).
+  - Concatena `AGENTS.md` si existe en el workspace del proyecto y el preámbulo de lecciones de `FeedbackStore`.
+- **Tests unitarios** (`tests/test_agent.py`):
+  - `test_load_system_prompt_custom_override`: valida la sobreescritura vía variable de entorno `YUNTA_SYSTEM_PROMPT` y fallback a `~/.yunta/system_prompt.md`.
+
+### Verificación
+- `pytest` → 64 passed (100% verde).
+- Compilación `compileall` sin errores.
+
+---
+
 ## [1.0.1] — 2026-09-07
 
 ### Agregado
