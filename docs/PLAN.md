@@ -105,28 +105,31 @@ Inconsistencias docs detectadas en la misma auditoría (README sin /undo y
 /roi, AGENTS.md desactualizado en env vars, orden CHANGELOG) se corrigen en
 la misma ronda.
 
-## Backlog v2 (candidatos, derivados del feedback de Antigravity 2026-09-08)
+## Backlog v2 (Estado post-sesión 2026-09-08)
 
-- **V2-1 Modo gobernanza (`yunta check`)**: comando que audita un repo contra su
-  SPEC.md/PLAN.md/AGENTS.md (tests verdes, alcance respetado, fases cerradas)
-  sin ejecutar código — permite usar yunta como capa de verificación desde
-  cualquier IDE. Origen: feedback híbrido Antigravity (metodología yunta,
-  ejecución IDE).
-- **V2-2 Sesiones resumibles ante 429/cuota**: snapshot persistente del
-  historial + reanudación con resumen automático cuando el proveedor agota
-  cuota, en vez de perder la sesión. Complementa el fallback router (E9).
-- **V2-3 UTF-8 a prueba de cp1252 en tools de archivo**: write_file,
-  str_replace y read_file con encoding explícito y fallback verificado en
-  Windows (v1.0.0 cubrió solo stdout).
-- **V2-4 Tool tree/list_dir con presupuesto de tokens**: vista estructurada
-  del árbol (nombres, tamaños, ignorando binarios) para no leer archivos uno
-  a uno — reduce el costo de contexto que el feedback señala.
-- **V2-5 Modo servidor (MCP de yunta misma)**: exponer el harness como
-  servidor MCP para que IDEs/agents usen sus tools y guardas vía protocolo,
-  cerrando el círculo híbrido sin perder aprobación/diff/undo.
-- **V2-6 Caps de contexto (de auditoría v1.0.6)**: read_file con límite
-  head/tail + compactor activo por defecto en el CLI (mejoras #4/#5 de la
-  auditoría dogfooding, aún sin aplicar).
+### ✅ Completado en la sesión de hoy (v1.0.6 & v1.0.7):
+- **E9 — Cascada de Respaldo (`ModelFallbackRouter`)**: Conmutación automática en caliente ante 429/503/cuotas (`✅ v1.0.6`).
+- **E11 — Streaming de Pensamiento & Pre-notificación**: Extracción de tokens `reasoning_content` y aviso visual de tools (`✅ v1.0.6`).
+- **E13 — Micro-Checkpoints & Time-Travel (`/undo`)**: Snapshots en memoria antes de editar y rollback instantáneo (`✅ v1.0.6`).
+- **E14 — Dashboard de Retorno Económico (`/roi`)**: Cálculo de tokens cacheados, evitados y ahorro monetario en USD (`✅ v1.0.6`).
+- **P1 — Prevención de `tool_use` huérfano ante `Ctrl+C`**: Cierre garantizado con `TOOL_RESULT` cancelado (`✅ v1.0.7`).
+- **P2 — Resiliencia ante `stream_options`**: Reintento transparente si el endpoint compatible lo rechaza (`✅ v1.0.7`).
+- **P3 — Inicialización temprana de `mcp_clients`**: Eliminación del riesgo de `UnboundLocalError` (`✅ v1.0.7`).
+- **P4 / V2-6 — Compactador `SlidingWindow` en CLI**: Acotamiento automático del historial (default: 40 msgs) (`✅ v1.0.7`).
+- **P5 / V2-6 — Cap de 2.000 líneas en `read_file`**: Paginación con `offset` y `limit` (`✅ v1.0.7`).
+- **V2-3 — Blindaje UTF-8 (cp1252)**: Manejo de errores de codificación en herramientas de archivo para Windows (`✅ v1.0.7`).
+- **CLI Discovery**: Flags `yunta --help`, `-h`, `--version` sin requerir API key, y guarda contra comandos slash erróneos en REPL (`✅ v1.0.7`).
+- **Diagnóstico de Endpoints & JWT**: Script `scripts/check_endpoints.py` con validación de expiración de tokens y mapeo de errores HTTP (`✅ v1.0.7`).
+
+---
+
+### ⏳ Iniciativas Pendientes en Backlog v2 (Por Priorizar):
+
+- **V2-1 Modo gobernanza (`yunta check`)**: Comando CLI ligero que audita un repositorio contra su `SPEC.md`, `PLAN.md` y `AGENTS.md` (tests verdes, alcance respetado, fases cerradas) sin ejecutar código. Permite usar a Yunta como linterna/linter de gobernanza desde cualquier IDE externo.
+- **V2-4 Tool `tree` / `list_dir` con presupuesto de tokens**: Herramienta nativa para inspección estructurada del árbol de directorios (respetando `.gitignore`, reportando tamaños y omitiendo binarios) para que los agentes exploren repositorios sin gastar turnos leyendo archivos ciegamente.
+- **V2-2 Sesiones resumibles ante interrupciones de cuota (Checkpoint en disco)**: Guardar el snapshot del historial en `.yunta/session_state.json` para que, si una sesión se interrumpe abruptamente por corte de luz o cuota de API, pueda retomarse con `yunta --resume`.
+- **V2-5 Modo servidor MCP de Yunta**: Exponer las herramientas y guardas de Yunta (`str_replace`, `read_file`, `undo`) como un servidor MCP local para que IDEs como Claude Desktop, Cursor o Windsurf consuman el harness directamente vía protocolo estandarizado.
+- **V2-7 Regla canónica de interoperabilidad en `AGENTS.md`**: Plantilla formal de regla vinculante para que IDEs externos deleguen consultas y tareas en `yunta` CLI antes de generar código con sus propios LLMs.
 
 ## Reglas que gobiernan el plan
 
