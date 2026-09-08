@@ -82,6 +82,29 @@ trabaja con el mismo harness.
 - ~~Dashboard de ROI y valor económico (`/roi`)~~ ✅ v1.0.6 (visualización resumida del dinero real ahorrado en APIs gracias al prompt caching, tiempo humano ganado y tokens evitados.
 
 
+
+## Prioridades inmediatas (de la auditoría dogfooding v1.0.6 — verificar antes que nada)
+
+- **P1 🔴 Ctrl+C durante tool deja `tool_use` huérfano** (`yunta/agent.py:113-142`):
+  el handler guarda el mensaje solo si el último es USER (condición nunca
+  verdadera ahí) → el proveedor rechaza el request siguiente y la sesión muere.
+  Fix: append de tool_results de error siempre. Test de regresión primero.
+- **P2 🔴 `stream_options={"include_usage"}` incondicional** (`yunta/provider.py`):
+  endpoints OpenAI-compatibles estrictos (vLLM, LocalAI, gateways) lo rechazan
+  con 400. Fix: envío condicional o reintento sin el kwarg ante error.
+- **P3 🟡 `mcp_clients` sin inicializar antes del dispatch** (`yunta/cli.py`):
+  hoy sin NameError alcanzable (returns tempranos lo protegen) pero
+  UnboundLocalError latente. Fix: `mcp_clients: list = []` al inicio de main().
+- **P4 🟡 Compactor nunca instanciado en el CLI**: SlidingWindow existe y pasa
+  tests pero ningún Agent de producción la usa → historial sin límite. (≡ V2-6)
+- **P5 🟢 `read_file` sin cap de tamaño + segundo breakpoint de caché**
+  (≡ V2-6). Un archivo grande entra entero y se re-paga cada turno.
+
+Orden recomendado: P1 → P3 → P2 (bugs reales primero, TDD), luego P4/P5.
+Inconsistencias docs detectadas en la misma auditoría (README sin /undo y
+/roi, AGENTS.md desactualizado en env vars, orden CHANGELOG) se corrigen en
+la misma ronda.
+
 ## Backlog v2 (candidatos, derivados del feedback de Antigravity 2026-09-08)
 
 - **V2-1 Modo gobernanza (`yunta check`)**: comando que audita un repo contra su
