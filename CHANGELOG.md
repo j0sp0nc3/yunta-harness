@@ -475,6 +475,25 @@ publicación).
 
 ---
 
+## [1.0.6] — 2026-09-07
+
+### Agregado
+- **E9 — Cascada de Respaldo de Modelos (`ModelFallbackRouter`)**:
+  - Soporte para variable de entorno `LLM_MODELS` con lista separada por comas de proveedores/modelos prioritarios.
+  - Conmutación en caliente automática ante errores transitorios de API, saturación o cuotas agotadas (`429`, `503`, `RESOURCE_EXHAUSTED`, `ratelimit`, `quota`) sin abortar la sesión ni perder el contexto del turno.
+- **E11 — Streaming de Pensamiento y Pre-Notificación de Herramientas**:
+  - Soporte de streaming para tokens de razonamiento (`reasoning_content` / `thought`) en modelos de razonamiento (ej. DeepSeek-R1, Claude 3.7 Thinking).
+  - Pre-notificación en terminal (`[tool] {name} en ejecución...`) previo a la invocación de herramientas para retroalimentación visual inmediata.
+- **E13 — Micro-Checkpoints y Time-Travel en Memoria (`/undo`)**:
+  - Captura instantánea de snapshots en memoria de archivos afectados antes de cualquier ejecución destructiva o de reemplazo (`write_file`, `str_replace`).
+  - Comando interactivo `/undo` en el REPL de `yunta` para revertir al estado inmediatamente anterior y eliminar archivos creados accidentalmente.
+- **E14 — Dashboard de Retorno de Inversión y Eficiencia Económica (`/roi`)**:
+  - Comando `/roi` que despliega métricas visuales consolidadas: porcentaje de acierto de caché, tokens cacheados, tokens evitados frente a chats crudos y estimación de ahorro monetario en USD.
+- **Suite de Pruebas Automatizadas**:
+  - Pruebas unitarias para conmutación por fallback ante 429, streaming de razonamiento, checkpoints y restauración vía `/undo`, y cálculo de métricas ROI (total: 75 tests 100% pasando).
+
+---
+
 ## [1.0.5] — 2026-09-07
 
 ### Agregado

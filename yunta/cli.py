@@ -86,7 +86,7 @@ def main():
     agent = Agent(provider=provider, system=system)
 
     print(f"yunta — modelo: {provider.model()}")
-    print("Escribe tu consulta, /init [idea], /tokens, /metrics, /clear o /exit.\n")
+    print("Escribe tu consulta, /help para ver comandos, o /exit para salir.\n")
 
     try:
         while True:
@@ -105,6 +105,8 @@ def main():
             if prompt == "/help":
                 print("Comandos disponibles:")
                 print("  /init [idea]   - Inicializa el proyecto con SPEC.md, PLAN.md y AGENTS.md (SDD)")
+                print("  /undo          - Deshace la última edición de archivos y restaura su estado anterior")
+                print("  /roi           - Muestra el dashboard de valor y ahorro económico de API")
                 print("  /tokens        - Muestra el consumo de tokens y tasa de acierto de caché")
                 print("  /metrics       - Muestra la telemetría detallada de uso y herramientas")
                 print("  /clear         - Limpia el historial de la conversación actual")
@@ -113,6 +115,33 @@ def main():
             if prompt == "/clear":
                 agent.messages.clear()
                 print("(historial limpio)\n")
+                continue
+            if prompt == "/undo":
+                restored = agent.undo()
+                if restored:
+                    for r in restored:
+                        print(f"✨ Archivo {r}")
+                else:
+                    print("(no hay cambios previos para deshacer)")
+                print()
+                continue
+            if prompt == "/roi":
+                u = agent.total_usage
+                tokens_in = u.input_tokens
+                tokens_cached = u.cached_tokens
+                raw_tokens = u.theoretical_raw_tokens
+                tokens_saved = max(0, raw_tokens - (tokens_in + tokens_cached))
+                savings = (tokens_cached * 0.00000095) + (tokens_saved * 0.00000125)
+                print("┌────────────────────────────────────────────────────────┐")
+                print("│ YUNTA — DASHBOARD DE TELEMETRÍA Y RETORNO (ROI)        │")
+                print("├────────────────────────────────────────────────────────┤")
+                print(f"│ ⚡ Acierto de Caché (Hit Rate):        {u.cache_rate:>6.1f}%          │")
+                print(f"│ 🛡️ Tokens Cacheados (Ahorro de API):   {tokens_cached:>10,} tokens  │")
+                print(f"│ 📦 Tokens Evitados vs Chat Crudo:      {tokens_saved:>10,} tokens  │")
+                print(f"│ 💰 Ahorro Estimado de Costo API:     ~${savings:>9.4f} USD     │")
+                print(f"│ 🔧 Herramientas Ejecutadas:            {u.total_tool_calls:>6} ({u.tool_errors} err)     │")
+                print(f"│ 💬 Turnos de Interacción:              {u.turns:>6}               │")
+                print("└────────────────────────────────────────────────────────┘\n")
                 continue
             if prompt.startswith("/init"):
                 idea = prompt[5:].strip()

@@ -126,3 +126,21 @@ def test_agent_metrics_records_tool_rejection():
 
     assert agent.total_usage.tool_counts.get("bash") == 1
     assert agent.total_usage.tool_errors == 1
+
+
+def test_roi_calculation_telemetry():
+    from yunta.api import Usage
+
+    u = Usage(
+        input_tokens=1500,
+        output_tokens=300,
+        cached_tokens=4500,
+        turns=5,
+        tool_counts={"bash": 4, "str_replace": 2},
+        tool_errors=0,
+    )
+    assert u.cache_rate == 75.0
+    tokens_saved = max(0, u.theoretical_raw_tokens - (u.input_tokens + u.cached_tokens))
+    savings = (u.cached_tokens * 0.00000095) + (tokens_saved * 0.00000125)
+    assert savings > 0
+    assert u.total_tool_calls == 6
