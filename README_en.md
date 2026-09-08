@@ -121,10 +121,15 @@ yunta
 ```
 
 ### REPL Commands
+- `/init [idea]`: Initializes an SDD project generating `SPEC.md`, `PLAN.md`, and `AGENTS.md`.
+- `/undo`: Reverts the latest file modification and restores previous contents.
+- `/roi`: Displays the ROI telemetry dashboard, cache hit rate, and cost savings.
+- `/metrics`: Displays detailed execution metrics for tools and interaction turns.
+- `/tokens`: Displays total token consumption and cache hit rate for the session.
+- `/help`: Lists all available interactive commands.
 - `/clear`: Clears conversation history for the current session.
-- `/tokens`: Displays total token consumption (prompt and completion) for the session.
 - `/exit`: Saves session learnings to `.yunta/learnings.md` and exits.
-- `Ctrl+C`: Gracefully interrupts the current turn and returns to the `> ` prompt without closing the session.
+- `Ctrl+C`: Gracefully interrupts the current turn without leaving orphaned `tool_use` blocks.
 
 ---
 

@@ -268,3 +268,36 @@ def test_provider_streams_reasoning_tokens(monkeypatch):
 
     assert collected == ["pensando...", "respuesta"]
     assert resp.content[0].text == "respuesta"
+
+
+def test_provider_stream_options_fallback(monkeypatch):
+    import litellm
+    from types import SimpleNamespace
+    from yunta.provider import LiteLLMProvider
+    from yunta.api import Message, Role, Block, BlockType
+
+    monkeypatch.setenv("LLM_MODEL", "openai/custom-endpoint")
+
+    call_count = 0
+    def fake_completion(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if "stream_options" in kwargs:
+            raise Exception("400 Bad Request: extra fields not permitted: stream_options")
+        # Segundo intento sin stream_options
+        return [
+            SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(content="respuesta exitosa", tool_calls=None), finish_reason="stop")],
+                usage=None
+            )
+        ]
+
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+
+    provider = LiteLLMProvider(system="")
+    collected = []
+    msgs = [Message(role=Role.USER, content=[Block(type=BlockType.TEXT, text="hola")])]
+    resp = provider.send(msgs, tools=[], on_text=lambda t: collected.append(t))
+
+    assert resp.content[0].text == "respuesta exitosa"
+    assert collected == ["respuesta exitosa"]

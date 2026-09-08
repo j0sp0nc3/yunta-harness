@@ -300,3 +300,46 @@ def test_agent_undo_file_modification(tmp_path):
     assert len(restored) == 1
     assert "restaurado" in restored[0]
     assert "linea original" in test_file.read_text(encoding="utf-8")
+
+
+def test_agent_ctrl_c_no_orphan_tool_use():
+    from yunta.agent import Agent
+    from yunta.api import Block, BlockType, Message, Response, Role, StopReason
+    from types import SimpleNamespace
+
+    # Simulamos que el modelo retorna 2 llamadas a herramientas
+    resp = Response(
+        stop_reason=StopReason.TOOL_USE,
+        content=[
+            Block(type=BlockType.TOOL_USE, tool_use_id="call_1", tool_name="tool_a", tool_input="{}"),
+            Block(type=BlockType.TOOL_USE, tool_use_id="call_2", tool_name="tool_b", tool_input="{}"),
+        ]
+    )
+    mock_provider = SimpleNamespace(
+        send=lambda msgs, tools, on_text=None: resp,
+        total_usage=SimpleNamespace(),
+        model=lambda: "test-model"
+    )
+    agent = Agent(provider=mock_provider, system="")
+
+    # Simulamos que al ejecutar la primera herramienta se presiona Ctrl+C
+    def interrupt_tool(name, raw_input):
+        raise KeyboardInterrupt()
+
+    agent._execute_tool = interrupt_tool
+
+    res = agent.send("ejecuta tareas")
+    assert "[interrumpido por el usuario]" in res
+
+    # VERIFICACION CRITICA P1:
+    # El ultimo mensaje debe ser de Role.USER cerrando AMBAS tool_use_ids
+    assert len(agent.messages) >= 3
+    last_msg = agent.messages[-1]
+    assert last_msg.role == Role.USER
+
+    tool_results = [b for b in last_msg.content if b.type == BlockType.TOOL_RESULT]
+    assert len(tool_results) == 2
+    assert tool_results[0].tool_use_id == "call_1"
+    assert tool_results[1].tool_use_id == "call_2"
+    assert "cancelada" in tool_results[0].tool_result
+    assert "cancelada" in tool_results[1].tool_result

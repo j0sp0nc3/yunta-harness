@@ -67,6 +67,14 @@ class LiteLLMProvider(Provider):
                         except Exception as e:
                             err_str = str(e).lower()
                             err_name = type(e).__name__
+                            # P2: Si el endpoint rechaza stream_options (400 Bad Request), reintentar sin el kwarg
+                            if "stream_options" in err_str or "stream_options" in str(e):
+                                kwargs.pop("stream_options", None)
+                                try:
+                                    return self._consume_stream(litellm.completion(**kwargs), on_text)
+                                except Exception as inner_e:
+                                    err_str = str(inner_e).lower()
+                                    err_name = type(inner_e).__name__
                             is_retryable = any(
                                 x in err_str or x in err_name.lower()
                                 for x in ["429", "503", "unavailable", "exhausted", "ratelimit", "quota", "serviceunavailable", "midstreamfallback"]

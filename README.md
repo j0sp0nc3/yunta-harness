@@ -121,10 +121,15 @@ yunta
 ```
 
 ### Comandos del REPL
+- `/init [idea]`: Inicializa un proyecto SDD generando `SPEC.md`, `PLAN.md` y `AGENTS.md`.
+- `/undo`: Deshace la última edición de archivos y restaura el estado inmediatamente anterior.
+- `/roi`: Despliega el dashboard de retorno de inversión, acierto de caché y ahorro en USD.
+- `/metrics`: Despliega la telemetría detallada de herramientas ejecutadas, errores y turnos.
+- `/tokens`: Muestra el consumo acumulado de tokens y tasa de acierto de caché.
+- `/help`: Muestra la lista de comandos disponibles.
 - `/clear`: Limpia el historial de mensajes de la sesión actual.
-- `/tokens`: Muestra el consumo acumulado de tokens (entrada y salida) de la sesión.
 - `/exit`: Guarda lecciones aprendidas en `.yunta/learnings.md` y finaliza la sesión.
-- `Ctrl+C`: Interrumpe el turno en curso de forma limpia y regresa al prompt `> ` sin tumbar la sesión.
+- `Ctrl+C`: Interrumpe el turno en curso de forma limpia y regresa al prompt `> ` sin tumbar la sesión ni dejar `tool_use` huérfano.
 
 ---
 

@@ -91,3 +91,25 @@ def test_bash_compact_output():
     assert "linea 49" in compacted_long
     assert "omitidas por brevedad" in compacted_long
 
+
+
+def test_read_file_size_cap_and_offset_limit(tmp_path):
+    import json
+    from yunta.tools.files import read_file
+
+    large_file = tmp_path / "large_file.txt"
+    lines = [f"linea {i}\n" for i in range(1, 2501)]
+    large_file.write_text("".join(lines), encoding="utf-8")
+
+    # Lectura por defecto: cap a 2000 lineas
+    res = read_file(json.dumps({"path": str(large_file)}))
+    assert "linea 1\n" in res
+    assert "linea 2000\n" in res
+    assert "linea 2001\n" not in res
+    assert "[... truncado: 500 líneas no mostradas" in res
+
+    # Lectura con offset y limit
+    res_part2 = read_file(json.dumps({"path": str(large_file), "offset": 2001, "limit": 500}))
+    assert "linea 2001\n" in res_part2
+    assert "linea 2500\n" in res_part2
+    assert "truncado" not in res_part2
