@@ -3,7 +3,7 @@
 Plan de la iniciativa y su estado. Se comparte junto con el código para que
 cualquier persona, IDE o modelo sepa hacia dónde va el proyecto y qué falta.
 
-Estado actual: **v1.0.4 — Publicado en PyPI** (fases 1-8, backlog fundacional y roadmap E1-E8, E10 completados). Actualizar este archivo al
+Estado actual: **v1.0.5 — Publicado en PyPI** (fases 1-8, backlog fundacional y roadmap E1-E8, E10, E12 completados). Actualizar este archivo al
 cambiar de fase, junto con `CHANGELOG.md`.
 
 ## Roadmap de evolución (post-backlog)
@@ -21,7 +21,7 @@ cambiar de fase, junto con `CHANGELOG.md`.
 | E9 | Cascada de respaldo de modelos (`ModelFallbackRouter` ante 429/503/cuota agotada) | ⏳ Pendiente |
 | E10 | Bucle TDD/SDD nativo con contrato formal de especificación (`yunta init` / `/init`) | ✅ v1.0.4 — scaffolding de ideas y ciclo de vida de proyectos SDD |
 | E11 | Streaming de tokens de pensamiento (`Reasoning`) y pre-notificación de herramientas | ⏳ Pendiente |
-| E12 | Compactación semántica de salidas verbosas de terminal (reducción de tokens en tests/builds) | ⏳ Pendiente |
+| E12 | Compactación semántica de salidas verbosas de terminal (reducción de tokens en tests/builds) | ✅ v1.0.5 — compactación en `bash.py` y timeout de 60s |
 | E13 | Micro-checkpoints por tool-call e historial de restauración (`/undo` en memoria) | ⏳ Pendiente |
 | E14 | Dashboard de ROI económico y tokens evitados (`/roi`) | ⏳ Pendiente |
 
@@ -77,7 +77,7 @@ trabaja con el mismo harness.
 - **Cascada de respaldo inteligente de modelos (Model Fallback Router)**: Conmutación automática transparente entre lista priorizada de modelos cuando el principal retorna 429 (límite de cuota/rate limit) o 503 (saturación), sin abortar la sesión ni perder el contexto de la tarea acumulado.
 - ~~Bucle TDD/SDD con Contrato Inviolable (`yunta init` / `/init`)~~ ✅ v1.0.4 (scaffolding automático de SPEC.md, PLAN.md y AGENTS.md para iterar ideas desde cero)
 - **Streaming de tokens de razonamiento (`Reasoning/Thinking`) y pre-notificación de tools**: Visualización en vivo y atenuada de la cadena de pensamiento antes de emitir texto, y aviso previo al arranque de herramientas de larga duración.
-- **Compactación semántica de salidas de terminal**: Detección y compresión inteligente de logs extensos (ej. suites de pytest o builds grandes), reteniendo solo resúmenes o fallos para ahorrar entre 60% y 80% de tokens de contexto.
+- ~~Compactación semántica de salidas de terminal~~ ✅ v1.0.5 (compresión en `yunta/tools/bash.py` y regla de tests focalizados en system prompt)
 - **Micro-checkpoints por tool call ("Time-Travel Undo")**: Snapshots livianos automáticos antes de cada invocación destructiva (`write_file`, `str_replace`, `bash`), permitiendo comando `/undo` inmediato sin ensuciar el árbol ni el historial de Git del usuario.
 - **Dashboard de ROI y valor económico (`/roi`)**: Visualización resumida del dinero real ahorrado en APIs gracias al prompt caching, tiempo humano ganado y tokens evitados.
 

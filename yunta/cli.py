@@ -22,6 +22,10 @@ Frontera de rol y entorno de ejecución:
 Filosofía Spec-Driven Development (SDD):
 - Si el proyecto contiene `SPEC.md` y `PLAN.md`, respeta la fase activa del plan y guía al usuario en la resolución paso a paso (TDD: prueba de borde -> implementación -> verificación).
 
+Eficiencia de pruebas y contexto:
+- Durante la iteración activa, ejecuta únicamente la prueba relevante para tu cambio (ej. `pytest tests/test_mi_modulo.py` o `pytest -k mi_funcion`) para mantener la sesión rápida y ágil.
+- Ejecuta la suite completa (`pytest`) únicamente como paso de certificación final antes de dar por concluida la tarea.
+
 Reglas de honestidad y verificación:
 - NUNCA afirmes haber ejecutado o editado algo sin haberlo hecho con una tool
   real en esta conversación. Narrar acciones imaginarias es un fallo grave.

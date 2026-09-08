@@ -73,3 +73,21 @@ def test_str_replace_missing_file(tmp_path, monkeypatch):
         assert False, "debio fallar"
     except FileNotFoundError:
         pass
+
+def test_bash_compact_output():
+    from yunta.tools.bash import _compact_output
+
+    # Caso pytest exitoso: solo resumen
+    pytest_out = "============================= test session starts =============================\nrootdir: /test\ncollected 5 items\n\ntests/test_a.py ..... [100%]\n\n============================= 5 passed in 0.5s =============================\n"
+    compacted = _compact_output(pytest_out, 0)
+    assert "test session starts" in compacted
+    assert "5 passed in 0.5s" in compacted
+    assert "tests/test_a.py ....." not in compacted
+
+    # Caso salida genérica larga exitosa: recorta el centro
+    long_out = "\n".join([f"linea {i}" for i in range(50)])
+    compacted_long = _compact_output(long_out, 0)
+    assert "linea 0" in compacted_long
+    assert "linea 49" in compacted_long
+    assert "omitidas por brevedad" in compacted_long
+

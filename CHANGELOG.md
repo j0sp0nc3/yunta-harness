@@ -475,6 +475,22 @@ publicación).
 
 ---
 
+## [1.0.5] — 2026-09-07
+
+### Agregado
+- **Compactación semántica de salidas de terminal (E12)** (`yunta/tools/bash.py`):
+  - Función `_compact_output` que previene la inflación innecesaria de contexto en turnos largos:
+    - En ejecuciones exitosas de `pytest`, retiene únicamente los encabezados y la línea de resumen final (ej. `=== 70 passed in ... ===`), eliminando decenas de líneas redundantes y ahorrando hasta un 95% de tokens de contexto.
+    - En comandos largos exitosos (> 30 líneas), preserva el inicio y final del log intercalando un resumen explícito de líneas omitidas.
+    - En comandos con fallo, preserva las partes iniciales y el bloque de traceback/error final para diagnóstico preciso.
+  - Aumento de timeout de comandos bash de 30s a 60s en `yunta/tools/bash.py` para prevenir falsos timeouts en entornos con alta carga de CPU en Windows.
+- **Directiva de eficiencia de pruebas en el System Prompt** (`yunta/cli.py`):
+  - Regla explícita para que el agente ejecute pruebas focalizadas (`pytest tests/test_modulo.py`) durante la iteración activa, reservando la suite completa para la certificación final.
+- **Tests unitarios** (`tests/test_tools.py`):
+  - Nuevo test `test_bash_compact_output` verificando la compresión de pytest y comandos extensos. Suite total: 70 tests al 100% verde.
+
+---
+
 ## [1.0.4] — 2026-09-07
 
 ### Agregado
