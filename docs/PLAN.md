@@ -74,12 +74,12 @@ trabaja con el mismo harness.
 - ~~Workflow de proyectos y guardrail ontológico~~ ✅ v1.0.1 (guardrail en `yunta/cli.py`, Paso 0 en `docs/quickstart.md`, plantilla `AGENTS.md` y test en `tests/test_agent.py`)
 - ~~Modularización del System Prompt~~ ✅ v1.0.2 (implementado autónomamente por Yunta vía Dogfooding)
 - ~~Indicador de actividad y estado en tiempo real (Spinner y cronómetro de herramientas)~~ ✅ v1.0.3 (implementado vía Dogfooding autónomo con Yunta)
-- **Cascada de respaldo inteligente de modelos (Model Fallback Router)**: Conmutación automática transparente entre lista priorizada de modelos cuando el principal retorna 429 (límite de cuota/rate limit) o 503 (saturación), sin abortar la sesión ni perder el contexto de la tarea acumulado.
+- ~~Cascada de respaldo inteligente de modelos (Model Fallback Router)~~ ✅ v1.0.6 (conmutación automática transparente entre lista priorizada de modelos cuando el principal retorna 429 (límite de cuota/rate limit) o 503 (saturación), sin abortar la sesión ni perder el contexto de la tarea acumulado.
 - ~~Bucle TDD/SDD con Contrato Inviolable (`yunta init` / `/init`)~~ ✅ v1.0.4 (scaffolding automático de SPEC.md, PLAN.md y AGENTS.md para iterar ideas desde cero)
-- **Streaming de tokens de razonamiento (`Reasoning/Thinking`) y pre-notificación de tools**: Visualización en vivo y atenuada de la cadena de pensamiento antes de emitir texto, y aviso previo al arranque de herramientas de larga duración.
+- ~~Streaming de tokens de razonamiento (`Reasoning/Thinking`) y pre-notificación de tools~~ ✅ v1.0.6 (visualización en vivo y atenuada de la cadena de pensamiento antes de emitir texto, y aviso previo al arranque de herramientas de larga duración.
 - ~~Compactación semántica de salidas de terminal~~ ✅ v1.0.5 (compresión en `yunta/tools/bash.py` y regla de tests focalizados en system prompt)
-- **Micro-checkpoints por tool call ("Time-Travel Undo")**: Snapshots livianos automáticos antes de cada invocación destructiva (`write_file`, `str_replace`, `bash`), permitiendo comando `/undo` inmediato sin ensuciar el árbol ni el historial de Git del usuario.
-- **Dashboard de ROI y valor económico (`/roi`)**: Visualización resumida del dinero real ahorrado en APIs gracias al prompt caching, tiempo humano ganado y tokens evitados.
+- ~~Micro-checkpoints por tool call ("Time-Travel Undo")~~ ✅ v1.0.6 (snapshots livianos automáticos antes de cada invocación destructiva (`write_file`, `str_replace`, `bash`), permitiendo comando `/undo` inmediato sin ensuciar el árbol ni el historial de Git del usuario.
+- ~~Dashboard de ROI y valor económico (`/roi`)~~ ✅ v1.0.6 (visualización resumida del dinero real ahorrado en APIs gracias al prompt caching, tiempo humano ganado y tokens evitados.
 
 ## Reglas que gobiernan el plan
 
