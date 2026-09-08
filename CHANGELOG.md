@@ -475,6 +475,24 @@ publicación).
 
 ---
 
+## [1.0.3] — 2026-09-07
+
+### Agregado
+- **Indicador de actividad y estado en tiempo real (Spinner / Activity Status)** (`yunta/agent.py`):
+  - Clase auxiliar `Spinner` ultra-liviana implementada únicamente con la biblioteca estándar (`threading`, `time`, `sys`).
+  - Animación con caracteres Unicode (`⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏`) y contador de tiempo transcurrido en segundos.
+  - Salvaguarda `sys.stdout.isatty()` para ejecutarse exclusivamente en terminales interactivas sin alterar entornos no interactivos ni ejecuciones de pruebas.
+  - Integración en `_loop()` y `_stream_text()`: inicio antes de `self.provider.send()` con el mensaje `'Pensando...'` y detención limpia al recibir el primer delta de texto o al finalizar la llamada.
+  - Telemetría de duración de herramientas en `_execute_tool()`: medición con `time.time()` e impresión del tiempo transcurrido (`[tool] {name} completado en {elapsed:.2f}s` o `falló en ...` si ocurre una excepción).
+- **Tests unitarios** (`tests/test_agent.py`):
+  - `test_spinner_start_and_stop`: valida que `Spinner` arranca y se detiene de forma limpia, liberando el hilo sin dejar colgadas ejecuciones ni lanzar excepciones.
+
+### Verificación
+- `pytest` → 65 passed (100% verde).
+- Compilación de todos los archivos Python verificada.
+
+---
+
 ## [1.0.2] — 2026-09-07
 
 ### Agregado

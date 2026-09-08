@@ -1,10 +1,50 @@
 import difflib
 import inspect
 import json
+import sys
+import threading
+import time
 from pathlib import Path
 
 from .api import Block, BlockType, Message, Response, Role, StopReason, Usage
 from .tools import registry
+
+
+class Spinner:
+    def __init__(self, message: str = "Pensando..."):
+        self.message = message
+        self._thread = None
+        self._stop_event = threading.Event()
+
+    def start(self) -> None:
+        if not sys.stdout.isatty():
+            return
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._spin, daemon=True)
+        self._thread.start()
+
+    def _spin(self) -> None:
+        frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        start_time = time.time()
+        idx = 0
+        while not self._stop_event.is_set():
+            elapsed = int(time.time() - start_time)
+            frame = frames[idx % len(frames)]
+            sys.stdout.write(f"\r{frame} {self.message} ({elapsed}s)")
+            sys.stdout.flush()
+            idx += 1
+            time.sleep(0.1)
+
+    def stop(self) -> None:
+        if not self._thread or not self._thread.is_alive():
+            return
+        self._stop_event.set()
+        self._thread.join()
+        if sys.stdout.isatty():
+            sys.stdout.write("\r\033[K")
+            sys.stdout.flush()
 
 
 class Agent:
@@ -25,6 +65,7 @@ class Agent:
         self.messages: list[Message] = []
         self._tools_subset = list(tools) if tools is not None else None
         self.usage = Usage()
+        self._spinner = None
 
     def send(self, prompt: str) -> str:
         self.usage.turns += 1
@@ -54,10 +95,18 @@ class Agent:
                 except (TypeError, ValueError):
                     supports_stream = False
                 self._streamed = False
-                if supports_stream:
-                    resp = self.provider.send(self.messages, self._definitions(), on_text=self._stream_text)
-                else:
-                    resp = self.provider.send(self.messages, self._definitions())
+                self._spinner = Spinner("Pensando...")
+                self._spinner.start()
+                try:
+                    if supports_stream:
+                        resp = self.provider.send(self.messages, self._definitions(), on_text=self._stream_text)
+                    else:
+                        resp = self.provider.send(self.messages, self._definitions())
+                finally:
+                    if self._spinner:
+                        self._spinner.stop()
+                        self._spinner = None
+
                 if not hasattr(self.provider, "total_usage") and getattr(resp, "usage", None):
                     self.usage = self.usage.add(resp.usage)
                 self.messages.append(Message(role=Role.ASSISTANT, content=resp.content))
@@ -101,6 +150,9 @@ class Agent:
         return "\n".join(final_text).strip()
 
     def _stream_text(self, delta: str) -> None:
+        if self._spinner:
+            self._spinner.stop()
+            self._spinner = None
         print(delta, end="", flush=True)
         self._streamed = True
 
@@ -117,10 +169,15 @@ class Agent:
             self.usage.tool_errors += 1
             return "user denied this tool call", True
 
+        start_time = time.time()
         try:
             res = tool.fn(raw_input)
+            elapsed = time.time() - start_time
+            print(f"[tool] {name} completado en {elapsed:.2f}s")
             return res, False
         except Exception as e:
+            elapsed = time.time() - start_time
+            print(f"[tool] {name} falló en {elapsed:.2f}s")
             self.usage.tool_errors += 1
             return f"{type(e).__name__}: {e}", True
 

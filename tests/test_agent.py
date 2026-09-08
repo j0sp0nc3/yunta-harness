@@ -223,3 +223,23 @@ def test_load_system_prompt_custom_override(monkeypatch, tmp_path):
     prompt_file = load_system_prompt()
     assert prompt_file.startswith("prompt archivo")
 
+
+def test_spinner_start_and_stop(monkeypatch):
+    import time
+    from yunta.agent import Spinner
+
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+
+    spinner = Spinner("Pensando...")
+    spinner.start()
+
+    assert spinner._thread is not None
+    assert spinner._thread.is_alive()
+
+    time.sleep(0.15)
+
+    spinner.stop()
+
+    assert not spinner._thread.is_alive()
+
+
