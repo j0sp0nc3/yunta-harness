@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 
 from .agent import Agent
+from .compact import SlidingWindow
 from .feedback import FeedbackStore
 from .init import run_init
 from .mcp import load_mcp_servers
@@ -54,6 +55,7 @@ def load_system_prompt(feedback: FeedbackStore | None = None) -> str:
 
 
 def main():
+    mcp_clients: list = []
     if sys.platform == "win32":
         try:
             sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -72,9 +74,12 @@ def main():
     provider = LiteLLMProvider(system=system)
     delegate.set_provider(provider)
 
+    max_messages = int(os.environ.get("YUNTA_MAX_MESSAGES", "40"))
+    compactor = SlidingWindow(max_messages=max_messages)
+
     # Despacho single-shot: `yunta "mi tarea directa"`
     if len(sys.argv) > 1:
-        agent = Agent(provider=provider, system=system)
+        agent = Agent(provider=provider, system=system, compactor=compactor)
         prompt = " ".join(sys.argv[1:]).strip()
         try:
             agent.send(prompt)
@@ -83,7 +88,7 @@ def main():
         return
 
     mcp_clients = load_mcp_servers()
-    agent = Agent(provider=provider, system=system)
+    agent = Agent(provider=provider, system=system, compactor=compactor)
 
     print(f"yunta — modelo: {provider.model()}")
     print("Escribe tu consulta, /help para ver comandos, o /exit para salir.\n")

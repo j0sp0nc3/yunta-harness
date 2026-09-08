@@ -5,18 +5,41 @@ from . import _parse, registry
 
 @registry.register(
     "read_file",
-    "Lee un archivo del proyecto y devuelve su contenido completo.",
+    "Lee un archivo del proyecto y devuelve su contenido. Soporta offset y limit opcionales para archivos extensos.",
     {
         "type": "object",
         "properties": {
-            "path": {"type": "string", "description": "Ruta relativa al proyecto"}
+            "path": {"type": "string", "description": "Ruta relativa al proyecto"},
+            "offset": {"type": "integer", "description": "Línea inicial (1-indexed, opcional)"},
+            "limit": {"type": "integer", "description": "Número máximo de líneas a leer (opcional, por defecto hasta 2000)"},
         },
         "required": ["path"],
     },
 )
 def read_file(raw: str) -> str:
-    path = _parse(raw).get("path", "")
-    return Path(path).read_text(encoding="utf-8")
+    args = _parse(raw)
+    path = args.get("path", "")
+    p = Path(path)
+    content = p.read_text(encoding="utf-8", errors="replace")
+
+    offset = args.get("offset")
+    limit = args.get("limit")
+
+    lines = content.splitlines(keepends=True)
+    total_lines = len(lines)
+
+    start_idx = max(0, offset - 1) if (offset is not None and isinstance(offset, int) and offset > 0) else 0
+    max_lines = limit if (limit is not None and isinstance(limit, int) and limit > 0) else 2000
+
+    if start_idx == 0 and total_lines <= max_lines and limit is None:
+        return content
+
+    selected_lines = lines[start_idx : start_idx + max_lines]
+    res = "".join(selected_lines)
+    if start_idx + max_lines < total_lines:
+        remaining = total_lines - (start_idx + max_lines)
+        res += f"\n[... truncado: {remaining} líneas no mostradas. Usa offset={start_idx + max_lines + 1} para continuar ...]"
+    return res
 
 
 @registry.register(
@@ -74,7 +97,7 @@ def str_replace(raw: str) -> str:
     if not p.exists():
         raise FileNotFoundError(f"El archivo '{path}' no existe")
 
-    content = p.read_text(encoding="utf-8")
+    content = p.read_text(encoding="utf-8", errors="replace")
     count = content.count(old_str)
     if count == 0:
         raise ValueError(f"'{old_str}' no fue encontrado en {path}")

@@ -84,8 +84,10 @@ class Agent:
 
     def _loop(self) -> str:
         final_text = []
+        current_tool_results: list[Block] = []
         try:
             for _ in range(self.max_turns):
+                current_tool_results = []
                 if self.compactor:
                     self.messages = self.compactor.compact(self.messages)
 
@@ -112,7 +114,6 @@ class Agent:
                     self.usage = self.usage.add(resp.usage)
                 self.messages.append(Message(role=Role.ASSISTANT, content=resp.content))
 
-                tool_results = []
                 has_tool_call = False
                 for b in resp.content:
                     if b.type == BlockType.TEXT and b.text:
@@ -124,7 +125,7 @@ class Agent:
                     elif b.type == BlockType.TOOL_USE:
                         has_tool_call = True
                         result, is_err = self._execute_tool(b.tool_name, b.tool_input)
-                        tool_results.append(
+                        current_tool_results.append(
                             Block(
                                 type=BlockType.TOOL_RESULT,
                                 tool_use_id=b.tool_use_id,
@@ -136,16 +137,36 @@ class Agent:
                 if resp.stop_reason != StopReason.TOOL_USE or not has_tool_call:
                     return "\n".join(final_text).strip()
 
-                self.messages.append(Message(role=Role.USER, content=tool_results))
+                self.messages.append(Message(role=Role.USER, content=current_tool_results))
         except KeyboardInterrupt:
             print("\n(interrumpido por el usuario)")
-            if self.messages and self.messages[-1].role == Role.USER:
-                self.messages.append(
-                    Message(
-                        role=Role.ASSISTANT,
-                        content=[Block(type=BlockType.TEXT, text="[interrumpido por el usuario]")],
+            if self.messages:
+                last_msg = self.messages[-1]
+                if last_msg.role == Role.ASSISTANT:
+                    # P1: Garantizar que ningun tool_use quede huerfano ante Ctrl+C
+                    pending_ids = [
+                        b.tool_use_id for b in last_msg.content if b.type == BlockType.TOOL_USE
+                    ]
+                    done_ids = {b.tool_use_id for b in current_tool_results}
+                    for tid in pending_ids:
+                        if tid not in done_ids:
+                            current_tool_results.append(
+                                Block(
+                                    type=BlockType.TOOL_RESULT,
+                                    tool_use_id=tid,
+                                    tool_result="[operación cancelada por el usuario (Ctrl+C)]",
+                                    is_error=True,
+                                )
+                            )
+                    if current_tool_results:
+                        self.messages.append(Message(role=Role.USER, content=current_tool_results))
+                elif last_msg.role == Role.USER:
+                    self.messages.append(
+                        Message(
+                            role=Role.ASSISTANT,
+                            content=[Block(type=BlockType.TEXT, text="[interrumpido por el usuario]")],
+                        )
                     )
-                )
             return "\n".join(final_text).strip() or "[interrumpido por el usuario]"
 
         return "\n".join(final_text).strip()

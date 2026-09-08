@@ -475,6 +475,24 @@ publicación).
 
 ---
 
+## [1.0.7] — 2026-09-08
+
+### Corregido & Mejorado (Auditoría Dogfooding P1-P5)
+- **P1 — Prevención de `tool_use` huérfano ante `Ctrl+C` (`agent.py`)**:
+  - Al interrumpir con `KeyboardInterrupt` durante la ejecución de herramientas, ahora se cierran todas las llamadas a herramientas pendientes agregando bloques `TOOL_RESULT` con estado cancelado, evitando que el proveedor lance `400 Bad Request` en el siguiente turno.
+- **P2 — Resiliencia ante rechazo de `stream_options` (`provider.py`)**:
+  - Detección automática de errores en endpoints OpenAI-compatibles estrictos (vLLM, LocalAI) que no soportan `stream_options`, reintentando de inmediato sin el kwarg.
+- **P3 — Inicialización segura de `mcp_clients` (`cli.py`)**:
+  - `mcp_clients` inicializado como lista vacía al inicio de `main()` previniendo `UnboundLocalError` en bloques `finally`.
+- **P4 — Compactador `SlidingWindow` activo en CLI (`cli.py`)**:
+  - Integración nativa del compactador por ventana deslizante en el REPL y modo single-shot (configurable vía `YUNTA_MAX_MESSAGES`, default: 40).
+- **P5 & V2-3 — Cap de tamaño y seguridad UTF-8 en `read_file` (`files.py`)**:
+  - Límite por defecto a 2000 líneas con mensaje de truncamiento y soporte opcional para `offset` y `limit`. Lectura y escritura con `errors="replace"` protegiendo contra errores de codificación en Windows (cp1252).
+- **Documentación**:
+  - `README.md` y `README_en.md` actualizados con todos los comandos interactivos (`/init`, `/undo`, `/roi`, `/metrics`, `/tokens`, `/help`).
+
+---
+
 ## [1.0.6] — 2026-09-07
 
 ### Agregado
