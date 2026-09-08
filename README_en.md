@@ -56,6 +56,7 @@ Requires Python 3.11 or higher.
 ```bash
 pip install yunta-harness
 ```
+> **💡 Note on the package name:** On PyPI the package is distributed as `yunta-harness`, but the command you execute in your terminal is simply **`yunta`** (e.g. `yunta`, `yunta init .`, or `yunta "your prompt"`). You do not need to install it inside your existing app: it works as a global CLI tool (just like Git).
 
 ### From source repository (Development):
 ```bash

@@ -60,35 +60,48 @@ Copia y pega este bloque en la raíz de cualquier proyecto que vayas a desarroll
 
 ---
 
-## Paso 1: Requisitos Previos e Instalación
+## Paso 1: Instalación y Distinción del Nombre (`yunta-harness` vs `yunta`)
 
 Yunta requiere **Python 3.11 o superior**.
 
-1. **Clonar el repositorio**:
-   ```bash
-   git clone https://github.com/j0sp0nc3/yunta.git
-   cd yunta
-   ```
+### 💡 ¿Por qué el paquete se llama `yunta-harness` pero el comando es `yunta`?
+- **En PyPI (descarga con pip):** El paquete se llama **`yunta-harness`** porque en el registro oficial `pypi.org` el nombre `yunta` ya estaba ocupado por una librería histórica de bioinformática.
+- **En tu terminal (comando CLI):** El comando que ejecutas es simplemente **`yunta`** (o `yunta init`) para que sea corto, intuitivo y cómodo de tipear.
 
-2. **Crear y activar un entorno virtual (recomendado)**:
-   ```bash
-   # En Linux / macOS:
-   python3 -m venv .venv
-   source .venv/bin/activate
+### Instalación en tu Sistema:
 
-   # En Windows (PowerShell):
-   python -m venv .venv
-   .venv\Scripts\Activate.ps1
-   ```
+#### Opción A: Desde PyPI (Recomendado)
+Instala Yunta una sola vez de forma global en tu máquina (como Git o Docker):
+```bash
+pip install yunta-harness
+```
+*(O mediante `pipx install yunta-harness` / `uv tool install yunta-harness` si prefieres aislar herramientas CLI).*
 
-3. **Instalar dependencias**:
-   ```bash
-   # Instalación estándar:
-   pip install -r requirements.txt
+#### Opción B: Desde el Repositorio Fuente (Desarrollo local)
+```bash
+git clone https://github.com/j0sp0nc3/yunta-harness.git
+cd yunta-harness
+pip install -e .
+```
 
-   # O instalación en modo editable con herramientas de desarrollo:
-   pip install -e .[dev]
-   ```
+---
+
+## ❓ ¿Debo instalar Yunta dentro de mi aplicación existente?
+
+**No, en absoluto.** Yunta es una herramienta externa a tu aplicación (el banco del carpintero, no el mueble). No debes instalarla dentro de tu proyecto ni agregarla como dependencia en tu `package.json`, `requirements.txt` ni `pom.xml`.
+
+Cualquiera sea la tecnología de tu aplicación (JavaScript, Python, Go, Rust, React, etc.), solo necesitas abrir la terminal en su carpeta:
+
+```bash
+# 1. Navegar a tu proyecto existente
+cd /ruta/a/tu/aplicacion-existente
+
+# 2. Inicializar el contexto ontológico (genera AGENTS.md, SPEC.md y PLAN.md sin tocar tu código)
+yunta init .
+
+# 3. Empezar a iterar con Yunta
+yunta "Explica la estructura de este proyecto y ejecuta los tests existentes"
+```
 
 ---
 

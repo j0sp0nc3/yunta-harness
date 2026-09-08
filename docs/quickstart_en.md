@@ -60,35 +60,48 @@ Copy and paste this template into the root of any repository you plan to build w
 
 ---
 
-## Step 1: Prerequisites & Installation
+## Step 1: Installation & Name Distinction (`yunta-harness` vs `yunta`)
 
 Yunta requires **Python 3.11 or higher**.
 
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/j0sp0nc3/yunta.git
-   cd yunta
-   ```
+### 💡 Why is the package named `yunta-harness` while the command is `yunta`?
+- **On PyPI (pip install):** The package is named **`yunta-harness`** because on `pypi.org` the short name `yunta` was historically registered by a bioinformatics project.
+- **In your terminal (CLI command):** The command you execute is simply **`yunta`** (or `yunta init`) to keep it concise, intuitive, and easy to type.
 
-2. **Create and activate a virtual environment (recommended)**:
-   ```bash
-   # Linux / macOS:
-   python3 -m venv .venv
-   source .venv/bin/activate
+### Installation Options:
 
-   # Windows (PowerShell):
-   python -m venv .venv
-   .venv\Scripts\Activate.ps1
-   ```
+#### Option A: From PyPI (Recommended)
+Install Yunta once globally on your machine (just like Git or Docker):
+```bash
+pip install yunta-harness
+```
+*(Or use `pipx install yunta-harness` / `uv tool install yunta-harness` for isolated CLI tools).*
 
-3. **Install dependencies**:
-   ```bash
-   # Standard installation:
-   pip install -r requirements.txt
+#### Option B: From Source Repository (Local development)
+```bash
+git clone https://github.com/j0sp0nc3/yunta-harness.git
+cd yunta-harness
+pip install -e .
+```
 
-   # Or editable install with dev tools:
-   pip install -e .[dev]
-   ```
+---
+
+## ❓ Should Yunta be installed inside my existing application?
+
+**No, not at all.** Yunta is an external tool for your environment (the carpenter's workbench, not the furniture). You should never install it inside your project nor add it to `package.json`, `requirements.txt`, or `pom.xml`.
+
+Whatever tech stack your application uses (JavaScript, Node.js, Python, Go, Rust, React, etc.), simply open a terminal in its directory:
+
+```bash
+# 1. Navigate to your existing application
+cd /path/to/your/existing-app
+
+# 2. Initialize project context (generates AGENTS.md, SPEC.md, and PLAN.md without touching your code)
+yunta init .
+
+# 3. Start iterating with Yunta
+yunta "Explain the structure of this project and run existing tests"
+```
 
 ---
 
