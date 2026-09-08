@@ -57,3 +57,26 @@ def test_cli_init_dispatch(monkeypatch, tmp_path):
     assert (tmp_path / "AGENTS.md").exists()
     spec = (tmp_path / "SPEC.md").read_text(encoding="utf-8")
     assert "app-de-pruebas" in spec
+
+
+def test_cli_help_flag_without_llm_model(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["yunta", "--help"])
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    monkeypatch.delenv("LLM_MODELS", raising=False)
+
+    cli.main()
+
+    captured = capsys.readouterr().out
+    assert "Comandos de Terminal (CLI):" in captured
+    assert "Comandos Interactivos del REPL" in captured
+    assert "/help" in captured
+    assert "/undo" in captured
+    assert "/roi" in captured
+
+
+def test_cli_version_flag(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["yunta", "--version"])
+    cli.main()
+
+    captured = capsys.readouterr().out
+    assert "yunta v1.0.7" in captured

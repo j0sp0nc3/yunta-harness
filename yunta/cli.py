@@ -54,6 +54,43 @@ def load_system_prompt(feedback: FeedbackStore | None = None) -> str:
     return prompt
 
 
+def print_version():
+    print("yunta v1.0.7")
+
+
+def print_help():
+    print("""Uso: yunta [opciones] [comando | "instrucción"]
+
+Harness de agente de código para Spec-Driven Development (SDD), agnóstico al modelo.
+
+Comandos de Terminal (CLI):
+  yunta                        Inicia la sesión interactiva REPL
+  yunta "tu instrucción"       Ejecución directa single-shot (ej. yunta "revisa los tests")
+  yunta init [idea]            Inicializa el proyecto con SPEC.md, PLAN.md y AGENTS.md (SDD)
+  yunta --version, -v          Muestra la versión instalada de Yunta
+  yunta --help, -h, help       Muestra esta pantalla de ayuda
+
+Comandos Interactivos del REPL (dentro de Yunta):
+  /help                        Muestra los comandos interactivos disponibles
+  /init [idea]                 Inicializa o andamia el proyecto con metodología SDD
+  /undo                        Deshace la última edición de archivos y restaura el estado previo
+  /roi                         Muestra el dashboard de eficiencia económica y tokens evitados
+  /metrics                     Muestra la telemetría detallada de herramientas y turnos
+  /tokens                      Muestra el consumo de tokens y tasa de acierto de caché
+  /clear                       Limpia el historial de la conversación actual
+  /exit                        Guarda lecciones aprendidas en .yunta/learnings.md y sale
+
+Variables de Entorno Principales:
+  LLM_MODEL                    Proveedor/modelo a utilizar (ej. gemini/gemini-2.5-flash, openai/gpt-4o)
+  LLM_MODELS                   Cascada de respaldo separada por comas (ante 429/503/cuota agotada)
+  LLM_API_BASE                 URL base para endpoints OpenAI-compatibles (ej. http://localhost:8000/v1)
+  LLM_API_KEY                  API Key o token Bearer para el endpoint
+  YUNTA_SYSTEM_PROMPT          Sobrescribe el System Prompt base del harness
+  YUNTA_MAX_MESSAGES           Ventana máxima de mensajes en el historial (default: 40)
+
+Documentación: https://github.com/j0sp0nc3/yunta-harness
+""")
+
 def main():
     mcp_clients: list = []
     if sys.platform == "win32":
@@ -62,6 +99,16 @@ def main():
             sys.stderr.reconfigure(encoding="utf-8", errors="replace")
         except Exception:
             pass
+
+    # Despacho de ayuda y versión (sin requerir LLM_MODEL configurado)
+    if len(sys.argv) > 1:
+        arg_lower = sys.argv[1].lower()
+        if arg_lower in ("--help", "-h", "help"):
+            print_help()
+            return
+        if arg_lower in ("--version", "-v", "version"):
+            print_version()
+            return
 
     # Despacho de comando `yunta init [idea]`
     if len(sys.argv) > 1 and sys.argv[1].lower() == "init":
@@ -155,6 +202,9 @@ def main():
             if prompt in ("/tokens", "/metrics"):
                 u = agent.total_usage
                 print(u.format_summary() + "\n")
+                continue
+            if prompt.startswith("/") and not prompt.startswith("//"):
+                print(f"Comando desconocido: '{prompt}'. Escribe /help para ver los comandos disponibles.\n")
                 continue
 
             try:
