@@ -4,6 +4,7 @@ from pathlib import Path
 
 from .agent import Agent
 from .feedback import FeedbackStore
+from .init import run_init
 from .mcp import load_mcp_servers
 from .provider import LiteLLMProvider
 from .tools import bash, delegate, files, memory, search  # noqa: F401 — registro vía decoradores
@@ -17,6 +18,9 @@ Frontera de rol y entorno de ejecución:
 - Yunta es tu banco de herramientas en terminal (read_file, str_replace, bash), NO el runtime de la aplicación.
 - Tu objetivo es desarrollar el código del proyecto del usuario en este espacio de trabajo.
 - NUNCA crees servicios, daemons ni plugins que corran "dentro de Yunta". El software desarrollado vivirá en su propio entorno de producción (ej. nube, contenedor, Power Automate, web, CLI propio, etc.).
+
+Filosofía Spec-Driven Development (SDD):
+- Si el proyecto contiene `SPEC.md` y `PLAN.md`, respeta la fase activa del plan y guía al usuario en la resolución paso a paso (TDD: prueba de borde -> implementación -> verificación).
 
 Reglas de honestidad y verificación:
 - NUNCA afirmes haber ejecutado o editado algo sin haberlo hecho con una tool
@@ -52,15 +56,33 @@ def main():
             sys.stderr.reconfigure(encoding="utf-8", errors="replace")
         except Exception:
             pass
+
+    # Despacho de comando `yunta init [idea]`
+    if len(sys.argv) > 1 and sys.argv[1].lower() == "init":
+        idea = " ".join(sys.argv[2:]).strip()
+        run_init(idea)
+        return
+
     feedback = FeedbackStore()
     system = load_system_prompt(feedback)
     provider = LiteLLMProvider(system=system)
     delegate.set_provider(provider)
+
+    # Despacho single-shot: `yunta "mi tarea directa"`
+    if len(sys.argv) > 1:
+        agent = Agent(provider=provider, system=system)
+        prompt = " ".join(sys.argv[1:]).strip()
+        try:
+            agent.send(prompt)
+        except KeyboardInterrupt:
+            print()
+        return
+
     mcp_clients = load_mcp_servers()
     agent = Agent(provider=provider, system=system)
 
     print(f"yunta — modelo: {provider.model()}")
-    print("Escribe tu consulta, /tokens o /metrics para telemetría, /clear para limpiar, /exit para salir.\n")
+    print("Escribe tu consulta, /init [idea], /tokens, /metrics, /clear o /exit.\n")
 
     try:
         while True:
@@ -76,9 +98,21 @@ def main():
                 if agent.messages:
                     feedback.summarize(provider, agent.messages)
                 break
+            if prompt == "/help":
+                print("Comandos disponibles:")
+                print("  /init [idea]   - Inicializa el proyecto con SPEC.md, PLAN.md y AGENTS.md (SDD)")
+                print("  /tokens        - Muestra el consumo de tokens y tasa de acierto de caché")
+                print("  /metrics       - Muestra la telemetría detallada de uso y herramientas")
+                print("  /clear         - Limpia el historial de la conversación actual")
+                print("  /exit          - Guarda lecciones de sesión y sale de Yunta\n")
+                continue
             if prompt == "/clear":
                 agent.messages.clear()
                 print("(historial limpio)\n")
+                continue
+            if prompt.startswith("/init"):
+                idea = prompt[5:].strip()
+                run_init(idea)
                 continue
             if prompt in ("/tokens", "/metrics"):
                 u = agent.total_usage

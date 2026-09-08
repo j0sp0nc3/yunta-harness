@@ -475,6 +475,23 @@ publicación).
 
 ---
 
+## [1.0.4] — 2026-09-07
+
+### Agregado
+- **Comando de Ideación y Scaffolding SDD (`yunta init` / `/init`)** (`yunta/init.py`, `yunta/cli.py`):
+  - Nuevo módulo `yunta/init.py` para inicializar cualquier idea desde cero guiada por Spec-Driven Development (SDD).
+  - Generación automática de los 3 artefactos maestros fundacionales en el directorio destino:
+    - `SPEC.md`: Especificación formal de la idea (visión, problema, actores, casos de uso del MVP, arquitectura, flujos de datos y anti-alcance).
+    - `PLAN.md`: Hoja de ruta iterativa estructurada por fases verificables (Fase 1: Mínimo Núcleo Viable con criterio de aceptación TDD).
+    - `AGENTS.md`: Manual de convivencia y guardrails para cualquier agente de IA (stack, comandos de ejecución/tests y reglas inviolables).
+  - Integración en CLI: `yunta init [nombre_o_idea]` para ejecutar la inicialización de forma directa y offline sin requerir credenciales ni modelos configurados.
+  - Integración en REPL: comando interactivo `/init [idea]` para inicializar proyectos desde la sesión de terminal activa.
+  - Ejecución de comando único (single-shot): `yunta "instrucción"` para despachar tareas directas sin entrar al REPL interactivo.
+- **Tests unitarios** (`tests/test_init.py`):
+  - Cobertura completa de generación de artefactos, respeto a archivos existentes, asignación de nombre por defecto y despacho CLI (`main()`). 4 nuevos tests (69 tests en total al 100% verde).
+
+---
+
 ## [1.0.3] — 2026-09-07
 
 ### Agregado

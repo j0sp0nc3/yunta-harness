@@ -3,7 +3,7 @@
 Plan de la iniciativa y su estado. Se comparte junto con el código para que
 cualquier persona, IDE o modelo sepa hacia dónde va el proyecto y qué falta.
 
-Estado actual: **v1.0.3 — Publicado en PyPI** (fases 1-8, backlog fundacional y roadmap E1-E8 completados al 100%). Actualizar este archivo al
+Estado actual: **v1.0.4 — Publicado en PyPI** (fases 1-8, backlog fundacional y roadmap E1-E8, E10 completados). Actualizar este archivo al
 cambiar de fase, junto con `CHANGELOG.md`.
 
 ## Roadmap de evolución (post-backlog)
@@ -19,7 +19,7 @@ cambiar de fase, junto con `CHANGELOG.md`.
 | E7 | Modularización y jerarquía del System Prompt (separación de prompt base + override global `~/.yunta/system_prompt.md`) | ✅ v1.0.2 — implementado vía Dogfooding autónomo con Yunta |
 | E8 | Indicador de actividad y estado en tiempo real (`Spinner` interactivo y telemetría de duración de tools) | ✅ v1.0.3 — implementado vía Dogfooding autónomo con Yunta |
 | E9 | Cascada de respaldo de modelos (`ModelFallbackRouter` ante 429/503/cuota agotada) | ⏳ Pendiente |
-| E10 | Bucle TDD/SDD nativo con contrato formal de especificación (`yunta --spec <file>`) | ⏳ Pendiente |
+| E10 | Bucle TDD/SDD nativo con contrato formal de especificación (`yunta init` / `/init`) | ✅ v1.0.4 — scaffolding de ideas y ciclo de vida de proyectos SDD |
 | E11 | Streaming de tokens de pensamiento (`Reasoning`) y pre-notificación de herramientas | ⏳ Pendiente |
 | E12 | Compactación semántica de salidas verbosas de terminal (reducción de tokens en tests/builds) | ⏳ Pendiente |
 | E13 | Micro-checkpoints por tool-call e historial de restauración (`/undo` en memoria) | ⏳ Pendiente |
@@ -75,7 +75,7 @@ trabaja con el mismo harness.
 - ~~Modularización del System Prompt~~ ✅ v1.0.2 (implementado autónomamente por Yunta vía Dogfooding)
 - ~~Indicador de actividad y estado en tiempo real (Spinner y cronómetro de herramientas)~~ ✅ v1.0.3 (implementado vía Dogfooding autónomo con Yunta)
 - **Cascada de respaldo inteligente de modelos (Model Fallback Router)**: Conmutación automática transparente entre lista priorizada de modelos cuando el principal retorna 429 (límite de cuota/rate limit) o 503 (saturación), sin abortar la sesión ni perder el contexto de la tarea acumulado.
-- **Bucle TDD/SDD con Contrato Inviolable (`/spec` o `yunta --spec`)**: Ejecución guiada por documento de especificación formal. Genera primero los tests de borde (Red), implementa el código mínimo para satisfacerlos (Green) y certifica formalmente el cumplimiento de la especificación antes de entregar el control.
+- ~~Bucle TDD/SDD con Contrato Inviolable (`yunta init` / `/init`)~~ ✅ v1.0.4 (scaffolding automático de SPEC.md, PLAN.md y AGENTS.md para iterar ideas desde cero)
 - **Streaming de tokens de razonamiento (`Reasoning/Thinking`) y pre-notificación de tools**: Visualización en vivo y atenuada de la cadena de pensamiento antes de emitir texto, y aviso previo al arranque de herramientas de larga duración.
 - **Compactación semántica de salidas de terminal**: Detección y compresión inteligente de logs extensos (ej. suites de pytest o builds grandes), reteniendo solo resúmenes o fallos para ahorrar entre 60% y 80% de tokens de contexto.
 - **Micro-checkpoints por tool call ("Time-Travel Undo")**: Snapshots livianos automáticos antes de cada invocación destructiva (`write_file`, `str_replace`, `bash`), permitiendo comando `/undo` inmediato sin ensuciar el árbol ni el historial de Git del usuario.
