@@ -243,3 +243,60 @@ def test_spinner_start_and_stop(monkeypatch):
     assert not spinner._thread.is_alive()
 
 
+
+
+def test_agent_undo_file_creation(tmp_path):
+    import json
+    from yunta.agent import Agent
+    from types import SimpleNamespace
+
+    mock_provider = SimpleNamespace(
+        send=lambda msgs, tools, on_text=None: None,
+        total_usage=SimpleNamespace(),
+        model=lambda: "test-model"
+    )
+    agent = Agent(provider=mock_provider, system='', confirm=lambda name, detail: True)
+
+    test_file = tmp_path / "created_by_yunta.txt"
+    assert not test_file.exists()
+
+    res, err = agent._execute_tool("write_file", json.dumps({"path": str(test_file), "content": "contenido inicial"}))
+    assert not err
+    assert test_file.exists()
+    assert test_file.read_text(encoding="utf-8") == "contenido inicial"
+
+    # Deshacer operacion (E13)
+    restored = agent.undo()
+    assert len(restored) == 1
+    assert "eliminado" in restored[0]
+    assert not test_file.exists()
+
+
+def test_agent_undo_file_modification(tmp_path):
+    import json
+    from yunta.agent import Agent
+    from types import SimpleNamespace
+
+    mock_provider = SimpleNamespace(
+        send=lambda msgs, tools, on_text=None: None,
+        total_usage=SimpleNamespace(),
+        model=lambda: "test-model"
+    )
+    agent = Agent(provider=mock_provider, system='', confirm=lambda name, detail: True)
+
+    test_file = tmp_path / "existing_file.txt"
+    test_file.write_text("linea 1\nlinea original\nlinea 3", encoding="utf-8")
+
+    res, err = agent._execute_tool("str_replace", json.dumps({
+        "path": str(test_file),
+        "old_str": "linea original",
+        "new_str": "linea modificada"
+    }))
+    assert not err
+    assert "linea modificada" in test_file.read_text(encoding="utf-8")
+
+    # Deshacer modificacion (E13)
+    restored = agent.undo()
+    assert len(restored) == 1
+    assert "restaurado" in restored[0]
+    assert "linea original" in test_file.read_text(encoding="utf-8")

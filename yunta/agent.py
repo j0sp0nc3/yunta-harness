@@ -66,6 +66,7 @@ class Agent:
         self._tools_subset = list(tools) if tools is not None else None
         self.usage = Usage()
         self._spinner = None
+        self.snapshots: list[dict[str, str | None]] = []
 
     def send(self, prompt: str) -> str:
         self.usage.turns += 1
@@ -156,6 +157,34 @@ class Agent:
         print(delta, end="", flush=True)
         self._streamed = True
 
+    def _take_snapshot(self, name: str, raw_input: str) -> None:
+        try:
+            args = json.loads(raw_input or "{}")
+            path = args.get("path", "")
+            if path:
+                p = Path(path)
+                old_content = p.read_text(encoding="utf-8", errors="replace") if p.exists() else None
+                self.snapshots.append({path: old_content})
+        except Exception:
+            pass
+
+    def undo(self) -> list[str]:
+        """Restaura los archivos modificados en la última operación de escritura/edición."""
+        if not self.snapshots:
+            return []
+        last = self.snapshots.pop()
+        restored = []
+        for path_str, old_content in last.items():
+            p = Path(path_str)
+            if old_content is None:
+                if p.exists():
+                    p.unlink()
+                    restored.append(f"{path_str} (eliminado)")
+            else:
+                p.write_text(old_content, encoding="utf-8")
+                restored.append(f"{path_str} (restaurado)")
+        return restored
+
     def _execute_tool(self, name: str, raw_input: str) -> tuple[str, bool]:
         self.usage.tool_counts[name] = self.usage.tool_counts.get(name, 0) + 1
         tool = registry.get(name)
@@ -163,20 +192,33 @@ class Agent:
             self.usage.tool_errors += 1
             return f"unknown tool: {name}", True
 
+        # E13: Guardar snapshot previo antes de modificar archivos
+        if name in ("write_file", "str_replace"):
+            self._take_snapshot(name, raw_input)
+
         detail = self._tool_detail(name, raw_input)
         print(f"[tool] {name} {raw_input}")
         if tool.requires_approval and not self._approve(name, detail):
             self.usage.tool_errors += 1
             return "user denied this tool call", True
 
+        # E11: Pre-notificación en terminal
+        if sys.stdout.isatty():
+            sys.stdout.write(f"[tool] {name} en ejecución...\r")
+            sys.stdout.flush()
+
         start_time = time.time()
         try:
             res = tool.fn(raw_input)
             elapsed = time.time() - start_time
+            if sys.stdout.isatty():
+                sys.stdout.write("\033[K")
             print(f"[tool] {name} completado en {elapsed:.2f}s")
             return res, False
         except Exception as e:
             elapsed = time.time() - start_time
+            if sys.stdout.isatty():
+                sys.stdout.write("\033[K")
             print(f"[tool] {name} falló en {elapsed:.2f}s")
             self.usage.tool_errors += 1
             return f"{type(e).__name__}: {e}", True
@@ -205,6 +247,8 @@ class Agent:
             if not old_str or old.count(old_str) != 1:
                 return ""
             new_content = old.replace(old_str, new_str, 1)
+        else:
+            return ""
 
         diff = difflib.unified_diff(
             old.splitlines(keepends=True),
@@ -214,13 +258,19 @@ class Agent:
         )
         return "".join(diff)
 
-    def _approve(self, name: str, detail: str) -> bool:
+    def _approve(self, name: str, detail: str = "") -> bool:
         if self.confirm is not None:
             return self.confirm(name, detail)
+
         if detail:
-            print(detail)
-        answer = input(f"¿Ejecutar {name}? [y/N] ").strip().lower()
-        return answer == "y"
+            print(detail, end="")
+
+        while True:
+            ans = input(f"Aprobar {name}? [s/n]: ").strip().lower()
+            if ans in ("s", "si", "y", "yes"):
+                return True
+            if ans in ("n", "no"):
+                return False
 
     @property
     def total_usage(self) -> Usage:

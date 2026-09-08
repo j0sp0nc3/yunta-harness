@@ -18,12 +18,12 @@ cambiar de fase, junto con `CHANGELOG.md`.
 | E6 | Guardrail ontológico y frontera de ejecución (harness vs. runtime) | ✅ v1.0.1 — `SYSTEM_PROMPT` blindado, Paso 0 en quickstart, plantilla `AGENTS.md` y test de regresión |
 | E7 | Modularización y jerarquía del System Prompt (separación de prompt base + override global `~/.yunta/system_prompt.md`) | ✅ v1.0.2 — implementado vía Dogfooding autónomo con Yunta |
 | E8 | Indicador de actividad y estado en tiempo real (`Spinner` interactivo y telemetría de duración de tools) | ✅ v1.0.3 — implementado vía Dogfooding autónomo con Yunta |
-| E9 | Cascada de respaldo de modelos (`ModelFallbackRouter` ante 429/503/cuota agotada) | ⏳ Pendiente |
+| E9 | Cascada de respaldo de modelos (`ModelFallbackRouter` ante 429/503/cuota agotada) | ✅ v1.0.6 |
 | E10 | Bucle TDD/SDD nativo con contrato formal de especificación (`yunta init` / `/init`) | ✅ v1.0.4 — scaffolding de ideas y ciclo de vida de proyectos SDD |
-| E11 | Streaming de tokens de pensamiento (`Reasoning`) y pre-notificación de herramientas | ⏳ Pendiente |
+| E11 | Streaming de tokens de pensamiento (`Reasoning`) y pre-notificación de herramientas | ✅ v1.0.6 |
 | E12 | Compactación semántica de salidas verbosas de terminal (reducción de tokens en tests/builds) | ✅ v1.0.5 — compactación en `bash.py` y timeout de 60s |
-| E13 | Micro-checkpoints por tool-call e historial de restauración (`/undo` en memoria) | ⏳ Pendiente |
-| E14 | Dashboard de ROI económico y tokens evitados (`/roi`) | ⏳ Pendiente |
+| E13 | Micro-checkpoints por tool-call e historial de restauración (`/undo` en memoria) | ✅ v1.0.6 |
+| E14 | Dashboard de ROI económico y tokens evitados (`/roi`) | ✅ v1.0.6 |
 
 ---
 

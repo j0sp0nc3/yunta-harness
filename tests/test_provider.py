@@ -210,3 +210,61 @@ def test_provider_tracks_cached_tokens():
     r = p.send(MSGS[:1], tools=[])
     assert r.usage.cached_tokens == 7
     assert p.total_usage.cached_tokens == 7
+
+
+def test_provider_fallback_router_on_429(monkeypatch):
+    import litellm
+    from types import SimpleNamespace
+    from yunta.provider import LiteLLMProvider
+    from yunta.api import Message, Role, Block, BlockType
+
+    monkeypatch.setenv("LLM_MODELS", "gemini/gemini-2.5-flash,openai/gpt-4o")
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+
+    call_count = 0
+    def fake_completion(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            assert kwargs["model"] == "gemini/gemini-2.5-flash"
+            raise Exception("429 RESOURCE_EXHAUSTED Quota exceeded")
+        assert kwargs["model"] == "openai/gpt-4o"
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="fallback success", tool_calls=None), finish_reason="stop")],
+            usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5, prompt_tokens_details=None),
+        )
+
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+
+    provider = LiteLLMProvider(system="sys")
+    assert provider.model() == "gemini/gemini-2.5-flash"
+
+    msgs = [Message(role=Role.USER, content=[Block(type=BlockType.TEXT, text="hola")])]
+    resp = provider.send(msgs, tools=[])
+
+    assert call_count == 2
+    assert provider.model() == "openai/gpt-4o"
+    assert resp.content[0].text == "fallback success"
+
+
+def test_provider_streams_reasoning_tokens(monkeypatch):
+    import litellm
+    from types import SimpleNamespace
+    from yunta.provider import LiteLLMProvider
+    from yunta.api import Message, Role, Block, BlockType
+
+    monkeypatch.setenv("LLM_MODEL", "deepseek/deepseek-r1")
+    stream_chunks = [
+        SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(reasoning_content="pensando...", content=None, tool_calls=None), finish_reason=None)], usage=None),
+        SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(reasoning_content=None, content="respuesta", tool_calls=None), finish_reason="stop")], usage=None),
+    ]
+
+    monkeypatch.setattr(litellm, "completion", lambda **kwargs: stream_chunks)
+
+    collected = []
+    p = LiteLLMProvider(system="")
+    msgs = [Message(role=Role.USER, content=[Block(type=BlockType.TEXT, text="calcula")])]
+    resp = p.send(msgs, tools=[], on_text=lambda t: collected.append(t))
+
+    assert collected == ["pensando...", "respuesta"]
+    assert resp.content[0].text == "respuesta"
