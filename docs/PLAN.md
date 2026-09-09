@@ -116,7 +116,7 @@ Un harness que pierde trabajo o deja archivos a medias no cumple su función.
   de escritura deja archivos truncados (ocurrió 3 veces). Fix: escribir a
   .tmp, validar (py_compile para .py, balance de comillas/paréntesis en
   general), confirmar bytes, y rename solo si todo pasó. Archivo original
-  intacto ante fallo. *Estado: 🔨*
+  intacto ante fallo. *Estado: ✅ v1.2.1 (6 tests)*
 - **P7 🔴 sin degradación progresiva ante cuota**: RateLimitError pierde la
   sesión completa incluida la tarea pendiente (ocurrió 2 veces). Fix: al
   capturar RateLimit/Authentication persistir .yunta/estado-de-tarea.md

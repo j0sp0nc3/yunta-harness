@@ -60,10 +60,76 @@ def write_file(raw: str) -> str:
     path, content = args.get("path", ""), args.get("content", "")
     if not path:
         raise ValueError("path es obligatorio")
+    if not isinstance(content, str):
+        raise ValueError("content debe ser un string")
+    _validate_content(path, content)
+
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(content, encoding="utf-8")
+    tmp = p.with_name(p.name + ".tmp-yunta")
+    try:
+        tmp.write_text(content, encoding="utf-8")
+        written = tmp.read_text(encoding="utf-8")
+        if written != content:
+            raise ValueError("verificación de escritura falló (bytes inconsistentes)")
+        tmp.replace(p)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
     return f"wrote {len(content)} bytes to {path}"
+
+
+def _validate_content(path: str, content: str) -> None:
+    """P6: validación previa a escribir. Archivos .py se compilan; el resto
+    se revisa por balance de comillas/paréntesis/corchetes/llaves (fuera de
+    strings). Falla temprano para no dejar archivos a medias."""
+    if path.endswith(".py"):
+        import py_compile
+        import tempfile
+
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8") as tf:
+            tf.write(content)
+        try:
+            py_compile.compile(tf.name, doraise=True)
+        except py_compile.PyCompileError as e:
+            raise ValueError(f"contenido con sintaxis Python inválida: {e}") from e
+        finally:
+            Path(tf.name).unlink(missing_ok=True)
+        return
+
+    pares = {"(": ")", "[": "]", "{": "}"}
+    cierres = {v: k for k, v in pares.items()}
+    stack = []
+    quote = None
+    escape = False
+    for ch in content:
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if quote:
+            if ch == quote:
+                quote = None
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+        elif ch in pares:
+            stack.append(ch)
+        elif ch in cierres:
+            if not stack or stack[-1] != cierres[ch]:
+                raise ValueError(
+                    f"contenido desbalanceado: '{ch}' inesperado (¿escritura truncada?)"
+                )
+            stack.pop()
+    if stack:
+        raise ValueError(
+            f"contenido desbalanceado: '{stack[-1]}' sin cerrar (¿escritura truncada?)"
+        )
+    if quote == '"':
+        raise ValueError('contenido desbalanceado: comilla doble sin cerrar (¿escritura truncada?)')
+
 
 
 @registry.register(
