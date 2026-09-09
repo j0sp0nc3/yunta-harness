@@ -9,6 +9,7 @@ from pathlib import Path
 from .api import Block, BlockType, Message, Response, Role, StopReason, Usage
 from .errors import classify_tool_error
 from .session import save_session
+from .resilience import QuotaExhausted, save_task_state, should_save_state
 from .tools import registry
 
 
@@ -143,10 +144,30 @@ class Agent:
                 self._spinner = Spinner("Pensando...")
                 self._spinner.start()
                 try:
-                    if supports_stream:
-                        resp = self.provider.send(self.messages, self._definitions(), on_text=self._stream_text)
-                    else:
-                        resp = self.provider.send(self.messages, self._definitions())
+                    try:
+                        if supports_stream:
+                            resp = self.provider.send(self.messages, self._definitions(), on_text=self._stream_text)
+                        else:
+                            resp = self.provider.send(self.messages, self._definitions())
+                    except Exception as prov_err:
+                        # P7: degradación progresiva ante cuota agotada
+                        if should_save_state(prov_err):
+                            summary = [
+                                {"role": m.role.value, "text": " ".join(
+                                    b.text for b in m.content if b.type == BlockType.TEXT
+                                )}
+                                for m in self.messages
+                            ]
+                            last_user = next(
+                                (" ".join(b.text for b in m.content if b.type == BlockType.TEXT)
+                                 for m in reversed(self.messages) if m.role == Role.USER),
+                                "",
+                            )
+                            save_task_state(last_user, summary, f"{type(prov_err).__name__}: {prov_err}")
+                            raise QuotaExhausted(
+                                f"cuota del proveedor agotada; estado de la tarea guardado en {save_task_state.__module__} (.yunta/estado-de-tarea.md)"
+                            ) from prov_err
+                        raise
                 finally:
                     if self._spinner:
                         self._spinner.stop()
