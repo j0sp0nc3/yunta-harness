@@ -176,6 +176,45 @@ Prioridad sugerida por impacto/esfuerzo: V3-1, V3-2, V3-7 (seguridad y
 control, esfuerzo bajo) → V3-8, V3-3 (medición y eficiencia) → V3-4, V3-6
 → V3-5 → V3-9.
 
+
+## Oleada 1 — especificación ejecutable (retomable sin contexto previo)
+
+Ejecutar de menor a mayor costo, un item por rama o rama única
+`feature/oleada-1`. Cada item: TDD (test primero), suite completa verde,
+entrada en CHANGELOG. Cualquier agente/IDE puede retomar donde esté.
+
+### O1-a) V3-12 `yunta ide-init` (~30 líneas) — Estado: ⬜
+- Comando `yunta ide-init` (despacho en cli.py igual que serve-mcp): crea
+  `.vscode/mcp.json` con {"servers":{"yunta":{"command":"yunta","args":["serve-mcp"]}}}
+  y `.vscode/tasks.json` con tasks 'yunta: run', 'yunta: check', 'yunta: init'
+  (shell, command 'yunta' / 'yunta check' / 'yunta init'). No sobrescribir
+  existentes: merge o aviso. Tests: creación, no-sobrescritura, JSON válido.
+
+### O1-b) V3-7 blocklist bash (~50 líneas) — Estado: ⬜
+- En yunta/tools/bash.py: patrones peligrosos rechazados ANTES de ejecutar:
+  rm -rf con ruta fuera de cwd o /, 'curl ...| sh', 'wget ...| sh',
+  'git push --force' (salvo YUNTA_ALLOW_FORCE=1), mkfs, dd of=/dev/.
+  Error claro y accionable ('patrón bloqueado por seguridad: ...').
+  Config: YUNTA_BLOCKLIST_EXTRA=path-a-archivo-con-patrones-regex.
+  Tests: un test por patrón + uno de allow-force opcional.
+
+### O1-c) V3-2 permisos persistentes (~80 líneas) — Estado: ⬜
+- En agent.py/_approve: respuesta 's' o 'siempre' → registrar patrón
+  (tool + primer token del comando o path) en dict en memoria de sesión.
+  Consulta del patrón antes de confirmar. Comando /permissions: lista,
+  /permissions clear revoca. NO persistir a disco en v1 (solo sesión).
+  Tests: tras 'siempre' no se re-pregunta mismo patrón; patrón distinto sí;
+  /permissions clear restaura pregunta.
+
+### O1-d) V3-8 startup tax medible (~40 líneas) — Estado: ⬜
+- En provider.py: contar tokens aproximados del primer payload
+  (system + schemas) — litellm token_counter o len//4 como fallback.
+  Exponer provider.startup_tax: int. /metrics lo muestra con objetivo <5000.
+  Test: provider falso con payload conocido → valor >0 y estable.
+
+### OLEADA 2 (siguiente): V3-10 aprobaciones vía MCP → V3-1 doom-loop.
+### OLEADA 3: V3-11 serve-json → V3-13 extensión VS Code (repo aparte).
+
 ## Reglas que gobiernan el plan
 
 Ver `AGENTS.md` (reglas inviolables) y la sección "Convenciones" de
