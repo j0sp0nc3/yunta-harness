@@ -255,10 +255,18 @@ Durante cualquier momento de tu sesión puedes utilizar los comandos de control:
 
 | Comando / Atajo | Acción | Descripción |
 | :--- | :--- | :--- |
-| **`/tokens`** | Telemetría de tokens | Muestra el consumo acumulado de entrada y salida, destacando los tokens ahorrados por **Prompt Caching**: `in=14200 (cached=11800) out=650`. |
-| **`Ctrl+C`** | Interrupción limpia | Si el modelo está en medio de un turno largo o ejecutando un comando y deseas detenerlo, pulsa `Ctrl+C`. El turno se cancela de inmediato y regresas al prompt `> ` sin tumbar la sesión ni perder el historial. |
-| **`/clear`** | Limpiar contexto | Borra el historial de mensajes de la sesión actual si deseas iniciar un tema nuevo. |
-| **`/exit`** | Salir y aprender | Guarda automáticamente las lecciones y patrones aprendidos en `.yunta/learnings.md` para mejorar en tu próxima sesión y cierra el programa. |
+| **`/init [idea]`** | Scaffolding SDD | Inicializa o andamia el proyecto generando `SPEC.md`, `PLAN.md` y `AGENTS.md`. |
+| **`/sandbox [merge|discard]`** | Git Worktree Sandbox | Crea o gestiona un entorno aislado en Git Worktree para operaciones experimentales. |
+| **`/context`** | Estado de tokens | Muestra los mensajes, tokens estimados en contexto y el uso % del presupuesto (`YUNTA_MAX_TOKENS`). |
+| **`/undo`** | Time-Travel Undo | Restaura instantáneamente los archivos a su estado anterior a la última edición. |
+| **`/permissions [clear]`** | Permisos de sesión | Muestra los patrones autorizados con 'siempre' o los revoca (`/permissions clear`). |
+| **`/roi`** | Dashboard de valor | Muestra porcentaje de caché, tokens evitados y estimación de ahorro en USD. |
+| **`/metrics`** | Telemetría detallada | Muestra llamadas a herramientas, **startup tax**, errores y turnos consumidos. |
+| **`/tokens`** | Telemetría de tokens | Muestra el consumo acumulado de entrada, salida y tokens cacheados. |
+| **`Ctrl+C`** | Interrupción limpia | Cancela el turno en curso o comando bash sin tumbar la sesión del REPL. |
+| **`/clear`** | Limpiar contexto | Borra el historial de mensajes y la sesión guardada actual. |
+| **`/exit`** | Salir y aprender | Guarda lecciones en `.yunta/learnings.md` para futuras sesiones y sale. |
+
 
 ---
 

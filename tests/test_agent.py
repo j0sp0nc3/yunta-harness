@@ -6,7 +6,7 @@ import pytest
 sys.path.insert(0, ".")
 
 from yunta.agent import Agent
-from yunta.api import Block, BlockType, Response, StopReason
+from yunta.api import Block, BlockType, Response, Role, StopReason
 from yunta.tools import bash, files  # noqa: F401
 
 
@@ -343,3 +343,257 @@ def test_agent_ctrl_c_no_orphan_tool_use():
     assert tool_results[1].tool_use_id == "call_2"
     assert "cancelada" in tool_results[0].tool_result
     assert "cancelada" in tool_results[1].tool_result
+
+
+# ---------------------------------------------------------------------------
+# O1-c) V3-2: Permisos persistentes de sesión (solo en memoria)
+# ---------------------------------------------------------------------------
+
+def _approval_scenario(monkeypatch, answers):
+    """Construye un agent con bash tool_use y respuestas de input programadas.
+
+    Devuelve (agent, prompts) donde prompts acumula lo preguntado al usuario.
+    """
+    prompts = []
+    it = iter(answers)
+
+    def fake_input(prompt=""):
+        prompts.append(prompt)
+        try:
+            return next(it)
+        except StopIteration:
+            return "n"
+
+    monkeypatch.setattr("builtins.input", fake_input)
+
+    p = FakeProvider(
+        [
+            Response(
+                content=[tool_use("1", "bash", '{"command":"rm temporal.txt"}')],
+                stop_reason=StopReason.TOOL_USE,
+            ),
+            Response(content=[Block(type=BlockType.TEXT, text="ok")], stop_reason=StopReason.END_TURN),
+        ]
+    )
+    agent = Agent(provider=p, system="s", auto_save=False)
+    agent.send("borra el archivo")
+    return agent, prompts
+
+
+def test_session_permissions_always_skips_same_pattern(monkeypatch):
+    """Tras responder 'siempre', el mismo patrón (bash + primer token) no vuelve a preguntar."""
+    agent, prompts = _approval_scenario(monkeypatch, ["siempre"])
+    assert prompts, "debió preguntar la primera vez"
+    assert agent.session_permissions.allowed("bash", "rm temporal.txt")
+
+    # Un segundo agent (simulando nueva llamada en la MISMA sesión: memoria compartida
+    # ocurre vía el mismo objeto; aquí verificamos el cambio de estado en el agente)
+    p2 = FakeProvider(
+        [
+            Response(
+                content=[tool_use("2", "bash", '{"command":"rm temporal.txt"}')],
+                stop_reason=StopReason.TOOL_USE,
+            ),
+            Response(content=[Block(type=BlockType.TEXT, text="ok")], stop_reason=StopReason.END_TURN),
+        ]
+    )
+    agent2 = Agent(provider=p2, system="s", auto_save=False,
+                   session_permissions=agent.session_permissions)
+    prompts2 = []
+    monkeypatch.setattr(
+        "builtins.input",
+        lambda _p="": (prompts2.append(_p), "n")[1],
+    )
+    agent2.send("borra el archivo otra vez")
+    assert prompts2 == [], "no debió volver a preguntar para el mismo patrón"
+
+
+def test_session_permissions_pattern_is_per_first_token(monkeypatch):
+    """Un comando distinto (otro primer token) SÍ vuelve a preguntar."""
+    agent, _ = _approval_scenario(monkeypatch, ["siempre"])
+    assert agent.session_permissions.allowed("bash", "rm temporal.txt")
+
+    p = FakeProvider(
+        [
+            Response(
+                content=[tool_use("2", "bash", '{"command":"curl http://x"}')],
+                stop_reason=StopReason.TOOL_USE,
+            ),
+            Response(content=[Block(type=BlockType.TEXT, text="ok")], stop_reason=StopReason.END_TURN),
+        ]
+    )
+    prompts = []
+    monkeypatch.setattr("builtins.input", lambda _p="": (prompts.append(_p), "s")[1])
+    p2_agent = Agent(provider=p, system="s", auto_save=False, session_permissions=agent.session_permissions)
+    p2_agent.send("usa curl")
+    assert prompts, "patrón distinto (curl) debió volver a preguntar"
+
+
+def test_session_permissions_grant_via_s_also_stores_pattern(monkeypatch):
+    """'s' confirma solo esa vez; 'siempre' registra. Ambos caminos exponen el estado."""
+    agent, prompts = _approval_scenario(monkeypatch, ["s"])
+    assert prompts
+    assert not agent.session_permissions.allowed("bash", "rm temporal.txt"), "'s' no debe persistir permiso"
+
+    agent_b, _ = _approval_scenario(monkeypatch, ["siempre"])
+    assert agent_b.session_permissions.allowed("bash", "rm temporal.txt")
+
+
+def test_session_permissions_write_path_pattern(monkeypatch):
+    """Para tools de archivos el patrón usa el path (primer token del path)."""
+    monkeypatch.setattr("builtins.input", lambda _p="": "siempre")
+    p = FakeProvider(
+        [
+            Response(
+                content=[tool_use("3", "write_file", '{"path":"docs/guia.md","content":"x"}')],
+                stop_reason=StopReason.TOOL_USE,
+            ),
+            Response(content=[Block(type=BlockType.TEXT, text="ok")], stop_reason=StopReason.END_TURN),
+        ]
+    )
+    agent = Agent(provider=p, system="s", auto_save=False)
+    agent.send("escribe guia")
+    assert agent.session_permissions.allowed("write_file", '{"path":"docs/guia.md","content":"x"}')
+
+
+def test_session_permissions_clear_restores_question(monkeypatch):
+    """/permissions clear (SessionPermissions.revoke_all) restaura la pregunta."""
+    agent, _ = _approval_scenario(monkeypatch, ["siempre"])
+    assert agent.session_permissions.allowed("bash", "rm temporal.txt")
+
+    agent.session_permissions.revoke_all()
+    assert not agent.session_permissions.allowed("bash", "rm temporal.txt")
+
+
+def test_session_permissions_is_memory_only(tmp_path, monkeypatch):
+    """El store NO debe escribir nada a disco."""
+    monkeypatch.chdir(tmp_path)
+    agent, _ = _approval_scenario(monkeypatch, ["siempre"])
+    agent.session_permissions.revoke_all()
+    assert list(tmp_path.rglob("*")) == [], "no debe persistir nada en disco"
+
+
+def test_session_permissions_listing_has_entries(monkeypatch):
+    """items() expone la lista para /permissions."""
+    agent, _ = _approval_scenario(monkeypatch, ["siempre"])
+    items = agent.session_permissions.items()
+    assert ("bash", "rm") in items
+
+
+def test_long_output_offloaded_to_scratch_file(tmp_path, monkeypatch):
+    """Resultados de tools > 8000 chars se guardan en .yunta/scratch/ con preview de 500 chars."""
+    from yunta.tools import registry
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(registry._tools["bash"], "fn", lambda raw: "A" * 500 + "B" * 9500)
+
+    p = FakeProvider(
+        [
+            Response(
+                content=[tool_use("1", "bash", '{"command":"echo largo"}')],
+                stop_reason=StopReason.TOOL_USE,
+            ),
+            Response(content=[Block(type=BlockType.TEXT, text="listo")], stop_reason=StopReason.END_TURN),
+        ]
+    )
+
+    a = Agent(provider=p, system="s", auto_save=False, confirm=lambda n, d: True)
+    a.send("ejecuta tool larga")
+
+    tool_results = [b for b in a.messages[2].content if b.type == BlockType.TOOL_RESULT]
+    assert len(tool_results) == 1
+    res_text = tool_results[0].tool_result
+    assert len(res_text) < 1000
+    assert res_text.startswith("A" * 500)
+    assert "scratch file: .yunta/scratch/output_" in res_text
+
+    scratch_files = list((tmp_path / ".yunta" / "scratch").glob("output_*.txt"))
+    assert len(scratch_files) == 1
+    content_on_disk = scratch_files[0].read_text(encoding="utf-8")
+    assert len(content_on_disk) == 10000
+    assert content_on_disk.startswith("A" * 500)
+    assert content_on_disk.endswith("B" * 9500)
+
+
+def test_doom_loop_detection_warning(tmp_path, monkeypatch):
+    """3 repeticiones del mismo (tool, args) inyectan advertencia en tool_result."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "test.txt").write_text("hola", encoding="utf-8")
+
+    responses = [
+        Response(content=[tool_use("1", "read_file", '{"path":"test.txt"}')], stop_reason=StopReason.TOOL_USE),
+        Response(content=[tool_use("2", "read_file", '{"path":"test.txt"}')], stop_reason=StopReason.TOOL_USE),
+        Response(content=[tool_use("3", "read_file", '{"path":"test.txt"}')], stop_reason=StopReason.TOOL_USE),
+        Response(content=[Block(type=BlockType.TEXT, text="listo")], stop_reason=StopReason.END_TURN),
+    ]
+    p = FakeProvider(responses)
+    a = Agent(provider=p, system="s", auto_save=False, confirm=lambda n, d: True)
+    out = a.send("revisa")
+    assert out == "listo"
+
+    # Verificar el 3er tool_result
+    results = [b for m in a.messages for b in m.content if b.type == BlockType.TOOL_RESULT]
+    assert len(results) == 3
+    assert "[ADVERTENCIA DOOM-LOOP" in results[2].tool_result
+    assert "se ha ejecutado 3 veces" in results[2].tool_result
+
+
+def test_doom_loop_detection_pause(tmp_path, monkeypatch):
+    """5 repeticiones fuerzan pausa con confirmación que incluye [PAUSA DOOM-LOOP]."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "test.txt").write_text("hola", encoding="utf-8")
+
+    confirm_calls = []
+
+    def custom_confirm(name, detail):
+        confirm_calls.append((name, detail))
+        return False  # Denegar la confirmación forzada de pausa por doom-loop
+
+    responses = [
+        Response(content=[tool_use(str(i), "read_file", '{"path":"test.txt"}')], stop_reason=StopReason.TOOL_USE)
+        for i in range(1, 6)
+    ]
+    responses.append(Response(content=[Block(type=BlockType.TEXT, text="detenido")], stop_reason=StopReason.END_TURN))
+
+    p = FakeProvider(responses)
+    a = Agent(provider=p, system="s", auto_save=False, confirm=custom_confirm)
+    out = a.send("loop test")
+
+    # read_file no requiere aprobación en llamadas 1-4, solo en la 5ta por force_prompt
+    assert len(confirm_calls) == 1
+    name_5, detail_5 = confirm_calls[0]
+    assert "[PAUSA DOOM-LOOP: repetición x5 de read_file]" in detail_5
+
+    # El 5to tool_result debe ser de error por denegación
+    results = [b for m in a.messages for b in m.content if b.type == BlockType.TOOL_RESULT]
+    assert len(results) == 5
+    assert results[4].is_error is True
+    assert "user denied this tool call (doom-loop pause: 5 repeats)" in results[4].tool_result
+
+
+def test_decision_point_reminder_injected_after_15_calls(tmp_path, monkeypatch):
+    """Tras 15 ejecuciones de herramientas se inyecta un bloque TEXT de recordatorio en los mensajes del usuario (V3-5)."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "test.txt").write_text("ok", encoding="utf-8")
+
+    responses = [
+        Response(content=[tool_use(str(i), "read_file", f'{{"path":"test.txt","i":{i}}}')], stop_reason=StopReason.TOOL_USE)
+        for i in range(1, 16)
+    ]
+    responses.append(Response(content=[Block(type=BlockType.TEXT, text="fin")], stop_reason=StopReason.END_TURN))
+
+    p = FakeProvider(responses)
+    a = Agent(provider=p, system="s", auto_save=False, confirm=lambda n, d: True)
+    out = a.send("ejecuta 15 tools")
+    assert out == "fin"
+
+    user_msgs = [m for m in a.messages if m.role == Role.USER]
+    last_user_blocks = user_msgs[-1].content
+    text_blocks = [b for b in last_user_blocks if b.type == BlockType.TEXT]
+    assert len(text_blocks) == 1
+    assert "[RECORDATORIO DE SISTEMA: Han transcurrido 15 ejecuciones de herramientas." in text_blocks[0].text
+
+
+
+
+

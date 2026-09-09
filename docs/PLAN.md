@@ -138,37 +138,37 @@ Fuentes: paper OpenDev (arXiv 2603.05344), benchmark de costos de harness
 (The New Stack), Addy Osmani "Agent Harness Engineering", codecentric
 (loops sin verificación). Cada item indica cómo verificarlo.
 
-- **V3-1 Detección de doom-loops** (OpenDev): fingerprint de (tool+args) en
+- ~~**V3-1 Detección de doom-loops** ✅ v1.2.0~~ ~~** (OpenDev): fingerprint de (tool+args) en
   ventana de 20 llamadas; 3 repeticiones → advertencia, 5 → pausa con
   aprobación. Reemplaza contadores toscos. *Verificar: test con provider
   falso repitiendo la misma llamada N veces; assert de advertencia y pausa.*
-- **V3-2 Permisos persistentes por sesión** (OpenDev, capa 3): 'siempre' al
+- ~~**V3-2 Permisos persistentes** ✅ v1.2.0~~ ~~ por sesión** (OpenDev, capa 3): 'siempre' al
   aprobar un comando/patrón evita fatiga de aprobación sin ceder control.
   *Verificar: test de confirm callback que registra que no se re-pregunta
   tras 'siempre'; /permissions para listar y revocar.*
-- **V3-3 Offloading de salidas largas a scratch files** (OpenDev): resultados
+- ~~**V3-3 Offloading de salidas largas** ✅ v1.2.0~~ ~~ a scratch files** (OpenDev): resultados
   >8.000 chars van a .yunta/scratch/ con preview de 500 chars al contexto.
   *Verificar: test con tool que devuelve 10k chars; assert de archivo scratch
   creado y preview en tool_result; métrica de tokens en /roi.*
-- **V3-4 Compactación por etapas basada en tokens** (OpenDev): aviso al 70%
+- ~~**V3-4 Compactación por etapas** ✅ v1.2.0~~ ~~ basada en tokens** (OpenDev): aviso al 70%
   del presupuesto, enmascaramiento 80%, pruning 85%, resumen LLM solo al 99%.
   Hoy SlidingWindow es por conteo de mensajes. *Verificar: tests por umbral
   con historial sintético; /context muestra % del presupuesto.*
-- **V3-5 Recordatorios como role:user en punto de decisión** (OpenDev):
+- ~~**V3-5 Recordatorios como role:user** ✅ v1.2.0~~ ~~ en punto de decisión** (OpenDev):
   re-inyectar reglas críticas (verificar antes de declarar, no repetir
   lecturas) tras ~15 tool calls. *Verificar: test de que el mensaje usuario
   aparece en el payload tras N calls.*
-- **V3-6 Recuperación de errores clasificada**: 6 categorías con plantilla
+- ~~**V3-6 Recuperación de errores clasificada** ✅ v1.2.0~~ ~~**: 6 categorías con plantilla
   accionable ('re-lee el archivo' vs 'reintenta' genérico). *Verificar: test
   unitario de clasificador; assert de plantilla en tool_result.*
-- **V3-7 Blocklist de patrones peligrosos en bash** (OpenDev, capa 4):
+- ~~**V3-7 Blocklist de patrones peligrosos** ✅ v1.2.0~~ ~~ en bash** (OpenDev, capa 4):
   rm -rf fuera de cwd, git push --force, curl | sh, etc. *Verificar: test
   por patrón bloqueado con mensaje claro; documentado en README.*
-- **V3-8 Presupuesto de arranque medible** (benchmark de costos): medir y
+- ~~**V3-8 Presupuesto de arranque medible** ✅ v1.2.0~~ ~~** (benchmark de costos): medir y
   reportar el 'startup tax' (prompt+schemas por turno) en /metrics; objetivo
   <5.000 tokens. El estudio muestra R²=0.99 entre este suelo y el costo total.
   *Verificar: test que calcula tokens del payload inicial; badge en README.*
-- **V3-9 Aislamiento en git worktree para tareas destructivas**: /sandbox
+- ~~**V3-9 Aislamiento en git worktree** ✅ v1.2.0~~ ~~ para tareas destructivas**: /sandbox
   que crea worktree desechable y merge opcional al terminar. *Verificar:
   test de creación/limpieza de worktree; smoke end-to-end.*
 
@@ -183,14 +183,14 @@ Ejecutar de menor a mayor costo, un item por rama o rama única
 `feature/oleada-1`. Cada item: TDD (test primero), suite completa verde,
 entrada en CHANGELOG. Cualquier agente/IDE puede retomar donde esté.
 
-### O1-a) V3-12 `yunta ide-init` (~30 líneas) — Estado: ⬜
+### O1-a) V3-12 `yunta ide-init` (~30 líneas) — Estado: ✅ v1.2.0
 - Comando `yunta ide-init` (despacho en cli.py igual que serve-mcp): crea
   `.vscode/mcp.json` con {"servers":{"yunta":{"command":"yunta","args":["serve-mcp"]}}}
   y `.vscode/tasks.json` con tasks 'yunta: run', 'yunta: check', 'yunta: init'
   (shell, command 'yunta' / 'yunta check' / 'yunta init'). No sobrescribir
   existentes: merge o aviso. Tests: creación, no-sobrescritura, JSON válido.
 
-### O1-b) V3-7 blocklist bash (~50 líneas) — Estado: ⬜
+### O1-b) V3-7 blocklist bash (~50 líneas) — Estado: ✅ v1.2.0
 - En yunta/tools/bash.py: patrones peligrosos rechazados ANTES de ejecutar:
   rm -rf con ruta fuera de cwd o /, 'curl ...| sh', 'wget ...| sh',
   'git push --force' (salvo YUNTA_ALLOW_FORCE=1), mkfs, dd of=/dev/.
@@ -198,7 +198,7 @@ entrada en CHANGELOG. Cualquier agente/IDE puede retomar donde esté.
   Config: YUNTA_BLOCKLIST_EXTRA=path-a-archivo-con-patrones-regex.
   Tests: un test por patrón + uno de allow-force opcional.
 
-### O1-c) V3-2 permisos persistentes (~80 líneas) — Estado: ⬜
+### O1-c) V3-2 permisos persistentes (~80 líneas) — Estado: ✅ v1.2.0
 - En agent.py/_approve: respuesta 's' o 'siempre' → registrar patrón
   (tool + primer token del comando o path) en dict en memoria de sesión.
   Consulta del patrón antes de confirmar. Comando /permissions: lista,
@@ -206,7 +206,7 @@ entrada en CHANGELOG. Cualquier agente/IDE puede retomar donde esté.
   Tests: tras 'siempre' no se re-pregunta mismo patrón; patrón distinto sí;
   /permissions clear restaura pregunta.
 
-### O1-d) V3-8 startup tax medible (~40 líneas) — Estado: ⬜
+### O1-d) V3-8 startup tax medible (~40 líneas) — Estado: ✅ v1.2.0
 - En provider.py: contar tokens aproximados del primer payload
   (system + schemas) — litellm token_counter o len//4 como fallback.
   Exponer provider.startup_tax: int. /metrics lo muestra con objetivo <5000.

@@ -112,26 +112,68 @@ export LLM_API_KEY=dummy
 
 ## Usage & Commands
 
-Launch the interactive REPL:
+### CLI Invocation Modes (`yunta`)
 
-```bash
-python main.py
-# Or if installed via pip install -e .:
-yunta
-```
+- **Interactive REPL session**:
+  ```bash
+  yunta
+  ```
+- **Direct single-shot instruction**:
+  ```bash
+  yunta "Explain the structure of this repository and run the test suite"
+  ```
+- **Initialize SDD project (`SPEC.md`, `PLAN.md`, `AGENTS.md`)**:
+  ```bash
+  yunta init [idea_or_name]
+  ```
+- **Local governance audit ($0 in tokens)**:
+  ```bash
+  yunta check [path] [--json] [--tests]
+  ```
+- **VS Code Scaffolding (`.vscode/mcp.json` and `tasks.json`)**:
+  ```bash
+  yunta ide-init
+  ```
+- **Resume latest saved session**:
+  ```bash
+  yunta --resume  # or yunta -r
+  ```
+- **Stdio MCP Server (for Claude Desktop, Cursor, Windsurf)**:
+  ```bash
+  yunta serve-mcp  # or yunta mcp
+  ```
+- **Diagnostics and Help**:
+  ```bash
+  yunta --version  # or yunta -v
+  yunta --help     # or yunta -h
+  ```
 
-### REPL Commands
+### Interactive REPL Commands (inside Yunta)
 - `/init [idea]`: Initializes an SDD project generating `SPEC.md`, `PLAN.md`, and `AGENTS.md`.
-- `/undo`: Reverts the latest file modification and restores previous contents.
-- `/roi`: Displays the ROI telemetry dashboard, cache hit rate, and cost savings.
-- `/metrics`: Displays detailed execution metrics for tools and interaction turns.
-- `/tokens`: Displays total token consumption and cache hit rate for the session.
+- `/sandbox [merge|discard]`: Creates or manages an isolated Git Worktree environment for risky operations.
+- `/context`: Displays message count, estimated context tokens, and token budget consumption percentage (`YUNTA_MAX_TOKENS`).
+- `/undo`: Reverts the latest file modification and restores previous contents ("Time-Travel Undo").
+- `/permissions [clear]`: Lists persistent session permissions granted via 'always' or revokes them (`/permissions clear`).
+- `/roi`: Displays the ROI telemetry dashboard, cache hit rate, and estimated USD cost savings.
+- `/metrics`: Displays detailed execution metrics for tools, **startup tax**, errors, and interaction turns.
+- `/tokens`: Displays total token consumption and cache hit rate.
 - `/help`: Lists all available interactive commands.
 - `/clear`: Clears conversation history for the current session.
 - `/exit`: Saves session learnings to `.yunta/learnings.md` and exits.
 - `Ctrl+C`: Gracefully interrupts the current turn without leaving orphaned `tool_use` blocks.
 
----
+### Key Environment Variables
+- `LLM_MODEL`: Target provider/model (e.g., `openai/gpt-4o`, `anthropic/claude-3-7-sonnet`, `gemini/gemini-3.7-flash`, `ollama/llama3.3`).
+- `LLM_MODELS`: Comma-separated priority list for automatic fallback router on 429/503/quota limit.
+- `LLM_API_BASE`: Base URL for custom OpenAI-compatible endpoints (e.g., `http://localhost:8000/v1`).
+- `LLM_API_KEY`: API Key or Bearer token.
+- `YUNTA_SYSTEM_PROMPT`: Overrides default system prompt.
+- `YUNTA_MAX_TOKENS`: Maximum token budget for multi-stage compaction (default: `128000`).
+- `YUNTA_MAX_MESSAGES`: Sliding window history limit (default: `40`).
+- `YUNTA_YES`: Enables non-interactive auto-approval for all tools (equivalent to `-y` / `--yes`).
+- `YUNTA_BLOCKLIST_EXTRA`: Path to extra regex blocklist file for bash tool safety.
+- `YUNTA_ALLOW_FORCE`: Set to `1` to allow `git push --force` in bash tool.
+
 
 ---
 

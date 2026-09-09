@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from .api import Block, BlockType, Message, Response, Role, StopReason, Usage
+from .errors import classify_tool_error
 from .session import save_session
 from .tools import registry
 
@@ -48,6 +49,38 @@ class Spinner:
             sys.stdout.flush()
 
 
+class SessionPermissions:
+    """Permisos persistentes DURANTE la sesión (solo memoria, nunca disco).
+    Patrón: (tool, primer token del comando o path). 'siempre' al aprobar
+    registra; un patrón distinto vuelve a preguntar."""
+
+    def __init__(self):
+        self._granted: set[tuple[str, str]] = set()
+
+    @staticmethod
+    def _pattern(tool: str, raw: str) -> tuple[str, str]:
+        target = raw.strip()
+        try:
+            args = json.loads(raw or "{}")
+            target = args.get("command") or args.get("path") or raw
+        except (json.JSONDecodeError, AttributeError):
+            pass
+        token = target.strip().split()[0] if target.strip() else ""
+        return (tool, token)
+
+    def grant(self, tool: str, raw: str) -> None:
+        self._granted.add(self._pattern(tool, raw))
+
+    def allowed(self, tool: str, raw: str) -> bool:
+        return self._pattern(tool, raw) in self._granted
+
+    def revoke_all(self) -> None:
+        self._granted.clear()
+
+    def items(self) -> list[tuple[str, str]]:
+        return sorted(self._granted)
+
+
 class Agent:
     def __init__(
         self,
@@ -58,6 +91,7 @@ class Agent:
         confirm=None,
         tools: list | None = None,
         auto_save: bool = True,
+        session_permissions: SessionPermissions | None = None,
         initial_messages: list[Message] | None = None,
         initial_usage: Usage | None = None,
     ):
@@ -67,11 +101,14 @@ class Agent:
         self.max_turns = max_turns
         self.confirm = confirm
         self.auto_save = auto_save
+        self.session_permissions = session_permissions or SessionPermissions()
         self.messages: list[Message] = list(initial_messages) if initial_messages else []
         self._tools_subset = list(tools) if tools is not None else None
         self.usage = initial_usage if initial_usage else Usage()
         self._spinner = None
         self.snapshots: list[dict[str, str | None]] = []
+        self._recent_tool_calls: list[tuple[str, str]] = []
+        self._tool_calls_since_reminder: int = 0
 
     def send(self, prompt: str) -> str:
         self.usage.turns += 1
@@ -141,6 +178,16 @@ class Agent:
 
                 if resp.stop_reason != StopReason.TOOL_USE or not has_tool_call:
                     return "\n".join(final_text).strip()
+
+                # V3-5: Recordatorios como role:user en punto de decisión (tras ~15 tool calls)
+                if self._tool_calls_since_reminder >= 15:
+                    self._tool_calls_since_reminder = 0
+                    current_tool_results.append(
+                        Block(
+                            type=BlockType.TEXT,
+                            text="[RECORDATORIO DE SISTEMA: Han transcurrido 15 ejecuciones de herramientas. Recuerda verificar empíricamente tus cambios con tests o comandos antes de concluir, no repetir lecturas innecesarias y justificar cada acción].",
+                        )
+                    )
 
                 self.messages.append(Message(role=Role.USER, content=current_tool_results))
         except KeyboardInterrupt:
@@ -224,20 +271,40 @@ class Agent:
 
     def _execute_tool(self, name: str, raw_input: str) -> tuple[str, bool]:
         self.usage.tool_counts[name] = self.usage.tool_counts.get(name, 0) + 1
+        self._tool_calls_since_reminder += 1
         tool = registry.get(name)
         if tool is None:
             self.usage.tool_errors += 1
             return f"unknown tool: {name}", True
+
+        # V3-1: Detección de doom-loops (fingerprint en ventana de 20 llamadas)
+        fp = (name, raw_input.strip())
+        self._recent_tool_calls.append(fp)
+        if len(self._recent_tool_calls) > 20:
+            self._recent_tool_calls = self._recent_tool_calls[-20:]
+
+        repeat_count = self._recent_tool_calls.count(fp)
+        force_prompt = repeat_count >= 5
 
         # E13: Guardar snapshot previo antes de modificar archivos
         if name in ("write_file", "str_replace"):
             self._take_snapshot(name, raw_input)
 
         detail = self._tool_detail(name, raw_input)
+        if force_prompt:
+            detail = f"[PAUSA DOOM-LOOP: repetición x{repeat_count} de {name}] {detail}".strip()
+
         print(f"[tool] {name} {raw_input}")
-        if tool.requires_approval and not self._approve(name, detail):
+        if (tool.requires_approval or force_prompt) and not self._approve(
+            name, detail, raw_input, force_prompt=force_prompt
+        ):
             self.usage.tool_errors += 1
-            return "user denied this tool call", True
+            err_denied = (
+                f"user denied this tool call (doom-loop pause: {repeat_count} repeats)"
+                if force_prompt
+                else "user denied this tool call"
+            )
+            return err_denied, True
 
         # E11: Pre-notificación en terminal
         if sys.stdout.isatty():
@@ -251,6 +318,9 @@ class Agent:
             if sys.stdout.isatty():
                 sys.stdout.write("\033[K")
             print(f"[tool] {name} completado en {elapsed:.2f}s")
+            res = self._maybe_offload_result(name, res)
+            if repeat_count >= 3:
+                res += f"\n\n[ADVERTENCIA DOOM-LOOP: La herramienta '{name}' con estos argumentos se ha ejecutado {repeat_count} veces recientemente. Evalúa cambiar de estrategia o revisar el error.]"
             return res, False
         except Exception as e:
             elapsed = time.time() - start_time
@@ -258,7 +328,30 @@ class Agent:
                 sys.stdout.write("\033[K")
             print(f"[tool] {name} falló en {elapsed:.2f}s")
             self.usage.tool_errors += 1
-            return f"{type(e).__name__}: {e}", True
+            err_msg = f"{type(e).__name__}: {e}"
+            err_msg = self._maybe_offload_result(name, err_msg)
+            err_msg += classify_tool_error(name, f"{type(e).__name__}: {e}")
+            if repeat_count >= 3:
+                err_msg += f"\n\n[ADVERTENCIA DOOM-LOOP: La herramienta '{name}' con estos argumentos se ha ejecutado {repeat_count} veces recientemente. Evalúa cambiar de estrategia o revisar el error.]"
+            return err_msg, True
+
+    def _maybe_offload_result(self, name: str, result: str) -> str:
+        """Si la salida excede 8.000 caracteres, la guarda en .yunta/scratch/ y retorna un preview de 500 chars (V3-3)."""
+        if len(result) <= 8000:
+            return result
+        try:
+            scratch_dir = Path(".yunta") / "scratch"
+            scratch_dir.mkdir(parents=True, exist_ok=True)
+            ts = int(time.time() * 1000)
+            scratch_file = scratch_dir / f"output_{ts}_{name}.txt"
+            scratch_file.write_text(result, encoding="utf-8", errors="replace")
+
+            file_rel = scratch_file.as_posix()
+            preview = result[:500]
+            return f"{preview}\n\n[... salida extensa ({len(result):,} caracteres) guardada en scratch file: {file_rel} ...]"
+        except Exception:
+            return result
+
 
     @staticmethod
     def _tool_detail(name: str, raw_input: str) -> str:
@@ -295,16 +388,28 @@ class Agent:
         )
         return "".join(diff)
 
-    def _approve(self, name: str, detail: str = "") -> bool:
-        if self.confirm is not None:
-            return self.confirm(name, detail)
+    def _approve(
+        self, name: str, detail: str = "", raw_input: str = "", force_prompt: bool = False
+    ) -> bool:
+        if not force_prompt:
+            if self.confirm is not None:
+                return self.confirm(name, detail)
+            if raw_input and self.session_permissions.allowed(name, raw_input):
+                return True
+        else:
+            if self.confirm is not None:
+                return self.confirm(name, detail)
 
         if detail:
             print(detail, end="")
 
         while True:
-            ans = input(f"Aprobar {name}? [s/n]: ").strip().lower()
+            ans = input(f"Aprobar {name}? [s/siempre/n]: ").strip().lower()
             if ans in ("s", "si", "y", "yes"):
+                return True
+            if ans in ("siempre", "always"):
+                if raw_input:
+                    self.session_permissions.grant(name, raw_input)
                 return True
             if ans in ("n", "no"):
                 return False

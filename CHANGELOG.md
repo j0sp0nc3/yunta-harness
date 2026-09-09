@@ -8,6 +8,45 @@ Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
 ---
 
+## [1.2.0] — 2026-09-09
+
+### Agregado
+- **V3-1 — Detección de Doom-Loops**:
+  - `yunta/agent.py`: fingerprinting de `(tool_name, raw_input)` en ventana deslizante de 20 llamadas. A partir de 3 repeticiones se inyecta un aviso de advertencia en `tool_result`; al alcanzar 5 repeticiones se fuerza la pausa y confirmación explícita `[PAUSA DOOM-LOOP]` del usuario, previniendo bucles infinitos en modo autónomo.
+  - `tests/test_agent.py`: pruebas unitarias `test_doom_loop_detection_warning` y `test_doom_loop_detection_pause`.
+- **V3-5 — Recordatorios como `role: user` en Puntos de Decisión**:
+  - `yunta/agent.py`: re-inyección automática de un bloque de recordatorio de sistema (`role: user`) cada 15 ejecuciones de herramientas para evitar la deriva de contexto en sesiones largas.
+  - `tests/test_agent.py`: prueba unitaria `test_decision_point_reminder_injected_after_15_calls`.
+- **V3-6 — Recuperación de Errores Clasificada**:
+  - `yunta/errors.py`: nuevo módulo con clasificador `classify_tool_error` en 6 categorías accionables (`FILE_NOT_FOUND`, `PERMISSION_DENIED`, `TIMEOUT`, `PARSE_OR_SYNTAX`, `GIT_CONFLICT`, `UNKNOWN`) con plantillas de sugerencia para orientar al LLM tras un fallo de herramienta.
+  - `yunta/agent.py`: integración del clasificador en el manejo de errores de ejecución de herramientas.
+  - `tests/test_errors.py`: suite de 6 pruebas unitarias.
+- **V3-4 — Compactación por Etapas basada en Presupuesto de Tokens**:
+  - `yunta/compact.py`: nueva clase `TokenBudgetCompactor` con 4 umbrales progresivos (70% aviso en contexto, 80% enmascaramiento de tool_results largos, 85% pruning seguro de mensajes antiguos, 99% resumen sintético defensivo).
+  - `yunta/cli.py`: comando `/context` en el REPL que reporta la cantidad de mensajes, tokens estimados en contexto y porcentaje consumido del presupuesto (`YUNTA_MAX_TOKENS`).
+  - `tests/test_token_compact.py`: suite de 5 pruebas unitarias.
+- **V3-9 — Aislamiento en Git Worktree (`/sandbox`)**:
+  - `yunta/sandbox.py`: módulo con funciones `create_sandbox()` y `cleanup_sandbox()` para crear git worktrees temporales aislados en `.yunta/sandboxes/` con merge opcional al concluir.
+  - `yunta/cli.py`: comandos `/sandbox`, `/sandbox merge`, `/sandbox discard` en el REPL CLI.
+  - `tests/test_sandbox.py`: prueba unitaria completa de ciclo de vida e integración git.
+
+---
+
+## [1.1.1] — 2026-09-09
+
+### Agregado
+- **V3-8 / O1-d — Presupuesto de arranque medible (`startup_tax`)**:
+  - `yunta/provider.py`: cálculo e inspección de tokens de arranque aproximados (`provider.startup_tax` y `estimate_startup_tax()`) contando payload inicial de system prompt y schemas de herramientas con `litellm.token_counter` (y fallback `len//4`).
+  - `yunta/api.py` & `yunta/cli.py`: reporte de `Startup tax (payload inicial)` en `/metrics` y `/tokens` con objetivo `<5,000` tokens.
+  - `tests/test_provider.py`: prueba unitaria `test_startup_tax_calculation` (123 tests 100% verde).
+- **V3-3 — Offloading de salidas largas a scratch files**:
+  - `yunta/agent.py`: método `_maybe_offload_result` que intercepta salidas de herramientas o comandos que superen los 8.000 caracteres, volcando el contenido completo en `.yunta/scratch/output_{timestamp}_{tool_name}.txt` e inyectando al contexto del LLM únicamente un preview de 500 caracteres con la referencia al archivo scratch.
+  - `tests/test_agent.py`: prueba unitaria `test_long_output_offloaded_to_scratch_file` (124 tests 100% verde).
+- **Documentación de Comandos y CLI**:
+  - `README.md`, `README_en.md`, `docs/quickstart.md`, `docs/quickstart_en.md`, `yunta/cli.py`: actualización y sincronización completa de la descripción de invocación desde el CLI (`yunta`, `yunta init`, `yunta check`, `yunta ide-init`, `yunta serve-mcp`, `yunta --resume`, `yunta "instrucción"`, `yunta --version`, `yunta --help`), comandos interactivos del REPL (`/permissions`, `/roi`, `/metrics`, `/tokens`, `/undo`, `/init`, `/clear`, `/exit`, `Ctrl+C`) y variables de entorno (`YUNTA_BLOCKLIST_EXTRA`, `YUNTA_ALLOW_FORCE`).
+
+---
+
 ## [0.1.0] — 2026-09-06
 
 ### Agregado
