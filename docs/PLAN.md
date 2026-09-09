@@ -131,6 +131,51 @@ la misma ronda.
 - **V2-7 ✅ (v1.0.8) Regla canónica de interoperabilidad en `AGENTS.md`**: Plantilla formal de regla vinculante para que IDEs externos deleguen consultas y tareas en `yunta` CLI antes de generar código con sus propios LLMs.
 - **V2-5 ✅ (v1.1.0) Modo servidor MCP de Yunta (`yunta serve-mcp`, `mcp`)**: Exposición nativa del catálogo de herramientas de Yunta como servidor MCP stdio (JSON-RPC 2.0) compatible con Claude Desktop, Cursor y Windsurf.
 
+
+## Backlog v3 (mejoras comprobables, basadas en experiencias del ecosistema — 2026-09-09)
+
+Fuentes: paper OpenDev (arXiv 2603.05344), benchmark de costos de harness
+(The New Stack), Addy Osmani "Agent Harness Engineering", codecentric
+(loops sin verificación). Cada item indica cómo verificarlo.
+
+- **V3-1 Detección de doom-loops** (OpenDev): fingerprint de (tool+args) en
+  ventana de 20 llamadas; 3 repeticiones → advertencia, 5 → pausa con
+  aprobación. Reemplaza contadores toscos. *Verificar: test con provider
+  falso repitiendo la misma llamada N veces; assert de advertencia y pausa.*
+- **V3-2 Permisos persistentes por sesión** (OpenDev, capa 3): 'siempre' al
+  aprobar un comando/patrón evita fatiga de aprobación sin ceder control.
+  *Verificar: test de confirm callback que registra que no se re-pregunta
+  tras 'siempre'; /permissions para listar y revocar.*
+- **V3-3 Offloading de salidas largas a scratch files** (OpenDev): resultados
+  >8.000 chars van a .yunta/scratch/ con preview de 500 chars al contexto.
+  *Verificar: test con tool que devuelve 10k chars; assert de archivo scratch
+  creado y preview en tool_result; métrica de tokens en /roi.*
+- **V3-4 Compactación por etapas basada en tokens** (OpenDev): aviso al 70%
+  del presupuesto, enmascaramiento 80%, pruning 85%, resumen LLM solo al 99%.
+  Hoy SlidingWindow es por conteo de mensajes. *Verificar: tests por umbral
+  con historial sintético; /context muestra % del presupuesto.*
+- **V3-5 Recordatorios como role:user en punto de decisión** (OpenDev):
+  re-inyectar reglas críticas (verificar antes de declarar, no repetir
+  lecturas) tras ~15 tool calls. *Verificar: test de que el mensaje usuario
+  aparece en el payload tras N calls.*
+- **V3-6 Recuperación de errores clasificada**: 6 categorías con plantilla
+  accionable ('re-lee el archivo' vs 'reintenta' genérico). *Verificar: test
+  unitario de clasificador; assert de plantilla en tool_result.*
+- **V3-7 Blocklist de patrones peligrosos en bash** (OpenDev, capa 4):
+  rm -rf fuera de cwd, git push --force, curl | sh, etc. *Verificar: test
+  por patrón bloqueado con mensaje claro; documentado en README.*
+- **V3-8 Presupuesto de arranque medible** (benchmark de costos): medir y
+  reportar el 'startup tax' (prompt+schemas por turno) en /metrics; objetivo
+  <5.000 tokens. El estudio muestra R²=0.99 entre este suelo y el costo total.
+  *Verificar: test que calcula tokens del payload inicial; badge en README.*
+- **V3-9 Aislamiento en git worktree para tareas destructivas**: /sandbox
+  que crea worktree desechable y merge opcional al terminar. *Verificar:
+  test de creación/limpieza de worktree; smoke end-to-end.*
+
+Prioridad sugerida por impacto/esfuerzo: V3-1, V3-2, V3-7 (seguridad y
+control, esfuerzo bajo) → V3-8, V3-3 (medición y eficiencia) → V3-4, V3-6
+→ V3-5 → V3-9.
+
 ## Reglas que gobiernan el plan
 
 Ver `AGENTS.md` (reglas inviolables) y la sección "Convenciones" de
