@@ -1,6 +1,6 @@
 [project]
 name = "yunta-harness"
-version = "1.1.0"
+version = "1.2.0"
 description = "Harness de agente de código para terminal, agnóstico al proveedor del modelo y guiado por especificaciones (SDD)"
 readme = "README.md"
 requires-python = ">=3.11"
