@@ -105,6 +105,33 @@ Inconsistencias docs detectadas en la misma auditoría (README sin /undo y
 /roi, AGENTS.md desactualizado en env vars, orden CHANGELOG) se corrigen en
 la misma ronda.
 
+
+## BUGS P6-P9 — defectos del harness detectados en dogfooding (RESOLVER, no evolutivos)
+
+Origen: fallos reales observados en las rondas de dogfooding (archivos
+truncados, sesiones perdidas por cuota, specs grandes inmanejables).
+Un harness que pierde trabajo o deja archivos a medias no cumple su función.
+
+- **P6 🔴 write_file no atómico ni validado**: una sesión que muere a mitad
+  de escritura deja archivos truncados (ocurrió 3 veces). Fix: escribir a
+  .tmp, validar (py_compile para .py, balance de comillas/paréntesis en
+  general), confirmar bytes, y rename solo si todo pasó. Archivo original
+  intacto ante fallo. *Estado: 🔨*
+- **P7 🔴 sin degradación progresiva ante cuota**: RateLimitError pierde la
+  sesión completa incluida la tarea pendiente (ocurrió 2 veces). Fix: al
+  capturar RateLimit/Authentication persistir .yunta/estado-de-tarea.md
+  (hecho/pendiente/próximos pasos) + lección de feedback, cerrar ordenado.
+  *Estado: ⬜*
+- **P8 🟡 presupuesto de sesión invisible**: sesiones quemaron 200-270k
+  tokens sin aviso. Fix: umbrales 70%/90% del presupuesto (extensión de
+  TokenBudgetCompactor): aviso y cierre ordenado (P7) respectivamente.
+  *Estado: ⬜*
+- **P9 🟡 specs de >2 archivos inmanejables en un loop**: 2 sesiones
+  descontroladas. Fix: descomposición en subtareas de 1-2 archivos con
+  subagente por lote (contexto limpio por subtarea). *Estado: ⬜*
+
+Orden: P6 → P7 → P8 → P9.
+
 ## Backlog v2 (Estado post-sesión 2026-09-08)
 
 ### ✅ Completado en la sesión de hoy (v1.0.6 & v1.0.7):
