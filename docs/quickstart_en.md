@@ -255,10 +255,16 @@ At any point during your session, use these control commands:
 
 | Command / Shortcut | Action | Description |
 | :--- | :--- | :--- |
-| **`/tokens`** | Token Telemetry | Displays cumulative prompt and completion tokens, highlighting tokens saved by **Prompt Caching**: `in=14200 (cached=11800) out=650`. |
-| **`Ctrl+C`** | Graceful Interrupt | If the model is in a lengthy turn or executing a command and you want to stop it, press `Ctrl+C`. The turn cancels immediately and returns to the `> ` prompt without crashing the session or corrupting conversation history. |
-| **`/clear`** | Reset Context | Clears message history for the current session to start fresh. |
-| **`/exit`** | Exit & Learn | Analyzes session patterns, saves learned operational lessons to `.yunta/learnings.md`, and exits. |
+| **`/init [idea]`** | SDD Scaffolding | Initializes or scaffolds the project generating `SPEC.md`, `PLAN.md`, and `AGENTS.md`. |
+| **`/undo`** | Time-Travel Undo | Instantly restores modified or created files to their state prior to the last edit. |
+| **`/permissions [clear]`** | Session Permissions | Lists persistent permissions granted via 'always' or revokes them (`/permissions clear`). |
+| **`/roi`** | Value Dashboard | Displays cache hit percentage, avoided tokens, and estimated USD savings. |
+| **`/metrics`** | Detailed Telemetry | Displays tool execution calls, **startup tax**, error counts, and interaction turns. |
+| **`/tokens`** | Token Telemetry | Displays cumulative input, output, and cached tokens. |
+| **`Ctrl+C`** | Graceful Interrupt | Cancels the active turn or bash command without exiting the REPL session. |
+| **`/clear`** | Reset Context | Clears message history and current saved session state. |
+| **`/exit`** | Exit & Learn | Saves session operational learnings to `.yunta/learnings.md` and exits. |
+
 
 ---
 

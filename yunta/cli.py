@@ -82,8 +82,9 @@ Comandos Interactivos del REPL (dentro de Yunta):
   /help                        Muestra los comandos interactivos disponibles
   /init [idea]                 Inicializa o andamia el proyecto con metodología SDD
   /undo                        Deshace la última edición de archivos y restaura el estado previo
+  /permissions [clear]         Muestra o revoca los permisos persistentes otorgados en la sesión
   /roi                         Muestra el dashboard de eficiencia económica y tokens evitados
-  /metrics                     Muestra la telemetría detallada de herramientas y turnos
+  /metrics                     Muestra la telemetría detallada de herramientas, startup tax y turnos
   /tokens                      Muestra el consumo de tokens y tasa de acierto de caché
   /clear                       Limpia el historial de la conversación actual
   /exit                        Guarda lecciones aprendidas en .yunta/learnings.md y sale
@@ -95,6 +96,8 @@ Variables de Entorno Principales:
   LLM_API_KEY                  API Key o token Bearer para el endpoint
   YUNTA_SYSTEM_PROMPT          Sobrescribe el System Prompt base del harness
   YUNTA_MAX_MESSAGES           Ventana máxima de mensajes en el historial (default: 40)
+  YUNTA_BLOCKLIST_EXTRA        Ruta a archivo con patrones regex adicionales para bloquear en bash
+  YUNTA_ALLOW_FORCE            Permite comandos 'git push --force' si se establece en 1
 
 Documentación: https://github.com/j0sp0nc3/yunta-harness
 """)
@@ -218,14 +221,16 @@ def main():
                 break
             if prompt == "/help":
                 print("Comandos disponibles:")
-                print("  /init [idea]   - Inicializa el proyecto con SPEC.md, PLAN.md y AGENTS.md (SDD)")
-                print("  /undo          - Deshace la última edición de archivos y restaura su estado anterior")
-                print("  /roi           - Muestra el dashboard de valor y ahorro económico de API")
-                print("  /tokens        - Muestra el consumo de tokens y tasa de acierto de caché")
-                print("  /metrics       - Muestra la telemetría detallada de uso y herramientas")
-                print("  /clear         - Limpia el historial de la conversación actual")
-                print("  /exit          - Guarda lecciones de sesión y sale de Yunta\n")
+                print("  /init [idea]         - Inicializa el proyecto con SPEC.md, PLAN.md y AGENTS.md (SDD)")
+                print("  /undo                - Deshace la última edición de archivos y restaura su estado anterior")
+                print("  /permissions [clear] - Muestra o revoca los permisos persistentes otorgados en la sesión")
+                print("  /roi                 - Muestra el dashboard de valor y ahorro económico de API")
+                print("  /tokens              - Muestra el consumo de tokens y tasa de acierto de caché")
+                print("  /metrics             - Muestra la telemetría detallada de uso, startup tax y herramientas")
+                print("  /clear               - Limpia el historial de la conversación actual")
+                print("  /exit                - Guarda lecciones de sesión y sale de Yunta\n")
                 continue
+
             if prompt == "/clear":
                 agent.messages.clear()
                 clear_session()

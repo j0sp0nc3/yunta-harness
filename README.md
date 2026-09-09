@@ -112,26 +112,64 @@ export LLM_API_KEY=dummy
 
 ## Uso y Comandos
 
-Inicia la sesión interactiva:
+### Modos de Invocación desde el CLI (`yunta`)
 
-```bash
-python main.py
-# O si lo instalaste con pip install -e .:
-yunta
-```
+- **Sesión interactiva (REPL)**:
+  ```bash
+  yunta
+  ```
+- **Ejecución directa single-shot**:
+  ```bash
+  yunta "Explica la estructura de este repositorio y ejecuta los tests"
+  ```
+- **Inicializar proyecto SDD (`SPEC.md`, `PLAN.md`, `AGENTS.md`)**:
+  ```bash
+  yunta init [idea_o_nombre]
+  ```
+- **Auditoría de gobernanza local ($0 en tokens)**:
+  ```bash
+  yunta check [ruta] [--json] [--tests]
+  ```
+- **Scaffolding para VS Code (`.vscode/mcp.json` y `tasks.json`)**:
+  ```bash
+  yunta ide-init
+  ```
+- **Reanudar última sesión guardada**:
+  ```bash
+  yunta --resume  # o yunta -r
+  ```
+- **Servidor MCP stdio (para Claude Desktop, Cursor, Windsurf)**:
+  ```bash
+  yunta serve-mcp  # o yunta mcp
+  ```
+- **Diagnóstico y Ayuda**:
+  ```bash
+  yunta --version  # o yunta -v
+  yunta --help     # o yunta -h
+  ```
 
-### Comandos del REPL
-- `/init [idea]`: Inicializa un proyecto SDD generando `SPEC.md`, `PLAN.md` y `AGENTS.md`.
-- `/undo`: Deshace la última edición de archivos y restaura el estado inmediatamente anterior.
-- `/roi`: Despliega el dashboard de retorno de inversión, acierto de caché y ahorro en USD.
-- `/metrics`: Despliega la telemetría detallada de herramientas ejecutadas, errores y turnos.
+### Comandos Interactivos del REPL (dentro de Yunta)
+- `/init [idea]`: Inicializa o andamia un proyecto SDD generando `SPEC.md`, `PLAN.md` y `AGENTS.md`.
+- `/undo`: Deshace la última edición de archivos y restaura el estado inmediatamente anterior ("Time-Travel Undo").
+- `/permissions [clear]`: Muestra los permisos persistentes otorgados con 'siempre' en la sesión o los revoca (`/permissions clear`).
+- `/roi`: Despliega el dashboard de retorno de inversión, acierto de caché y ahorro estimado en USD.
+- `/metrics`: Despliega la telemetría detallada de herramientas ejecutadas, **startup tax**, errores y turnos.
 - `/tokens`: Muestra el consumo acumulado de tokens y tasa de acierto de caché.
-- `/help`: Muestra la lista de comandos disponibles.
-- `/clear`: Limpia el historial de mensajes de la sesión actual.
+- `/help`: Muestra la lista de comandos interactivos disponibles.
+- `/clear`: Limpia el historial de mensajes de la conversación actual.
 - `/exit`: Guarda lecciones aprendidas en `.yunta/learnings.md` y finaliza la sesión.
 - `Ctrl+C`: Interrumpe el turno en curso de forma limpia y regresa al prompt `> ` sin tumbar la sesión ni dejar `tool_use` huérfano.
 
----
+### Variables de Entorno Principales
+- `LLM_MODEL`: Proveedor/modelo a utilizar (ej. `openai/gpt-4o`, `anthropic/claude-3-7-sonnet`, `gemini/gemini-3.7-flash`, `ollama/llama3.3`).
+- `LLM_MODELS`: Lista priorizada por comas para conmutación automática ante 429/503/cuota agotada.
+- `LLM_API_BASE`: Endpoint custom compatible con OpenAI (ej. `http://localhost:8000/v1`).
+- `LLM_API_KEY`: API Key o Bearer Token.
+- `YUNTA_SYSTEM_PROMPT`: Sobrescribe el System Prompt base del harness.
+- `YUNTA_MAX_MESSAGES`: Tamaño máximo de ventana deslizante de historial (default: `40`).
+- `YUNTA_BLOCKLIST_EXTRA`: Ruta a archivo con patrones regex adicionales para bloquear comandos en bash.
+- `YUNTA_ALLOW_FORCE`: Permite ejecutar `git push --force` en bash si se establece en `1`.
+
 
 ---
 
