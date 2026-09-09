@@ -6,6 +6,7 @@ from .agent import Agent
 from .compact import SlidingWindow
 from .feedback import FeedbackStore
 from .governance import run_check
+from .ide import ide_init
 from .init import run_init
 from .server_mcp import serve_stdio
 from .session import clear_session, load_session
@@ -68,6 +69,7 @@ Harness de agente de código para Spec-Driven Development (SDD), agnóstico al m
 
 Comandos de Terminal (CLI):
   yunta                        Inicia la sesión interactiva REPL
+  yunta ide-init              Genera .vscode/mcp.json y tasks.json sin sobrescribir
   yunta serve-mcp, mcp         Inicia el servidor MCP local en stdio (para Claude Desktop, Cursor)
   yunta --resume, -r           Reanuda la sesión previa guardada en .yunta/session_state.json
   yunta check [ruta] [--json]  Auditoría local de gobernanza SDD ($0 en tokens, instantáneo)
@@ -132,6 +134,11 @@ def main():
                 break
         code = run_check(target_dir=target_dir, as_json=as_json, run_tests=run_tests)
         sys.exit(code)
+
+    # Despacho de comando `yunta ide-init`
+    if len(sys.argv) > 1 and sys.argv[1].lower() == "ide-init":
+        ide_init()
+        return
 
     # Despacho de comando `yunta init [idea]`
     if len(sys.argv) > 1 and sys.argv[1].lower() == "init":
