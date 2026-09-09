@@ -285,6 +285,7 @@ class Agent:
             if sys.stdout.isatty():
                 sys.stdout.write("\033[K")
             print(f"[tool] {name} completado en {elapsed:.2f}s")
+            res = self._maybe_offload_result(name, res)
             return res, False
         except Exception as e:
             elapsed = time.time() - start_time
@@ -292,7 +293,27 @@ class Agent:
                 sys.stdout.write("\033[K")
             print(f"[tool] {name} falló en {elapsed:.2f}s")
             self.usage.tool_errors += 1
-            return f"{type(e).__name__}: {e}", True
+            err_msg = f"{type(e).__name__}: {e}"
+            err_msg = self._maybe_offload_result(name, err_msg)
+            return err_msg, True
+
+    def _maybe_offload_result(self, name: str, result: str) -> str:
+        """Si la salida excede 8.000 caracteres, la guarda en .yunta/scratch/ y retorna un preview de 500 chars (V3-3)."""
+        if len(result) <= 8000:
+            return result
+        try:
+            scratch_dir = Path(".yunta") / "scratch"
+            scratch_dir.mkdir(parents=True, exist_ok=True)
+            ts = int(time.time() * 1000)
+            scratch_file = scratch_dir / f"output_{ts}_{name}.txt"
+            scratch_file.write_text(result, encoding="utf-8", errors="replace")
+
+            file_rel = scratch_file.as_posix()
+            preview = result[:500]
+            return f"{preview}\n\n[... salida extensa ({len(result):,} caracteres) guardada en scratch file: {file_rel} ...]"
+        except Exception:
+            return result
+
 
     @staticmethod
     def _tool_detail(name: str, raw_input: str) -> str:

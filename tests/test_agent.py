@@ -478,3 +478,41 @@ def test_session_permissions_listing_has_entries(monkeypatch):
     agent, _ = _approval_scenario(monkeypatch, ["siempre"])
     items = agent.session_permissions.items()
     assert ("bash", "rm") in items
+
+
+def test_long_output_offloaded_to_scratch_file(tmp_path, monkeypatch):
+    """Resultados de tools > 8000 chars se guardan en .yunta/scratch/ con preview de 500 chars."""
+    from yunta.tools import registry
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(registry._tools["bash"], "fn", lambda raw: "A" * 500 + "B" * 9500)
+
+    p = FakeProvider(
+        [
+            Response(
+                content=[tool_use("1", "bash", '{"command":"echo largo"}')],
+                stop_reason=StopReason.TOOL_USE,
+            ),
+            Response(content=[Block(type=BlockType.TEXT, text="listo")], stop_reason=StopReason.END_TURN),
+        ]
+    )
+
+    a = Agent(provider=p, system="s", auto_save=False)
+    a.send("ejecuta tool larga")
+
+    tool_results = [b for b in a.messages[2].content if b.type == BlockType.TOOL_RESULT]
+    assert len(tool_results) == 1
+    res_text = tool_results[0].tool_result
+    assert len(res_text) < 1000
+    assert res_text.startswith("A" * 500)
+    assert "scratch file: .yunta/scratch/output_" in res_text
+
+    scratch_files = list((tmp_path / ".yunta" / "scratch").glob("output_*.txt"))
+    assert len(scratch_files) == 1
+    content_on_disk = scratch_files[0].read_text(encoding="utf-8")
+    assert len(content_on_disk) == 10000
+    assert content_on_disk.startswith("A" * 500)
+    assert content_on_disk.endswith("B" * 9500)
+
+
+

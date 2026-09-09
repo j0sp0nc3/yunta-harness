@@ -15,8 +15,11 @@ Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
   - `yunta/provider.py`: cálculo e inspección de tokens de arranque aproximados (`provider.startup_tax` y `estimate_startup_tax()`) contando payload inicial de system prompt y schemas de herramientas con `litellm.token_counter` (y fallback `len//4`).
   - `yunta/api.py` & `yunta/cli.py`: reporte de `Startup tax (payload inicial)` en `/metrics` y `/tokens` con objetivo `<5,000` tokens.
   - `tests/test_provider.py`: prueba unitaria `test_startup_tax_calculation` (123 tests 100% verde).
-- **Resiliencia en consolas Windows (`check_endpoints.py`)**:
-  - Reconfiguración automática de `stdout` y `stderr` a UTF-8 (`errors="replace"`) en `scripts/check_endpoints.py` al ejecutarse en Windows.
+- **V3-3 — Offloading de salidas largas a scratch files**:
+  - `yunta/agent.py`: método `_maybe_offload_result` que intercepta salidas de herramientas o comandos que superen los 8.000 caracteres, volcando el contenido completo en `.yunta/scratch/output_{timestamp}_{tool_name}.txt` e inyectando al contexto del LLM únicamente un preview de 500 caracteres con la referencia al archivo scratch.
+  - `tests/test_agent.py`: prueba unitaria `test_long_output_offloaded_to_scratch_file` (124 tests 100% verde).
+- **Documentación de Comandos y CLI**:
+  - `README.md`, `README_en.md`, `docs/quickstart.md`, `docs/quickstart_en.md`, `yunta/cli.py`: actualización y sincronización completa de la descripción de invocación desde el CLI (`yunta`, `yunta init`, `yunta check`, `yunta ide-init`, `yunta serve-mcp`, `yunta --resume`, `yunta "instrucción"`, `yunta --version`, `yunta --help`), comandos interactivos del REPL (`/permissions`, `/roi`, `/metrics`, `/tokens`, `/undo`, `/init`, `/clear`, `/exit`, `Ctrl+C`) y variables de entorno (`YUNTA_BLOCKLIST_EXTRA`, `YUNTA_ALLOW_FORCE`).
 
 ---
 
