@@ -475,6 +475,30 @@ publicación).
 
 ---
 
+---
+
+## [1.0.9] — 2026-09-08
+
+### Agregado
+- **V2-1 — Modo Gobernanza `yunta check` (`governance.py`, `cli.py`)**:
+  - Comando CLI ligero y 100% local para auditar la salud SDD de cualquier proyecto sin costo de tokens ($0 API calls, ejecución instantánea).
+  - Inspección exhaustiva de la tríada SDD (`SPEC.md`, `PLAN.md`, `AGENTS.md`), configuración `.yunta/config.json`, estado de Git y suite de tests.
+  - Detección automática del protocolo de interoperabilidad en `AGENTS.md` (delegación canónica a Yunta).
+  - Ejecución opcional de tests unitarios del proyecto con flag `--tests` (timeout de seguridad de 60s).
+  - Salida dual: tabla visual con formato de consola o salida estructurada con flag `--json` para que IDEs externos (Claude Code, Cursor, Antigravity) o scripts de CI/CD verifiquen la gobernanza programáticamente.
+  - Retorna código de salida estándar: `0` si el proyecto es saludable o `1` si faltan especificaciones críticas o fallan los tests.
+- **V2-2 — Sesiones Resumibles `yunta --resume` (`session.py`, `agent.py`, `cli.py`)**:
+  - Persistencia atómica de mensajes, bloques y telemetría de tokens (`Usage`) en `.yunta/session_state.json`.
+  - Auto-guardado continuo tras cada turno completado y al interrumpir con `Ctrl+C`.
+  - Reanudación instantánea del contexto y métricas mediante flag `yunta --resume` o `yunta -r`.
+  - Limpieza automática del archivo de sesión al ejecutar `/clear` en el REPL.
+- **Especificación Canónica del Harness (`docs/SPEC.md`)**:
+  - Creación formal de la especificación técnica SDD para el desarrollo del propio harness Yunta (visión, frontera ontológica, requerimientos, arquitectura y criterios de calidad).
+- **Tests Unitarios**:
+  - `tests/test_governance.py`: 5 tests unitarios verificando directorio vacío, repositorio SDD completo, fallback a `docs/`, salida JSON y salida de consola.
+  - `tests/test_session.py`: 4 tests unitarios verificando serialización de bloques/mensajes, telemetría de uso, guardado/carga/limpieza atómica y manejo de archivos corruptos.
+  - Suite total de Yunta ampliada a **91 tests pasando (100% PASS)**.
+
 ## [1.0.8] — 2026-09-08
 
 ### Agregado

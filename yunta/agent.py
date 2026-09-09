@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from .api import Block, BlockType, Message, Response, Role, StopReason, Usage
+from .session import save_session
 from .tools import registry
 
 
@@ -56,15 +57,19 @@ class Agent:
         max_turns: int = 30,
         confirm=None,
         tools: list | None = None,
+        auto_save: bool = True,
+        initial_messages: list[Message] | None = None,
+        initial_usage: Usage | None = None,
     ):
         self.provider = provider
         self.system = system
         self.compactor = compactor
         self.max_turns = max_turns
         self.confirm = confirm
-        self.messages: list[Message] = []
+        self.auto_save = auto_save
+        self.messages: list[Message] = list(initial_messages) if initial_messages else []
         self._tools_subset = list(tools) if tools is not None else None
-        self.usage = Usage()
+        self.usage = initial_usage if initial_usage else Usage()
         self._spinner = None
         self.snapshots: list[dict[str, str | None]] = []
 
@@ -167,9 +172,20 @@ class Agent:
                             content=[Block(type=BlockType.TEXT, text="[interrumpido por el usuario]")],
                         )
                     )
+            if self.auto_save:
+                self._save_session_state()
             return "\n".join(final_text).strip() or "[interrumpido por el usuario]"
 
+        if self.auto_save:
+            self._save_session_state()
         return "\n".join(final_text).strip()
+
+    def _save_session_state(self) -> None:
+        try:
+            model_name = getattr(self.provider, "model", lambda: "")()
+            save_session(self.messages, self.usage, model=model_name)
+        except Exception:
+            pass
 
     def _stream_text(self, delta: str) -> None:
         if self._spinner:

@@ -5,7 +5,9 @@ from pathlib import Path
 from .agent import Agent
 from .compact import SlidingWindow
 from .feedback import FeedbackStore
+from .governance import run_check
 from .init import run_init
+from .session import clear_session, load_session
 from .mcp import load_mcp_servers
 from .provider import LiteLLMProvider
 from .tools import bash, delegate, files, memory, search  # noqa: F401 — registro vía decoradores
@@ -55,7 +57,7 @@ def load_system_prompt(feedback: FeedbackStore | None = None) -> str:
 
 
 def print_version():
-    print("yunta v1.0.8")
+    print("yunta v1.0.9")
 
 
 def print_help():
@@ -65,6 +67,8 @@ Harness de agente de código para Spec-Driven Development (SDD), agnóstico al m
 
 Comandos de Terminal (CLI):
   yunta                        Inicia la sesión interactiva REPL
+  yunta --resume, -r           Reanuda la sesión previa guardada en .yunta/session_state.json
+  yunta check [ruta] [--json]  Auditoría local de gobernanza SDD ($0 en tokens, instantáneo)
   yunta "tu instrucción"       Ejecución directa single-shot (ej. yunta "revisa los tests")
   yunta init [idea]            Inicializa el proyecto con SPEC.md, PLAN.md y AGENTS.md (SDD)
   yunta --version, -v          Muestra la versión instalada de Yunta
@@ -110,6 +114,18 @@ def main():
             print_version()
             return
 
+    # Despacho de comando `yunta check [ruta] [--json] [--tests]`
+    if len(sys.argv) > 1 and sys.argv[1].lower() == "check":
+        as_json = "--json" in sys.argv
+        run_tests = "--tests" in sys.argv or "--run-tests" in sys.argv
+        target_dir = "."
+        for arg in sys.argv[2:]:
+            if not arg.startswith("-"):
+                target_dir = arg
+                break
+        code = run_check(target_dir=target_dir, as_json=as_json, run_tests=run_tests)
+        sys.exit(code)
+
     # Despacho de comando `yunta init [idea]`
     if len(sys.argv) > 1 and sys.argv[1].lower() == "init":
         idea = " ".join(sys.argv[2:]).strip()
@@ -124,10 +140,36 @@ def main():
     max_messages = int(os.environ.get("YUNTA_MAX_MESSAGES", "40"))
     compactor = SlidingWindow(max_messages=max_messages)
 
+    # Detección de flag --resume / -r
+    resume = False
+    args_cleaned = []
+    for arg in sys.argv[1:]:
+        if arg in ("--resume", "-r"):
+            resume = True
+        else:
+            args_cleaned.append(arg)
+
+    initial_messages = None
+    initial_usage = None
+    if resume:
+        session_data = load_session()
+        if session_data:
+            initial_messages = session_data["messages"]
+            initial_usage = session_data["usage"]
+            print(f"yunta — sesión reanudada ({len(initial_messages)} mensajes previos, {initial_usage.turns} turnos)")
+        else:
+            print("yunta — aviso: no se encontró sesión previa guardada para reanudar")
+
     # Despacho single-shot: `yunta "mi tarea directa"`
-    if len(sys.argv) > 1:
-        agent = Agent(provider=provider, system=system, compactor=compactor)
-        prompt = " ".join(sys.argv[1:]).strip()
+    if args_cleaned:
+        agent = Agent(
+            provider=provider,
+            system=system,
+            compactor=compactor,
+            initial_messages=initial_messages,
+            initial_usage=initial_usage,
+        )
+        prompt = " ".join(args_cleaned).strip()
         try:
             agent.send(prompt)
         except KeyboardInterrupt:
@@ -135,7 +177,13 @@ def main():
         return
 
     mcp_clients = load_mcp_servers()
-    agent = Agent(provider=provider, system=system, compactor=compactor)
+    agent = Agent(
+        provider=provider,
+        system=system,
+        compactor=compactor,
+        initial_messages=initial_messages,
+        initial_usage=initial_usage,
+    )
 
     print(f"yunta — modelo: {provider.model()}")
     print("Escribe tu consulta, /help para ver comandos, o /exit para salir.\n")
@@ -166,7 +214,8 @@ def main():
                 continue
             if prompt == "/clear":
                 agent.messages.clear()
-                print("(historial limpio)\n")
+                clear_session()
+                print("(historial y sesión guardada limpios)\n")
                 continue
             if prompt == "/undo":
                 restored = agent.undo()
