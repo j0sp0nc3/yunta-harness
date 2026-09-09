@@ -301,3 +301,23 @@ def test_provider_stream_options_fallback(monkeypatch):
 
     assert resp.content[0].text == "respuesta exitosa"
     assert collected == ["respuesta exitosa"]
+
+
+def test_startup_tax_calculation(monkeypatch):
+    from yunta.provider import LiteLLMProvider
+    from yunta.api import ToolDef
+
+    monkeypatch.setenv("LLM_MODEL", "openai/gpt-4o")
+    p = LiteLLMProvider(system="System prompt de prueba para el harness de Yunta con suficiente longitud.")
+
+    tools = [
+        ToolDef(name="read_file", description="Lee el contenido de un archivo", parameters={"type": "object", "properties": {"path": {"type": "string"}}}),
+        ToolDef(name="write_file", description="Escribe contenido en un archivo", parameters={"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}}),
+    ]
+
+    tax = p.estimate_startup_tax(tools)
+    assert isinstance(tax, int)
+    assert tax > 0
+
+    assert p.startup_tax > 0
+

@@ -279,8 +279,10 @@ def main():
                 continue
             if prompt in ("/tokens", "/metrics"):
                 u = agent.total_usage
-                print(u.format_summary() + "\n")
+                st = provider.startup_tax
+                print(u.format_summary(startup_tax=st) + "\n")
                 continue
+
             if prompt.startswith("/") and not prompt.startswith("//"):
                 print(f"Comando desconocido: '{prompt}'. Escribe /help para ver los comandos disponibles.\n")
                 continue

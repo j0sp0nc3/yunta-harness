@@ -197,11 +197,19 @@ def probe_endpoint(base_url: str, model_id: str, token: str | None = None, timeo
 
 
 def main():
+    if sys.platform == "win32":
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
     parser = argparse.ArgumentParser(description="Diagnose Yunta model endpoints & JWT authentication")
     parser.add_argument("--config", "-c", default=".yunta/config.json", help="Path to .yunta/config.json")
     args = parser.parse_args()
 
     print("=" * 70)
+
     print("🔍 YUNTA HARNESS — ENDPOINT & AUTHENTICATION DIAGNOSTIC TOOL")
     print("=" * 70)
 

@@ -8,6 +8,18 @@ Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
 ---
 
+## [1.1.1] — 2026-09-09
+
+### Agregado
+- **V3-8 / O1-d — Presupuesto de arranque medible (`startup_tax`)**:
+  - `yunta/provider.py`: cálculo e inspección de tokens de arranque aproximados (`provider.startup_tax` y `estimate_startup_tax()`) contando payload inicial de system prompt y schemas de herramientas con `litellm.token_counter` (y fallback `len//4`).
+  - `yunta/api.py` & `yunta/cli.py`: reporte de `Startup tax (payload inicial)` en `/metrics` y `/tokens` con objetivo `<5,000` tokens.
+  - `tests/test_provider.py`: prueba unitaria `test_startup_tax_calculation` (123 tests 100% verde).
+- **Resiliencia en consolas Windows (`check_endpoints.py`)**:
+  - Reconfiguración automática de `stdout` y `stderr` a UTF-8 (`errors="replace"`) en `scripts/check_endpoints.py` al ejecutarse en Windows.
+
+---
+
 ## [0.1.0] — 2026-09-06
 
 ### Agregado

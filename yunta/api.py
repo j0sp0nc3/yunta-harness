@@ -84,7 +84,7 @@ class Usage:
         """Total acumulado de llamadas a herramientas."""
         return sum(self.tool_counts.values())
 
-    def format_summary(self) -> str:
+    def format_summary(self, startup_tax: int = 0) -> str:
         """Formatea un resumen legible y comparativo en 2-3 líneas limpias."""
         total_in = self.theoretical_raw_tokens
         cached_info = f" (⚡ {self.cache_rate:.1f}% ahorro de caché)" if self.cached_tokens else ""
@@ -92,6 +92,8 @@ class Usage:
             f"Tokens: entrada={self.input_tokens:,} | cacheados={self.cached_tokens:,}{cached_info} | salida={self.output_tokens:,}",
             f"Sin Harness habrías transferido: {total_in:,} tokens de entrada",
         ]
+        if startup_tax > 0:
+            lines.append(f"Startup tax (payload inicial): {startup_tax:,} tokens (objetivo: <5,000)")
         if self.tool_counts:
             breakdown = ", ".join(f"{k}: {v}" for k, v in sorted(self.tool_counts.items()))
             err_info = f" (errores/rechazos: {self.tool_errors})" if self.tool_errors else ""
@@ -99,6 +101,7 @@ class Usage:
         if self.turns:
             lines.append(f"Turnos de interacción: {self.turns}")
         return "\n".join(lines)
+
 
 
 @dataclass

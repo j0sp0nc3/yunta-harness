@@ -1,3 +1,4 @@
+import json
 import os
 
 import litellm
@@ -15,6 +16,10 @@ _FINISH_REASONS = {
 class Provider:
     def send(self, messages: list[Message], tools: list[ToolDef], on_text=None) -> Response: ...
     def model(self) -> str: ...
+    @property
+    def startup_tax(self) -> int:
+        return 0
+
 
 
 class LiteLLMProvider(Provider):
@@ -39,6 +44,25 @@ class LiteLLMProvider(Provider):
 
     def model(self) -> str:
         return self._models[self._model_idx]
+
+    def estimate_startup_tax(self, tools: list[ToolDef] | None = None) -> int:
+        """Calcula los tokens aproximados del payload inicial (system prompt + schemas de herramientas)."""
+        if tools is None:
+            from .tools import registry
+            tools = registry.definitions()
+        payload_text = self._system or ""
+        for t in tools:
+            def_dict = self._tool_def(t)
+            payload_text += "\n" + json.dumps(def_dict)
+        try:
+            return litellm.token_counter(model=self.model(), text=payload_text)
+        except Exception:
+            return len(payload_text) // 4
+
+    @property
+    def startup_tax(self) -> int:
+        return self.estimate_startup_tax()
+
 
     def send(self, messages: list[Message], tools: list[ToolDef], on_text=None) -> Response:
         while True:
