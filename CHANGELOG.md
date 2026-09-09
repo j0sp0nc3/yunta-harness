@@ -8,6 +8,30 @@ Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
 ---
 
+## [1.2.0] — 2026-09-09
+
+### Agregado
+- **V3-1 — Detección de Doom-Loops**:
+  - `yunta/agent.py`: fingerprinting de `(tool_name, raw_input)` en ventana deslizante de 20 llamadas. A partir de 3 repeticiones se inyecta un aviso de advertencia en `tool_result`; al alcanzar 5 repeticiones se fuerza la pausa y confirmación explícita `[PAUSA DOOM-LOOP]` del usuario, previniendo bucles infinitos en modo autónomo.
+  - `tests/test_agent.py`: pruebas unitarias `test_doom_loop_detection_warning` y `test_doom_loop_detection_pause`.
+- **V3-5 — Recordatorios como `role: user` en Puntos de Decisión**:
+  - `yunta/agent.py`: re-inyección automática de un bloque de recordatorio de sistema (`role: user`) cada 15 ejecuciones de herramientas para evitar la deriva de contexto en sesiones largas.
+  - `tests/test_agent.py`: prueba unitaria `test_decision_point_reminder_injected_after_15_calls`.
+- **V3-6 — Recuperación de Errores Clasificada**:
+  - `yunta/errors.py`: nuevo módulo con clasificador `classify_tool_error` en 6 categorías accionables (`FILE_NOT_FOUND`, `PERMISSION_DENIED`, `TIMEOUT`, `PARSE_OR_SYNTAX`, `GIT_CONFLICT`, `UNKNOWN`) con plantillas de sugerencia para orientar al LLM tras un fallo de herramienta.
+  - `yunta/agent.py`: integración del clasificador en el manejo de errores de ejecución de herramientas.
+  - `tests/test_errors.py`: suite de 6 pruebas unitarias.
+- **V3-4 — Compactación por Etapas basada en Presupuesto de Tokens**:
+  - `yunta/compact.py`: nueva clase `TokenBudgetCompactor` con 4 umbrales progresivos (70% aviso en contexto, 80% enmascaramiento de tool_results largos, 85% pruning seguro de mensajes antiguos, 99% resumen sintético defensivo).
+  - `yunta/cli.py`: comando `/context` en el REPL que reporta la cantidad de mensajes, tokens estimados en contexto y porcentaje consumido del presupuesto (`YUNTA_MAX_TOKENS`).
+  - `tests/test_token_compact.py`: suite de 5 pruebas unitarias.
+- **V3-9 — Aislamiento en Git Worktree (`/sandbox`)**:
+  - `yunta/sandbox.py`: módulo con funciones `create_sandbox()` y `cleanup_sandbox()` para crear git worktrees temporales aislados en `.yunta/sandboxes/` con merge opcional al concluir.
+  - `yunta/cli.py`: comandos `/sandbox`, `/sandbox merge`, `/sandbox discard` en el REPL CLI.
+  - `tests/test_sandbox.py`: prueba unitaria completa de ciclo de vida e integración git.
+
+---
+
 ## [1.1.1] — 2026-09-09
 
 ### Agregado

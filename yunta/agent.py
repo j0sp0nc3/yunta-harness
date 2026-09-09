@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from .api import Block, BlockType, Message, Response, Role, StopReason, Usage
+from .errors import classify_tool_error
 from .session import save_session
 from .tools import registry
 
@@ -106,6 +107,8 @@ class Agent:
         self.usage = initial_usage if initial_usage else Usage()
         self._spinner = None
         self.snapshots: list[dict[str, str | None]] = []
+        self._recent_tool_calls: list[tuple[str, str]] = []
+        self._tool_calls_since_reminder: int = 0
 
     def send(self, prompt: str) -> str:
         self.usage.turns += 1
@@ -175,6 +178,16 @@ class Agent:
 
                 if resp.stop_reason != StopReason.TOOL_USE or not has_tool_call:
                     return "\n".join(final_text).strip()
+
+                # V3-5: Recordatorios como role:user en punto de decisión (tras ~15 tool calls)
+                if self._tool_calls_since_reminder >= 15:
+                    self._tool_calls_since_reminder = 0
+                    current_tool_results.append(
+                        Block(
+                            type=BlockType.TEXT,
+                            text="[RECORDATORIO DE SISTEMA: Han transcurrido 15 ejecuciones de herramientas. Recuerda verificar empíricamente tus cambios con tests o comandos antes de concluir, no repetir lecturas innecesarias y justificar cada acción].",
+                        )
+                    )
 
                 self.messages.append(Message(role=Role.USER, content=current_tool_results))
         except KeyboardInterrupt:
@@ -258,20 +271,40 @@ class Agent:
 
     def _execute_tool(self, name: str, raw_input: str) -> tuple[str, bool]:
         self.usage.tool_counts[name] = self.usage.tool_counts.get(name, 0) + 1
+        self._tool_calls_since_reminder += 1
         tool = registry.get(name)
         if tool is None:
             self.usage.tool_errors += 1
             return f"unknown tool: {name}", True
+
+        # V3-1: Detección de doom-loops (fingerprint en ventana de 20 llamadas)
+        fp = (name, raw_input.strip())
+        self._recent_tool_calls.append(fp)
+        if len(self._recent_tool_calls) > 20:
+            self._recent_tool_calls = self._recent_tool_calls[-20:]
+
+        repeat_count = self._recent_tool_calls.count(fp)
+        force_prompt = repeat_count >= 5
 
         # E13: Guardar snapshot previo antes de modificar archivos
         if name in ("write_file", "str_replace"):
             self._take_snapshot(name, raw_input)
 
         detail = self._tool_detail(name, raw_input)
+        if force_prompt:
+            detail = f"[PAUSA DOOM-LOOP: repetición x{repeat_count} de {name}] {detail}".strip()
+
         print(f"[tool] {name} {raw_input}")
-        if tool.requires_approval and not self._approve(name, detail, raw_input):
+        if (tool.requires_approval or force_prompt) and not self._approve(
+            name, detail, raw_input, force_prompt=force_prompt
+        ):
             self.usage.tool_errors += 1
-            return "user denied this tool call", True
+            err_denied = (
+                f"user denied this tool call (doom-loop pause: {repeat_count} repeats)"
+                if force_prompt
+                else "user denied this tool call"
+            )
+            return err_denied, True
 
         # E11: Pre-notificación en terminal
         if sys.stdout.isatty():
@@ -286,6 +319,8 @@ class Agent:
                 sys.stdout.write("\033[K")
             print(f"[tool] {name} completado en {elapsed:.2f}s")
             res = self._maybe_offload_result(name, res)
+            if repeat_count >= 3:
+                res += f"\n\n[ADVERTENCIA DOOM-LOOP: La herramienta '{name}' con estos argumentos se ha ejecutado {repeat_count} veces recientemente. Evalúa cambiar de estrategia o revisar el error.]"
             return res, False
         except Exception as e:
             elapsed = time.time() - start_time
@@ -295,6 +330,9 @@ class Agent:
             self.usage.tool_errors += 1
             err_msg = f"{type(e).__name__}: {e}"
             err_msg = self._maybe_offload_result(name, err_msg)
+            err_msg += classify_tool_error(name, f"{type(e).__name__}: {e}")
+            if repeat_count >= 3:
+                err_msg += f"\n\n[ADVERTENCIA DOOM-LOOP: La herramienta '{name}' con estos argumentos se ha ejecutado {repeat_count} veces recientemente. Evalúa cambiar de estrategia o revisar el error.]"
             return err_msg, True
 
     def _maybe_offload_result(self, name: str, result: str) -> str:
@@ -350,12 +388,17 @@ class Agent:
         )
         return "".join(diff)
 
-    def _approve(self, name: str, detail: str = "", raw_input: str = "") -> bool:
-        if self.confirm is not None:
-            return self.confirm(name, detail)
-
-        if raw_input and self.session_permissions.allowed(name, raw_input):
-            return True
+    def _approve(
+        self, name: str, detail: str = "", raw_input: str = "", force_prompt: bool = False
+    ) -> bool:
+        if not force_prompt:
+            if self.confirm is not None:
+                return self.confirm(name, detail)
+            if raw_input and self.session_permissions.allowed(name, raw_input):
+                return True
+        else:
+            if self.confirm is not None:
+                return self.confirm(name, detail)
 
         if detail:
             print(detail, end="")

@@ -6,7 +6,7 @@ import pytest
 sys.path.insert(0, ".")
 
 from yunta.agent import Agent
-from yunta.api import Block, BlockType, Response, StopReason
+from yunta.api import Block, BlockType, Response, Role, StopReason
 from yunta.tools import bash, files  # noqa: F401
 
 
@@ -497,7 +497,7 @@ def test_long_output_offloaded_to_scratch_file(tmp_path, monkeypatch):
         ]
     )
 
-    a = Agent(provider=p, system="s", auto_save=False)
+    a = Agent(provider=p, system="s", auto_save=False, confirm=lambda n, d: True)
     a.send("ejecuta tool larga")
 
     tool_results = [b for b in a.messages[2].content if b.type == BlockType.TOOL_RESULT]
@@ -513,6 +513,87 @@ def test_long_output_offloaded_to_scratch_file(tmp_path, monkeypatch):
     assert len(content_on_disk) == 10000
     assert content_on_disk.startswith("A" * 500)
     assert content_on_disk.endswith("B" * 9500)
+
+
+def test_doom_loop_detection_warning(tmp_path, monkeypatch):
+    """3 repeticiones del mismo (tool, args) inyectan advertencia en tool_result."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "test.txt").write_text("hola", encoding="utf-8")
+
+    responses = [
+        Response(content=[tool_use("1", "read_file", '{"path":"test.txt"}')], stop_reason=StopReason.TOOL_USE),
+        Response(content=[tool_use("2", "read_file", '{"path":"test.txt"}')], stop_reason=StopReason.TOOL_USE),
+        Response(content=[tool_use("3", "read_file", '{"path":"test.txt"}')], stop_reason=StopReason.TOOL_USE),
+        Response(content=[Block(type=BlockType.TEXT, text="listo")], stop_reason=StopReason.END_TURN),
+    ]
+    p = FakeProvider(responses)
+    a = Agent(provider=p, system="s", auto_save=False, confirm=lambda n, d: True)
+    out = a.send("revisa")
+    assert out == "listo"
+
+    # Verificar el 3er tool_result
+    results = [b for m in a.messages for b in m.content if b.type == BlockType.TOOL_RESULT]
+    assert len(results) == 3
+    assert "[ADVERTENCIA DOOM-LOOP" in results[2].tool_result
+    assert "se ha ejecutado 3 veces" in results[2].tool_result
+
+
+def test_doom_loop_detection_pause(tmp_path, monkeypatch):
+    """5 repeticiones fuerzan pausa con confirmación que incluye [PAUSA DOOM-LOOP]."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "test.txt").write_text("hola", encoding="utf-8")
+
+    confirm_calls = []
+
+    def custom_confirm(name, detail):
+        confirm_calls.append((name, detail))
+        return False  # Denegar la confirmación forzada de pausa por doom-loop
+
+    responses = [
+        Response(content=[tool_use(str(i), "read_file", '{"path":"test.txt"}')], stop_reason=StopReason.TOOL_USE)
+        for i in range(1, 6)
+    ]
+    responses.append(Response(content=[Block(type=BlockType.TEXT, text="detenido")], stop_reason=StopReason.END_TURN))
+
+    p = FakeProvider(responses)
+    a = Agent(provider=p, system="s", auto_save=False, confirm=custom_confirm)
+    out = a.send("loop test")
+
+    # read_file no requiere aprobación en llamadas 1-4, solo en la 5ta por force_prompt
+    assert len(confirm_calls) == 1
+    name_5, detail_5 = confirm_calls[0]
+    assert "[PAUSA DOOM-LOOP: repetición x5 de read_file]" in detail_5
+
+    # El 5to tool_result debe ser de error por denegación
+    results = [b for m in a.messages for b in m.content if b.type == BlockType.TOOL_RESULT]
+    assert len(results) == 5
+    assert results[4].is_error is True
+    assert "user denied this tool call (doom-loop pause: 5 repeats)" in results[4].tool_result
+
+
+def test_decision_point_reminder_injected_after_15_calls(tmp_path, monkeypatch):
+    """Tras 15 ejecuciones de herramientas se inyecta un bloque TEXT de recordatorio en los mensajes del usuario (V3-5)."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "test.txt").write_text("ok", encoding="utf-8")
+
+    responses = [
+        Response(content=[tool_use(str(i), "read_file", f'{{"path":"test.txt","i":{i}}}')], stop_reason=StopReason.TOOL_USE)
+        for i in range(1, 16)
+    ]
+    responses.append(Response(content=[Block(type=BlockType.TEXT, text="fin")], stop_reason=StopReason.END_TURN))
+
+    p = FakeProvider(responses)
+    a = Agent(provider=p, system="s", auto_save=False, confirm=lambda n, d: True)
+    out = a.send("ejecuta 15 tools")
+    assert out == "fin"
+
+    user_msgs = [m for m in a.messages if m.role == Role.USER]
+    last_user_blocks = user_msgs[-1].content
+    text_blocks = [b for b in last_user_blocks if b.type == BlockType.TEXT]
+    assert len(text_blocks) == 1
+    assert "[RECORDATORIO DE SISTEMA: Han transcurrido 15 ejecuciones de herramientas." in text_blocks[0].text
+
+
 
 
 
