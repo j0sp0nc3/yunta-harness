@@ -256,6 +256,8 @@ At any point during your session, use these control commands:
 | Command / Shortcut | Action | Description |
 | :--- | :--- | :--- |
 | **`/init [idea]`** | SDD Scaffolding | Initializes or scaffolds the project generating `SPEC.md`, `PLAN.md`, and `AGENTS.md`. |
+| **`/sandbox [merge|discard]`** | Git Worktree Sandbox | Creates or manages an isolated Git Worktree environment for risky operations. |
+| **`/context`** | Token Context State | Displays message count, estimated context tokens, and budget usage % (`YUNTA_MAX_TOKENS`). |
 | **`/undo`** | Time-Travel Undo | Instantly restores modified or created files to their state prior to the last edit. |
 | **`/permissions [clear]`** | Session Permissions | Lists persistent permissions granted via 'always' or revokes them (`/permissions clear`). |
 | **`/roi`** | Value Dashboard | Displays cache hit percentage, avoided tokens, and estimated USD savings. |

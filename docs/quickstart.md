@@ -256,6 +256,8 @@ Durante cualquier momento de tu sesión puedes utilizar los comandos de control:
 | Comando / Atajo | Acción | Descripción |
 | :--- | :--- | :--- |
 | **`/init [idea]`** | Scaffolding SDD | Inicializa o andamia el proyecto generando `SPEC.md`, `PLAN.md` y `AGENTS.md`. |
+| **`/sandbox [merge|discard]`** | Git Worktree Sandbox | Crea o gestiona un entorno aislado en Git Worktree para operaciones experimentales. |
+| **`/context`** | Estado de tokens | Muestra los mensajes, tokens estimados en contexto y el uso % del presupuesto (`YUNTA_MAX_TOKENS`). |
 | **`/undo`** | Time-Travel Undo | Restaura instantáneamente los archivos a su estado anterior a la última edición. |
 | **`/permissions [clear]`** | Permisos de sesión | Muestra los patrones autorizados con 'siempre' o los revoca (`/permissions clear`). |
 | **`/roi`** | Dashboard de valor | Muestra porcentaje de caché, tokens evitados y estimación de ahorro en USD. |

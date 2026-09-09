@@ -150,6 +150,8 @@ export LLM_API_KEY=dummy
 
 ### Comandos Interactivos del REPL (dentro de Yunta)
 - `/init [idea]`: Inicializa o andamia un proyecto SDD generando `SPEC.md`, `PLAN.md` y `AGENTS.md`.
+- `/sandbox [merge|discard]`: Crea o gestiona un entorno aislado en Git Worktree para operaciones destructivas o experimentales.
+- `/context`: Muestra la cantidad de mensajes, tokens estimados en contexto y porcentaje consumido del presupuesto (`YUNTA_MAX_TOKENS`).
 - `/undo`: Deshace la última edición de archivos y restaura el estado inmediatamente anterior ("Time-Travel Undo").
 - `/permissions [clear]`: Muestra los permisos persistentes otorgados con 'siempre' en la sesión o los revoca (`/permissions clear`).
 - `/roi`: Despliega el dashboard de retorno de inversión, acierto de caché y ahorro estimado en USD.
@@ -166,7 +168,9 @@ export LLM_API_KEY=dummy
 - `LLM_API_BASE`: Endpoint custom compatible con OpenAI (ej. `http://localhost:8000/v1`).
 - `LLM_API_KEY`: API Key o Bearer Token.
 - `YUNTA_SYSTEM_PROMPT`: Sobrescribe el System Prompt base del harness.
+- `YUNTA_MAX_TOKENS`: Presupuesto máximo de tokens para la compactación por etapas (default: `128000`).
 - `YUNTA_MAX_MESSAGES`: Tamaño máximo de ventana deslizante de historial (default: `40`).
+- `YUNTA_YES`: Activa el modo de auto-aprobación autónoma para todas las herramientas (equivalente a `-y` / `--yes`).
 - `YUNTA_BLOCKLIST_EXTRA`: Ruta a archivo con patrones regex adicionales para bloquear comandos en bash.
 - `YUNTA_ALLOW_FORCE`: Permite ejecutar `git push --force` en bash si se establece en `1`.
 
