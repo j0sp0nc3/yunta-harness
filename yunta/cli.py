@@ -240,6 +240,21 @@ def main():
                     print("(no hay cambios previos para deshacer)")
                 print()
                 continue
+            if prompt == "/permissions" or prompt.startswith("/permissions "):
+                args = prompt.split(maxsplit=1)
+                if len(args) > 1 and args[1].strip() == "clear":
+                    agent.session_permissions.revoke_all()
+                    print("(permisos de sesión revocados)")
+                else:
+                    items = agent.session_permissions.items()
+                    if not items:
+                        print("no hay permisos persistentes en esta sesión")
+                    else:
+                        for tool, token in items:
+                            print(f"  {tool}: {token}*")
+                        print("(usa /permissions clear para revocar)")
+                print()
+                continue
             if prompt == "/roi":
                 u = agent.total_usage
                 tokens_in = u.input_tokens

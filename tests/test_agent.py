@@ -343,3 +343,138 @@ def test_agent_ctrl_c_no_orphan_tool_use():
     assert tool_results[1].tool_use_id == "call_2"
     assert "cancelada" in tool_results[0].tool_result
     assert "cancelada" in tool_results[1].tool_result
+
+
+# ---------------------------------------------------------------------------
+# O1-c) V3-2: Permisos persistentes de sesión (solo en memoria)
+# ---------------------------------------------------------------------------
+
+def _approval_scenario(monkeypatch, answers):
+    """Construye un agent con bash tool_use y respuestas de input programadas.
+
+    Devuelve (agent, prompts) donde prompts acumula lo preguntado al usuario.
+    """
+    prompts = []
+    it = iter(answers)
+
+    def fake_input(prompt=""):
+        prompts.append(prompt)
+        try:
+            return next(it)
+        except StopIteration:
+            return "n"
+
+    monkeypatch.setattr("builtins.input", fake_input)
+
+    p = FakeProvider(
+        [
+            Response(
+                content=[tool_use("1", "bash", '{"command":"rm temporal.txt"}')],
+                stop_reason=StopReason.TOOL_USE,
+            ),
+            Response(content=[Block(type=BlockType.TEXT, text="ok")], stop_reason=StopReason.END_TURN),
+        ]
+    )
+    agent = Agent(provider=p, system="s", auto_save=False)
+    agent.send("borra el archivo")
+    return agent, prompts
+
+
+def test_session_permissions_always_skips_same_pattern(monkeypatch):
+    """Tras responder 'siempre', el mismo patrón (bash + primer token) no vuelve a preguntar."""
+    agent, prompts = _approval_scenario(monkeypatch, ["siempre"])
+    assert prompts, "debió preguntar la primera vez"
+    assert agent.session_permissions.allowed("bash", "rm temporal.txt")
+
+    # Un segundo agent (simulando nueva llamada en la MISMA sesión: memoria compartida
+    # ocurre vía el mismo objeto; aquí verificamos el cambio de estado en el agente)
+    p2 = FakeProvider(
+        [
+            Response(
+                content=[tool_use("2", "bash", '{"command":"rm temporal.txt"}')],
+                stop_reason=StopReason.TOOL_USE,
+            ),
+            Response(content=[Block(type=BlockType.TEXT, text="ok")], stop_reason=StopReason.END_TURN),
+        ]
+    )
+    agent2 = Agent(provider=p2, system="s", auto_save=False,
+                   session_permissions=agent.session_permissions)
+    prompts2 = []
+    monkeypatch.setattr(
+        "builtins.input",
+        lambda _p="": (prompts2.append(_p), "n")[1],
+    )
+    agent2.send("borra el archivo otra vez")
+    assert prompts2 == [], "no debió volver a preguntar para el mismo patrón"
+
+
+def test_session_permissions_pattern_is_per_first_token(monkeypatch):
+    """Un comando distinto (otro primer token) SÍ vuelve a preguntar."""
+    agent, _ = _approval_scenario(monkeypatch, ["siempre"])
+    assert agent.session_permissions.allowed("bash", "rm temporal.txt")
+
+    p = FakeProvider(
+        [
+            Response(
+                content=[tool_use("2", "bash", '{"command":"curl http://x"}')],
+                stop_reason=StopReason.TOOL_USE,
+            ),
+            Response(content=[Block(type=BlockType.TEXT, text="ok")], stop_reason=StopReason.END_TURN),
+        ]
+    )
+    prompts = []
+    monkeypatch.setattr("builtins.input", lambda _p="": (prompts.append(_p), "s")[1])
+    p2_agent = Agent(provider=p, system="s", auto_save=False, session_permissions=agent.session_permissions)
+    p2_agent.send("usa curl")
+    assert prompts, "patrón distinto (curl) debió volver a preguntar"
+
+
+def test_session_permissions_grant_via_s_also_stores_pattern(monkeypatch):
+    """'s' confirma solo esa vez; 'siempre' registra. Ambos caminos exponen el estado."""
+    agent, prompts = _approval_scenario(monkeypatch, ["s"])
+    assert prompts
+    assert not agent.session_permissions.allowed("bash", "rm temporal.txt"), "'s' no debe persistir permiso"
+
+    agent_b, _ = _approval_scenario(monkeypatch, ["siempre"])
+    assert agent_b.session_permissions.allowed("bash", "rm temporal.txt")
+
+
+def test_session_permissions_write_path_pattern(monkeypatch):
+    """Para tools de archivos el patrón usa el path (primer token del path)."""
+    monkeypatch.setattr("builtins.input", lambda _p="": "siempre")
+    p = FakeProvider(
+        [
+            Response(
+                content=[tool_use("3", "write_file", '{"path":"docs/guia.md","content":"x"}')],
+                stop_reason=StopReason.TOOL_USE,
+            ),
+            Response(content=[Block(type=BlockType.TEXT, text="ok")], stop_reason=StopReason.END_TURN),
+        ]
+    )
+    agent = Agent(provider=p, system="s", auto_save=False)
+    agent.send("escribe guia")
+    assert agent.session_permissions.allowed("write_file", '{"path":"docs/guia.md","content":"x"}')
+
+
+def test_session_permissions_clear_restores_question(monkeypatch):
+    """/permissions clear (SessionPermissions.revoke_all) restaura la pregunta."""
+    agent, _ = _approval_scenario(monkeypatch, ["siempre"])
+    assert agent.session_permissions.allowed("bash", "rm temporal.txt")
+
+    agent.session_permissions.revoke_all()
+    assert not agent.session_permissions.allowed("bash", "rm temporal.txt")
+
+
+def test_session_permissions_is_memory_only(tmp_path, monkeypatch):
+    """El store NO debe escribir nada a disco."""
+    monkeypatch.chdir(tmp_path)
+    agent, _ = _approval_scenario(monkeypatch, ["siempre"])
+    agent.session_permissions.revoke_all()
+    assert list(tmp_path.rglob("*")) == [], "no debe persistir nada en disco"
+
+
+def test_session_permissions_listing_has_entries(monkeypatch):
+    """items() expone la lista para /permissions."""
+    agent, _ = _approval_scenario(monkeypatch, ["siempre"])
+    items = agent.session_permissions.items()
+    assert ("bash", "rm") in items

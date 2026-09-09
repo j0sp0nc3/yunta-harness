@@ -48,6 +48,38 @@ class Spinner:
             sys.stdout.flush()
 
 
+class SessionPermissions:
+    """Permisos persistentes DURANTE la sesión (solo memoria, nunca disco).
+    Patrón: (tool, primer token del comando o path). 'siempre' al aprobar
+    registra; un patrón distinto vuelve a preguntar."""
+
+    def __init__(self):
+        self._granted: set[tuple[str, str]] = set()
+
+    @staticmethod
+    def _pattern(tool: str, raw: str) -> tuple[str, str]:
+        target = raw.strip()
+        try:
+            args = json.loads(raw or "{}")
+            target = args.get("command") or args.get("path") or raw
+        except (json.JSONDecodeError, AttributeError):
+            pass
+        token = target.strip().split()[0] if target.strip() else ""
+        return (tool, token)
+
+    def grant(self, tool: str, raw: str) -> None:
+        self._granted.add(self._pattern(tool, raw))
+
+    def allowed(self, tool: str, raw: str) -> bool:
+        return self._pattern(tool, raw) in self._granted
+
+    def revoke_all(self) -> None:
+        self._granted.clear()
+
+    def items(self) -> list[tuple[str, str]]:
+        return sorted(self._granted)
+
+
 class Agent:
     def __init__(
         self,
@@ -58,6 +90,7 @@ class Agent:
         confirm=None,
         tools: list | None = None,
         auto_save: bool = True,
+        session_permissions: SessionPermissions | None = None,
         initial_messages: list[Message] | None = None,
         initial_usage: Usage | None = None,
     ):
@@ -67,6 +100,7 @@ class Agent:
         self.max_turns = max_turns
         self.confirm = confirm
         self.auto_save = auto_save
+        self.session_permissions = session_permissions or SessionPermissions()
         self.messages: list[Message] = list(initial_messages) if initial_messages else []
         self._tools_subset = list(tools) if tools is not None else None
         self.usage = initial_usage if initial_usage else Usage()
@@ -235,7 +269,7 @@ class Agent:
 
         detail = self._tool_detail(name, raw_input)
         print(f"[tool] {name} {raw_input}")
-        if tool.requires_approval and not self._approve(name, detail):
+        if tool.requires_approval and not self._approve(name, detail, raw_input):
             self.usage.tool_errors += 1
             return "user denied this tool call", True
 
@@ -295,16 +329,23 @@ class Agent:
         )
         return "".join(diff)
 
-    def _approve(self, name: str, detail: str = "") -> bool:
+    def _approve(self, name: str, detail: str = "", raw_input: str = "") -> bool:
         if self.confirm is not None:
             return self.confirm(name, detail)
+
+        if raw_input and self.session_permissions.allowed(name, raw_input):
+            return True
 
         if detail:
             print(detail, end="")
 
         while True:
-            ans = input(f"Aprobar {name}? [s/n]: ").strip().lower()
+            ans = input(f"Aprobar {name}? [s/siempre/n]: ").strip().lower()
             if ans in ("s", "si", "y", "yes"):
+                return True
+            if ans in ("siempre", "always"):
+                if raw_input:
+                    self.session_permissions.grant(name, raw_input)
                 return True
             if ans in ("n", "no"):
                 return False
