@@ -7,6 +7,7 @@ from .compact import SlidingWindow
 from .feedback import FeedbackStore
 from .governance import run_check
 from .init import run_init
+from .server_mcp import serve_stdio
 from .session import clear_session, load_session
 from .mcp import load_mcp_servers
 from .provider import LiteLLMProvider
@@ -57,7 +58,7 @@ def load_system_prompt(feedback: FeedbackStore | None = None) -> str:
 
 
 def print_version():
-    print("yunta v1.0.9")
+    print("yunta v1.1.0")
 
 
 def print_help():
@@ -67,6 +68,7 @@ Harness de agente de código para Spec-Driven Development (SDD), agnóstico al m
 
 Comandos de Terminal (CLI):
   yunta                        Inicia la sesión interactiva REPL
+  yunta serve-mcp, mcp         Inicia el servidor MCP local en stdio (para Claude Desktop, Cursor)
   yunta --resume, -r           Reanuda la sesión previa guardada en .yunta/session_state.json
   yunta check [ruta] [--json]  Auditoría local de gobernanza SDD ($0 en tokens, instantáneo)
   yunta "tu instrucción"       Ejecución directa single-shot (ej. yunta "revisa los tests")
@@ -113,6 +115,11 @@ def main():
         if arg_lower in ("--version", "-v", "version"):
             print_version()
             return
+
+    # Despacho de servidor MCP: `yunta serve-mcp` o `yunta mcp`
+    if len(sys.argv) > 1 and sys.argv[1].lower() in ("serve-mcp", "mcp"):
+        serve_stdio()
+        return
 
     # Despacho de comando `yunta check [ruta] [--json] [--tests]`
     if len(sys.argv) > 1 and sys.argv[1].lower() == "check":

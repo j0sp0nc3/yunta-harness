@@ -3,7 +3,7 @@
 Plan de la iniciativa y su estado. Se comparte junto con el código para que
 cualquier persona, IDE o modelo sepa hacia dónde va el proyecto y qué falta.
 
-Estado actual: **v1.0.5 — Publicado en PyPI** (fases 1-8, backlog fundacional y roadmap E1-E8, E10, E12 completados). Actualizar este archivo al
+Estado actual: **v1.1.0 — Backlog v2 Cerrado al 100%** (fases 1-8, backlog fundacional y roadmap E1-E8, E10, E12 completados). Actualizar este archivo al
 cambiar de fase, junto con `CHANGELOG.md`.
 
 ## Roadmap de evolución (post-backlog)
@@ -123,13 +123,13 @@ la misma ronda.
 
 ---
 
-### ⏳ Iniciativas Pendientes en Backlog v2 (Por Priorizar):
+### ✅ Iniciativas de Backlog v2 (100% Completadas):
 
 - **V2-1 ✅ (v1.0.9) Modo gobernanza (`yunta check`)**: Comando CLI ligero y determinista ($0 en tokens) que audita un repositorio contra su `SPEC.md`, `PLAN.md` y `AGENTS.md`, estado de Git y suite de tests. Soporta salida `--json` para IDEs externos y CI/CD.
 - **V2-2 ✅ (v1.0.9) Sesiones resumibles (`yunta --resume` / `-r`)**: Persistencia atómica de mensajes y telemetría en `.yunta/session_state.json` con auto-guardado continuo para tolerar interrupciones por cuota o cortes de red.
 - **V2-4 ✅ (v1.0.8) Tool `tree` / `list_dir` con presupuesto de tokens**: Herramienta nativa para inspección estructurada del árbol de directorios (respetando `.gitignore`, reportando tamaños y omitiendo binarios) para que los agentes exploren repositorios sin gastar turnos leyendo archivos ciegamente.
 - **V2-7 ✅ (v1.0.8) Regla canónica de interoperabilidad en `AGENTS.md`**: Plantilla formal de regla vinculante para que IDEs externos deleguen consultas y tareas en `yunta` CLI antes de generar código con sus propios LLMs.
-- **V2-5 Modo servidor MCP de Yunta**: Exponer las herramientas y guardas de Yunta (`str_replace`, `read_file`, `list_dir`, `undo`) como un servidor MCP local para que IDEs como Claude Desktop, Cursor o Windsurf consuman el harness directamente vía protocolo estandarizado.
+- **V2-5 ✅ (v1.1.0) Modo servidor MCP de Yunta (`yunta serve-mcp`, `mcp`)**: Exposición nativa del catálogo de herramientas de Yunta como servidor MCP stdio (JSON-RPC 2.0) compatible con Claude Desktop, Cursor y Windsurf.
 
 ## Reglas que gobiernan el plan
 

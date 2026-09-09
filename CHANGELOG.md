@@ -477,6 +477,20 @@ publicación).
 
 ---
 
+---
+
+## [1.1.0] — 2026-09-08
+
+### Agregado
+- **V2-5 — Modo Servidor MCP de Yunta (`yunta serve-mcp`, `yunta mcp`) (`server_mcp.py`, `cli.py`)**:
+  - Implementación completa del protocolo estándar Model Context Protocol (versión `2024-11-05`) sobre `stdio` mediante JSON-RPC 2.0.
+  - Exposición de todo el catálogo blindado de herramientas de Yunta (`read_file`, `write_file`, `str_replace`, `list_dir`, `bash`) con sus correspondientes esquemas JSON Schema (`inputSchema`).
+  - Permite a IDEs y clientes MCP modernos (Claude Desktop, Cursor, Windsurf, Claude Code, Antigravity) conectarse a Yunta directamente vía `stdio` para ejecutar herramientas deterministas con control de presupuesto y paginación.
+  - Redirección estricta de telemetría y logs a `sys.stderr` para garantizar pureza en el canal de mensajes `sys.stdout`.
+  - Despacho CLI ultrarrápido desde `yunta serve-mcp` o el alias `yunta mcp` sin requerir clave de API.
+  - 8 nuevas pruebas unitarias y de integración end-to-end (`MCPClient` conectándose a `yunta serve-mcp`) en `tests/test_server_mcp.py`.
+  - **Cierre formal del Backlog v2 al 100%**: Suite ampliada a **99 pruebas pasando (100% PASS)**.
+
 ## [1.0.9] — 2026-09-08
 
 ### Agregado
