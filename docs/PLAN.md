@@ -126,10 +126,10 @@ la misma ronda.
 ### ⏳ Iniciativas Pendientes en Backlog v2 (Por Priorizar):
 
 - **V2-1 Modo gobernanza (`yunta check`)**: Comando CLI ligero que audita un repositorio contra su `SPEC.md`, `PLAN.md` y `AGENTS.md` (tests verdes, alcance respetado, fases cerradas) sin ejecutar código. Permite usar a Yunta como linterna/linter de gobernanza desde cualquier IDE externo.
-- **V2-4 Tool `tree` / `list_dir` con presupuesto de tokens**: Herramienta nativa para inspección estructurada del árbol de directorios (respetando `.gitignore`, reportando tamaños y omitiendo binarios) para que los agentes exploren repositorios sin gastar turnos leyendo archivos ciegamente.
+- **V2-4 ✅ (v1.0.8) Tool `tree` / `list_dir` con presupuesto de tokens**: Herramienta nativa para inspección estructurada del árbol de directorios (respetando `.gitignore`, reportando tamaños y omitiendo binarios) para que los agentes exploren repositorios sin gastar turnos leyendo archivos ciegamente.
 - **V2-2 Sesiones resumibles ante interrupciones de cuota (Checkpoint en disco)**: Guardar el snapshot del historial en `.yunta/session_state.json` para que, si una sesión se interrumpe abruptamente por corte de luz o cuota de API, pueda retomarse con `yunta --resume`.
 - **V2-5 Modo servidor MCP de Yunta**: Exponer las herramientas y guardas de Yunta (`str_replace`, `read_file`, `undo`) como un servidor MCP local para que IDEs como Claude Desktop, Cursor o Windsurf consuman el harness directamente vía protocolo estandarizado.
-- **V2-7 Regla canónica de interoperabilidad en `AGENTS.md`**: Plantilla formal de regla vinculante para que IDEs externos deleguen consultas y tareas en `yunta` CLI antes de generar código con sus propios LLMs.
+- **V2-7 ✅ (v1.0.8) Regla canónica de interoperabilidad en `AGENTS.md`**: Plantilla formal de regla vinculante para que IDEs externos deleguen consultas y tareas en `yunta` CLI antes de generar código con sus propios LLMs.
 
 ## Reglas que gobiernan el plan
 

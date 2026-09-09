@@ -475,6 +475,20 @@ publicación).
 
 ---
 
+## [1.0.8] — 2026-09-08
+
+### Agregado
+- **V2-4 — Herramienta Nativa `list_dir` con Presupuesto de Tokens (`files.py`)**:
+  - Inspección estructurada de directorios en árbol compacto con tamaños legibles (`B`, `KB`, `MB`).
+  - Filtrado automático de directorios pesados (`.git`, `node_modules`, `__pycache__`, `.venv`, `.pytest_cache`, `.gemini`, `.zcode`).
+  - Control de recursión (`max_depth`, default: 2) y truncamiento inteligente de presupuesto (`max_files`, default: 80).
+  - Formato de conectores ASCII universal (`|-- `, `\-- `) a prueba de terminales Windows cp1252.
+- **V2-7 — Protocolo Canónico de Interoperabilidad en `AGENTS.md` (`init.py`)**:
+  - Incorporación formal de la regla de interoperabilidad para IDEs externos (Claude, Cursor, Copilot) en la plantilla `generate_agents()`.
+  - Establece a `yunta` CLI como el único ejecutor y oráculo oficial del repositorio, priorizándolo sobre el LLM interno del IDE y habilitando consultas de solo lectura (Q&A) sin forzar modificaciones.
+
+---
+
 ## [1.0.7] — 2026-09-08
 
 ### Corregido & Mejorado (Auditoría Dogfooding P1-P5)

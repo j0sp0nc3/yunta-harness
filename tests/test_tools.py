@@ -113,3 +113,36 @@ def test_read_file_size_cap_and_offset_limit(tmp_path):
     assert "linea 2001\n" in res_part2
     assert "linea 2500\n" in res_part2
     assert "truncado" not in res_part2
+
+
+def test_list_dir_structure_and_sizes(tmp_path):
+    import json
+    from yunta.tools.files import list_dir
+
+    sub = tmp_path / "subcarpeta"
+    sub.mkdir()
+    (sub / "modulo.py").write_text("print('hello')", encoding="utf-8")
+    (tmp_path / "archivo.txt").write_text("contenido simple", encoding="utf-8")
+    
+    # Crear carpeta ignorada (.git)
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "config").write_text("repo", encoding="utf-8")
+
+    tree = list_dir(json.dumps({"path": str(tmp_path)}))
+    assert "subcarpeta/" in tree
+    assert "modulo.py" in tree
+    assert "archivo.txt" in tree
+    assert ".git" not in tree
+
+
+def test_list_dir_max_files_truncation(tmp_path):
+    import json
+    from yunta.tools.files import list_dir
+
+    for i in range(10):
+        (tmp_path / f"archivo_{i}.txt").write_text("x", encoding="utf-8")
+
+    tree = list_dir(json.dumps({"path": str(tmp_path), "max_files": 4}))
+    assert "archivo_0.txt" in tree
+    assert "truncado" in tree

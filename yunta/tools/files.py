@@ -107,3 +107,84 @@ def str_replace(raw: str) -> str:
     new_content = content.replace(old_str, new_str, 1)
     p.write_text(new_content, encoding="utf-8")
     return f"successfully replaced in {path}"
+
+
+@registry.register(
+    "list_dir",
+    "Lista la estructura de un directorio en formato de árbol compacto con tamaños de archivo. Ignora carpetas pesadas (.git, node_modules, etc.).",
+    {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "Ruta del directorio a inspeccionar (opcional, por defecto '.')"},
+            "max_depth": {"type": "integer", "description": "Profundidad máxima de recursión (opcional, por defecto 2)"},
+            "max_files": {"type": "integer", "description": "Límite máximo de archivos a listar (opcional, por defecto 80)"},
+        },
+        "required": [],
+    },
+)
+def list_dir(raw: str) -> str:
+    args = _parse(raw)
+    base_path = Path(args.get("path") or ".")
+    max_depth = int(args.get("max_depth") or 2)
+    max_files = int(args.get("max_files") or 80)
+
+    if not base_path.exists():
+        raise FileNotFoundError(f"El directorio '{base_path}' no existe")
+    if not base_path.is_dir():
+        raise NotADirectoryError(f"'{base_path}' no es un directorio")
+
+    ignored_dirs = {
+        ".git", "node_modules", "__pycache__", ".pytest_cache",
+        ".venv", "venv", "env", "dist", "build", ".idea", ".vscode",
+        ".zcode", ".gemini", ".next", ".nuxt", "coverage"
+    }
+
+    results = []
+    file_count = 0
+    truncated = False
+
+    def walk(current_dir: Path, depth: int, prefix: str):
+        nonlocal file_count, truncated
+        if depth > max_depth or truncated:
+            return
+
+        try:
+            entries = sorted(current_dir.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower()))
+        except PermissionError:
+            results.append(f"{prefix}[Acceso denegado]")
+            return
+
+        for idx, entry in enumerate(entries):
+            if file_count >= max_files:
+                truncated = True
+                return
+
+            name = entry.name
+            if name in ignored_dirs or name.startswith(".tmp"):
+                continue
+
+            is_last = (idx == len(entries) - 1)
+            connector = "\\-- " if is_last else "|-- "
+            child_prefix = prefix + ("    " if is_last else "|   ")
+
+            if entry.is_dir():
+                results.append(f"{prefix}{connector}{name}/")
+                walk(entry, depth + 1, child_prefix)
+            else:
+                file_count += 1
+                size = entry.stat().st_size if entry.exists() else 0
+                if size >= 1024 * 1024:
+                    size_str = f"{size / (1024*1024):.1f} MB"
+                elif size >= 1024:
+                    size_str = f"{size / 1024:.1f} KB"
+                else:
+                    size_str = f"{size} B"
+                results.append(f"{prefix}{connector}{name} ({size_str})")
+
+    results.append(f"{base_path.resolve().name}/")
+    walk(base_path, 1, "")
+
+    if truncated:
+        results.append(f"\n[... truncado: se alcanzó el límite de {max_files} archivos. Usa max_files o path para acotar la búsqueda ...]")
+
+    return "\n".join(results)

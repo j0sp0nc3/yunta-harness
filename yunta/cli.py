@@ -55,7 +55,7 @@ def load_system_prompt(feedback: FeedbackStore | None = None) -> str:
 
 
 def print_version():
-    print("yunta v1.0.7")
+    print("yunta v1.0.8")
 
 
 def print_help():

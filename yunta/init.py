@@ -117,6 +117,12 @@ agente de código (Yunta, Claude, Cursor, Copilot) que trabaje en este proyecto.
 2. **TDD / Verificación Obligatoria:** Todo cambio debe acompañarse de su prueba o comando de verificación. Nunca declares una tarea terminada sin haberla verificado con una tool real.
 3. **Mínimo Código Necesario:** No agregues frameworks pesados ni dependencias innecesarias si la biblioteca estándar o una herramienta simple resuelve el problema.
 4. **Frontera de Ejecución:** Respeta las fases del `PLAN.md`. Resuelve únicamente la tarea solicitada en la fase activa.
+
+## 4. Protocolo Obligatorio para IDEs y Agentes Externos (Claude, Cursor, Copilot)
+1. **Yunta CLI como Único Ejecutor y Oráculo:** Cualquier agente o IDE externo debe interactuar con el proyecto invocando a Yunta vía terminal: `yunta "tu instrucción"`.
+2. **Prioridad sobre el LLM Interno:** Antes de asumir reglas o generar código por tu cuenta, delega la tarea en `yunta` para que sea procesada bajo SPEC, PLAN y AGENTS.
+3. **Consultas de Solo Lectura (Q&A):** Para preguntas arquitectónicas o de inspección ("¿dónde está X?", "¿cómo funciona Y?"), invoca `yunta "pregunta"`. Yunta responderá fundamentándose en el código fuente sin realizar modificaciones sobre el proyecto.
+4. **Modificaciones Quirúrgicas:** Todo cambio de código debe realizarse mediante ediciones precisas y validarse con la suite de tests antes de finalizar.
 """
 
 
