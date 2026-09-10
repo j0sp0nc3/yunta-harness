@@ -1,4 +1,6 @@
 import json as _json
+import os
+import subprocess
 import sys
 
 sys.path.insert(0, ".")
@@ -236,3 +238,47 @@ def test_workspace_boundary_check(tmp_path, monkeypatch):
     with pytest.raises(ValueError) as exc:
         write_file(_json.dumps({"path": traversal_path, "content": "malintencionado"}))
     assert "resuelve fuera del directorio del proyecto" in str(exc.value)
+
+
+# --- W3: normalización de '&&' bajo PowerShell (docs/PLAN.md BUGS W1-W5) ---
+
+
+class _FakeRun:
+    """Reemplaza subprocess.run para capturar el comando recibido sin ejecutar nada."""
+
+    recibido = None
+
+    def __call__(self, command, **kwargs):
+        type(self).recibido = command
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+
+
+fake_run_capturando_comando = _FakeRun()
+
+
+def test_bash_normaliza_and_en_powershell(monkeypatch):
+    """Con os.name=='nt' simulado y PSModulePath presente (PowerShell), '&&' se
+    sustituye por ';' porque PowerShell no lo soporta (cmd.exe sí)."""
+    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.setenv("PSModulePath", "C:\\Program Files\\WindowsPowerShell\\Modules")
+    monkeypatch.setattr(subprocess, "run", fake_run_capturando_comando)
+    bash('{"command": "echo a && echo b"}')
+    assert fake_run_capturando_comando.recibido == "echo a ; echo b"
+
+
+def test_bash_sin_powershell_mantiene_and(monkeypatch):
+    """En cmd.exe (sin PSModulePath) u otro sistema, el comando no se toca."""
+    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.delenv("PSModulePath", raising=False)
+    monkeypatch.setattr(subprocess, "run", fake_run_capturando_comando)
+    bash('{"command": "echo a && echo b"}')
+    assert fake_run_capturando_comando.recibido == "echo a && echo b"
+
+
+def test_bash_normalizacion_no_afecta_posix(monkeypatch):
+    """En POSIX (os.name != 'nt') nunca se normaliza, haya o no PSModulePath."""
+    monkeypatch.setattr(os, "name", "posix")
+    monkeypatch.setenv("PSModulePath", "/opt/microsoft/powershell/7/Modules")
+    monkeypatch.setattr(subprocess, "run", fake_run_capturando_comando)
+    bash('{"command": "echo a && echo b"}')
+    assert fake_run_capturando_comando.recibido == "echo a && echo b"

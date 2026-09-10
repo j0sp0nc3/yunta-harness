@@ -133,6 +133,18 @@ def _compact_output(output: str, exit_code: int) -> str:
     return output[:20_000]
 
 
+def _normalize_windows_command(command: str) -> str:
+    """W3 (docs/PLAN.md BUGS W1-W5): en Windows la shell puede ser PowerShell,
+    que no soporta `&&`. cmd.exe sí lo soporta, así que se sustituye `&&`→`;`
+    únicamente cuando se detecta PowerShell (indicador: la variable de entorno
+    PSModulePath). En otros sistemas el comando no se toca."""
+    if os.name != "nt" or "&&" not in command:
+        return command
+    if os.environ.get("PSModulePath"):
+        return command.replace("&&", ";")
+    return command
+
+
 @registry.register(
     "bash",
     "Ejecuta un comando en el shell del proyecto y devuelve stdout+stderr. Máximo 60 segundos.",
@@ -152,6 +164,7 @@ def bash(raw: str) -> str:
     blocked = _check_blocklist(command)
     if blocked:
         raise ValueError(f"{blocked} {MSG_SUFFIX}")
+    command = _normalize_windows_command(command)
     proc = subprocess.run(
         command,
         shell=True,
