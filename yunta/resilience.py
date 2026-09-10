@@ -15,8 +15,15 @@ _QUOTA_MARKERS = (
     "usage limit",
     "quota",
     "insufficient balance",
+    "insufficient_quota",
     "resource_exhausted",
     "429",
+    "401",
+    "403",
+    "authenticationerror",
+    "invalid_api_key",
+    "unauthorized",
+    "credit",
     "exceeded your current quota",
 )
 

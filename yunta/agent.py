@@ -164,8 +164,10 @@ class Agent:
                                 "",
                             )
                             save_task_state(last_user, summary, f"{type(prov_err).__name__}: {prov_err}")
+                            if self.auto_save:
+                                self._save_session_state()
                             raise QuotaExhausted(
-                                f"cuota del proveedor agotada; estado de la tarea guardado en {save_task_state.__module__} (.yunta/estado-de-tarea.md)"
+                                "cuota del proveedor agotada; estado de la tarea guardado en .yunta/estado-de-tarea.md"
                             ) from prov_err
                         raise
                 finally:

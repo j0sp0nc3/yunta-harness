@@ -8,6 +8,7 @@ from .feedback import FeedbackStore
 from .governance import run_check
 from .ide import ide_init
 from .init import run_init
+from .resilience import QuotaExhausted
 from .sandbox import cleanup_sandbox, create_sandbox
 from .server_mcp import serve_stdio
 from .session import clear_session, load_session
@@ -197,6 +198,8 @@ def main():
             agent.send(prompt)
         except KeyboardInterrupt:
             print()
+        except QuotaExhausted as e:
+            print(f"\n⚠️ {e}\n(puedes reanudar en cualquier momento con `yunta --resume` cuando se restablezca la cuota del proveedor)\n")
         return
 
 
@@ -355,6 +358,8 @@ def main():
                 agent.send(prompt)
             except KeyboardInterrupt:
                 print()
+            except QuotaExhausted as e:
+                print(f"\n⚠️ {e}\n(puedes reanudar en cualquier momento con `yunta --resume` cuando se restablezca la cuota del proveedor)\n")
             except SystemExit:
                 raise
             except Exception as e:

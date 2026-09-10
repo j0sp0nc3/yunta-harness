@@ -223,3 +223,16 @@ def test_blocklist_extra_por_env(tmp_path, monkeypatch):
 def test_comando_normal_no_bloqueado():
     out = _bash_cmd("echo hola")
     assert "hola" in out
+
+
+def test_workspace_boundary_check(tmp_path, monkeypatch):
+    """Prueba que acceder a rutas relativas con '..' fuera del directorio del proyecto falle por seguridad (Workspace Boundary Check)."""
+    monkeypatch.chdir(tmp_path)
+    traversal_path = "../../fuera_de_workspace.txt"
+    with pytest.raises(ValueError) as exc:
+        read_file(_json.dumps({"path": traversal_path}))
+    assert "resuelve fuera del directorio del proyecto" in str(exc.value)
+
+    with pytest.raises(ValueError) as exc:
+        write_file(_json.dumps({"path": traversal_path, "content": "malintencionado"}))
+    assert "resuelve fuera del directorio del proyecto" in str(exc.value)

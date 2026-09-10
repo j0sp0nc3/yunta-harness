@@ -3,6 +3,24 @@ from pathlib import Path
 from . import _parse, registry
 
 
+def _check_boundary(path: str) -> Path:
+    """Garantiza que la ruta resuelva sin escapar del directorio del proyecto mediante '..' (Path Traversal Prevention)."""
+    if not path:
+        raise ValueError("path es obligatorio")
+    cwd = Path.cwd().resolve()
+    p = Path(path)
+    if p.is_absolute():
+        return p.resolve()
+    target = (cwd / p).resolve()
+    try:
+        target.relative_to(cwd)
+    except ValueError:
+        raise ValueError(
+            f"acceso denegado por seguridad: la ruta '{path}' resuelve fuera del directorio del proyecto ({cwd})"
+        )
+    return target
+
+
 @registry.register(
     "read_file",
     "Lee un archivo del proyecto y devuelve su contenido. Soporta offset y limit opcionales para archivos extensos.",
@@ -19,7 +37,7 @@ from . import _parse, registry
 def read_file(raw: str) -> str:
     args = _parse(raw)
     path = args.get("path", "")
-    p = Path(path)
+    p = _check_boundary(path)
     content = p.read_text(encoding="utf-8", errors="replace")
 
     offset = args.get("offset")
@@ -62,9 +80,9 @@ def write_file(raw: str) -> str:
         raise ValueError("path es obligatorio")
     if not isinstance(content, str):
         raise ValueError("content debe ser un string")
+    p = _check_boundary(path)
     _validate_content(path, content)
 
-    p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_name(p.name + ".tmp-yunta")
     try:
@@ -159,7 +177,7 @@ def str_replace(raw: str) -> str:
     old_str = args["old_str"]
     new_str = args["new_str"]
 
-    p = Path(path)
+    p = _check_boundary(path)
     if not p.exists():
         raise FileNotFoundError(f"El archivo '{path}' no existe")
 

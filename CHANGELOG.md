@@ -6,6 +6,21 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [1.2.1] — 2026-09-09
+
+### Agregado & Mejorado
+- **P7 — Degradación Progresiva ante Agotamiento de Cuota (`RateLimitError` / `QuotaExhausted`)**:
+  - `yunta/resilience.py`: ampliación de marcadores de cuota e identificación de excepciones de autenticación y límites de API (`401`, `403`, `429`, `insufficient_quota`, `resource_exhausted`).
+  - `yunta/agent.py` & `yunta/cli.py`: auto-guardado defensivo de `.yunta/estado-de-tarea.md` (resumen de tarea hecha y pasos pendientes) y sincronización con `.yunta/session_state.json` para permitir la reanudación transparente mediante `yunta --resume` sin perder el contexto ni el trabajo realizado.
+  - `tests/test_quota_graceful.py`: suite de 5 pruebas unitarias verificando captura de cuota, aviso en terminal y guardado de sesión.
+- **P8 — Presupuesto de Sesión y Control de Tokens (`SessionBudgetManager`)**:
+  - `yunta/budget.py`: nuevo gestor de presupuesto de tokens para prevenir consumos accidentales desmedidos. Emite advertencias en consola al alcanzar el 70% del presupuesto de la sesión y ejecuta un guardado de estado con salida limpia al 90%.
+  - `yunta/agent.py`: verificación automática de presupuesto en cada turno del bucle del agente.
+  - `tests/test_session_budget.py`: suite de 6 pruebas unitarias verificando umbrales, advertencias y guardado automático.
+- **Seguridad de Archivos — Verificación de Frontera del Workspace (*Workspace Boundary Check*)**:
+  - `yunta/tools/files.py`: función `_check_boundary()` aplicada a `read_file`, `write_file` y `str_replace` para prevenir accesos no autorizados mediante Path Traversal (`../`) fuera del directorio de trabajo actual (`Path.cwd()`), preservando rutas absolutas temporales en entornos de prueba.
+  - `tests/test_tools.py`: 4 pruebas unitarias adicionales validando el rechazo de accesos fuera de la frontera.
+
 ---
 
 ## [1.2.0] — 2026-09-09
