@@ -79,4 +79,4 @@ def test_cli_version_flag(monkeypatch, capsys):
     cli.main()
 
     captured = capsys.readouterr().out
-    assert "yunta v1.1.0" in captured
+    assert "yunta v2.0.0" in captured
