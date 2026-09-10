@@ -1,12 +1,13 @@
 """Subagente de investigación read-only: tool `delegate_research`.
 
 Crea un `Agent` interno cuyo contexto está restringido a las tools de lectura
-(`read_file`, `grep`, `glob`) y le delega la tarea indicada. El provider se
-inyecta vía `set_provider(p)` desde `yunta.cli`; si falta, la tool falla con
-un error claro (sin proveedores por defecto ni fallbacks ocultos).
+(`read_file`, `grep`, `glob`) y le delega la tarea indicada.
+Soporta `LLM_FAST_MODEL` en entorno para usar un modelo ultrarrápido/económico en investigaciones.
 """
 
+import os
 from ..agent import Agent
+from ..provider import LiteLLMProvider
 from . import _parse, registry
 
 _provider = None
@@ -40,12 +41,24 @@ def delegate_research(raw: str) -> str:
         raise ValueError("task es obligatorio")
     if _provider is None:
         raise RuntimeError("delegate no configurado: falta set_provider")
+
+    system_prompt = (
+        "Eres un subagente de investigación READ-ONLY: usa solo read_file, "
+        "grep y glob para investigar y responde con hallazgos concretos y rutas."
+    )
+
+    fast_model = os.environ.get("LLM_FAST_MODEL")
+    if fast_model:
+        try:
+            sub_provider = LiteLLMProvider(model=fast_model, system=system_prompt)
+        except Exception:
+            sub_provider = _provider
+    else:
+        sub_provider = _provider
+
     subagent = Agent(
-        provider=_provider,
-        system=(
-            "Eres un subagente de investigación READ-ONLY: usa solo read_file, "
-            "grep y glob para investigar y responde con hallazgos concretos y rutas."
-        ),
+        provider=sub_provider,
+        system=system_prompt,
         max_turns=15,
         tools=[
             registry.get("read_file"),

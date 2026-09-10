@@ -6,6 +6,21 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.0.0] — 2026-09-09
+
+### Agregado & Mejorado
+- **v2.0 — Git Pre-Commit Hooks SDD (`yunta hooks` / `yunta install-hooks`)**:
+  - `yunta/hooks.py`: módulo gestor e instalador de hooks pre-commit para ejecutar la auditoría determinista local `yunta check --tests` automáticamente antes de cada `git commit`, impidiendo commits con código roto o especificaciones desobedecidas.
+  - `yunta/cli.py`: comandos `yunta hooks`, `yunta install-hooks` y `yunta uninstall-hooks`.
+  - `tests/test_hooks.py`: suite de pruebas unitarias.
+- **v2.0 — Multi-Model Routing por Especialización de Subagente (`LLM_FAST_MODEL`)**:
+  - `yunta/tools/delegate.py`: soporte para variable de entorno `LLM_FAST_MODEL` asignando modelos ultra-rápidos y económicos (ej. `gpt-4o-mini`, `gemini-2.5-flash`) a subagentes de investigación de solo lectura.
+- **v2.0 — Protocolo Completo MCP Resources & Prompts (`server_mcp.py`)**:
+  - Exposición nativa de los artefactos de especificación `SPEC.md`, `PLAN.md`, `AGENTS.md` como recursos MCP (`resource://yunta/spec`, `resource://yunta/plan`, `resource://yunta/agents`) y plantillas de prompt SDD (`yunta/sdd_init`, `yunta/review_code`).
+  - `tests/test_server_mcp.py`: pruebas unitarias de recursos y prompts vía JSON-RPC.
+
+---
+
 ## [1.3.0] — 2026-09-09
 
 ### Agregado & Mejorado

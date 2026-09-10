@@ -6,6 +6,7 @@ from .agent import Agent
 from .compact import SlidingWindow, TokenBudgetCompactor
 from .feedback import FeedbackStore
 from .governance import run_check
+from .hooks import install_git_hooks, uninstall_git_hooks
 from .ide import ide_init
 from .init import run_init
 from .resilience import QuotaExhausted
@@ -155,6 +156,14 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1].lower() == "init":
         idea = " ".join(sys.argv[2:]).strip()
         run_init(idea)
+        return
+
+    # Despacho de comando `yunta hooks` / `yunta install-hooks` / `yunta uninstall-hooks`
+    if len(sys.argv) > 1 and sys.argv[1].lower() in ("hooks", "install-hooks", "uninstall-hooks"):
+        if sys.argv[1].lower() == "uninstall-hooks":
+            uninstall_git_hooks()
+        else:
+            install_git_hooks()
         return
 
     feedback = FeedbackStore()

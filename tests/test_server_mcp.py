@@ -23,8 +23,10 @@ def test_mcp_server_initialize():
     result = resp["result"]
     assert result["protocolVersion"] == "2024-11-05"
     assert result["serverInfo"]["name"] == "yunta"
-    assert result["serverInfo"]["version"] == "1.3.0"
+    assert result["serverInfo"]["version"] == "2.0.0"
     assert "tools" in result["capabilities"]
+    assert "resources" in result["capabilities"]
+    assert "prompts" in result["capabilities"]
 
 
 def test_mcp_server_initialized_notification():
@@ -140,6 +142,25 @@ def test_mcp_server_permissions_and_approve():
     assert len(resp_list2["result"]["patterns"]) > 0
 
 
+def test_mcp_server_resources_and_prompts():
+    # Test resources/list
+    resp_res = handle_rpc_message({"jsonrpc": "2.0", "id": 20, "method": "resources/list"})
+    assert resp_res["id"] == 20
+    assert "resources" in resp_res["result"]
+
+    # Test prompts/list
+    resp_prompt = handle_rpc_message({"jsonrpc": "2.0", "id": 21, "method": "prompts/list"})
+    assert resp_prompt["id"] == 21
+    prompts = resp_prompt["result"]["prompts"]
+    prompt_names = {p["name"] for p in prompts}
+    assert "yunta/sdd_init" in prompt_names
+
+    # Test prompts/get
+    resp_get = handle_rpc_message({"jsonrpc": "2.0", "id": 22, "method": "prompts/get", "params": {"name": "yunta/sdd_init"}})
+    assert resp_get["id"] == 22
+    assert "messages" in resp_get["result"]
+
+
 def test_mcp_client_server_integration():
     # Prueba end-to-end conectando MCPClient nativo de Yunta al servidor stdio
     client = MCPClient(
@@ -168,4 +189,5 @@ def test_mcp_client_server_integration():
         if client.proc and client.proc.poll() is None:
             client.proc.terminate()
             client.proc.wait(timeout=5)
+
 

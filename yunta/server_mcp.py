@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+from pathlib import Path
 from .agent import SessionPermissions
 from .tools import bash, files, registry, subtask, delegate  # noqa: F401 — asegura registro de herramientas
 
@@ -26,11 +27,13 @@ def handle_rpc_message(msg: dict) -> dict | None:
             "result": {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {
-                    "tools": {}
+                    "tools": {},
+                    "resources": {},
+                    "prompts": {},
                 },
                 "serverInfo": {
                     "name": "yunta",
-                    "version": "1.3.0"
+                    "version": "2.0.0"
                 }
             }
         }
@@ -56,6 +59,117 @@ def handle_rpc_message(msg: dict) -> dict | None:
             "result": {
                 "tools": tools_list
             }
+        }
+
+    elif method == "resources/list":
+        resources = []
+        for name in ("SPEC.md", "PLAN.md", "AGENTS.md"):
+            p = Path(name)
+            if p.exists():
+                resources.append({
+                    "uri": f"resource://yunta/{name.lower()}",
+                    "name": f"Yunta SDD {name}",
+                    "mimeType": "text/markdown",
+                    "description": f"Artefacto formal de especificación {name}"
+                })
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {"resources": resources}
+        }
+
+    elif method == "resources/read":
+        uri = params.get("uri", "")
+        file_map = {
+            "resource://yunta/spec.md": "SPEC.md",
+            "resource://yunta/spec": "SPEC.md",
+            "resource://yunta/plan.md": "PLAN.md",
+            "resource://yunta/plan": "PLAN.md",
+            "resource://yunta/agents.md": "AGENTS.md",
+            "resource://yunta/agents": "AGENTS.md",
+        }
+        target_name = file_map.get(uri.lower())
+        if target_name and Path(target_name).exists():
+            text_content = Path(target_name).read_text(encoding="utf-8", errors="replace")
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {
+                    "contents": [
+                        {
+                            "uri": uri,
+                            "mimeType": "text/markdown",
+                            "text": text_content
+                        }
+                    ]
+                }
+            }
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "error": {"code": -32602, "message": f"Recurso no encontrado: {uri}"}
+        }
+
+    elif method == "prompts/list":
+        prompts = [
+            {
+                "name": "yunta/sdd_init",
+                "description": "Plantilla de inicialización Spec-Driven Development",
+                "arguments": [{"name": "idea", "description": "Descripción de la idea o proyecto"}]
+            },
+            {
+                "name": "yunta/review_code",
+                "description": "Plantilla de revisión de código y tests SDD",
+                "arguments": []
+            }
+        ]
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {"prompts": prompts}
+        }
+
+    elif method == "prompts/get":
+        prompt_name = params.get("name", "")
+        if prompt_name == "yunta/sdd_init":
+            idea = params.get("arguments", {}).get("idea", "Idea general")
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {
+                    "description": "Inicialización SDD",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": {
+                                "type": "text",
+                                "text": f"Inicializa los 3 artefactos maestros SDD (SPEC.md, PLAN.md, AGENTS.md) para la idea: {idea}"
+                            }
+                        }
+                    ]
+                }
+            }
+        elif prompt_name == "yunta/review_code":
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {
+                    "description": "Revisión SDD",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": {
+                                "type": "text",
+                                "text": "Ejecuta yunta check --tests y reporta cualquier desvío de especificación o fallo de regresión."
+                            }
+                        }
+                    ]
+                }
+            }
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "error": {"code": -32602, "message": f"Prompt no encontrado: {prompt_name}"}
         }
 
     elif method == "yunta/permissions":
@@ -178,7 +292,7 @@ def serve_stdio():
         except Exception:
             pass
 
-    sys.stderr.write("[yunta-mcp] Servidor MCP Yunta v1.3.0 iniciado en stdio\n")
+    sys.stderr.write("[yunta-mcp] Servidor MCP Yunta v2.0.0 iniciado en stdio\n")
     sys.stderr.flush()
 
     for line in sys.stdin:
