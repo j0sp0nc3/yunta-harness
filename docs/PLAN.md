@@ -121,7 +121,7 @@ Un harness que pierde trabajo o deja archivos a medias no cumple su función.
   sesión completa incluida la tarea pendiente (ocurrió 2 veces). Fix: al
   capturar RateLimit/Authentication persistir .yunta/estado-de-tarea.md
   (hecho/pendiente/próximos pasos) + lección de feedback, cerrar ordenado.
-  *Estado: ⬜*
+  *Estado: ✅ v1.2.1 (5 tests)*
 - **P8 🟡 presupuesto de sesión invisible**: sesiones quemaron 200-270k
   tokens sin aviso. Fix: umbrales 70%/90% del presupuesto (extensión de
   TokenBudgetCompactor): aviso y cierre ordenado (P7) respectivamente.
@@ -131,6 +131,27 @@ Un harness que pierde trabajo o deja archivos a medias no cumple su función.
   subagente por lote (contexto limpio por subtarea). *Estado: ⬜*
 
 Orden: P6 → P7 → P8 → P9.
+
+
+## BUGS W1-W5 — casos de borde del binario CLI (feedback de uso real en Windows/IDEs)
+
+Regla fundamental del feedback: yunta es un CLI, no una biblioteca — toda
+interacción externa vía `yunta "instrucción"`, nunca `import yunta`.
+
+- **W1 UTF-8 en consolas Windows**: crash UnicodeEncodeError con emojis en
+  PowerShell/CMD (cp1252). Fix: reconfigure de stdout/stderr a UTF-8 al
+  arranque del CLI. *Estado: ⬜* (verificar: partial de v1.0.7 cubre stdout
+  del REPL; faltan rutas del single-shot)
+- **W2 Modo headless `--headless/-y`**: la CLI se bloquea esperando y/n en
+  pipelines/scripts. Fix: flag de auto-aprobación + salida determinista. *Estado: ⬜*
+- **W3 `&&` no válido en PowerShell**: normalizar `&&`→`;` al detectar
+  PowerShell en bash tool. *Estado: ⬜*
+- **W4 startup tax en cada invocación CLI**: flag `--light` que omite
+  contexto extenso (AGENTS/SPEC/PLAN) para tareas simples. *Estado: ⬜*
+  (parcial: V3-8 ya lo mide)
+- **W5 aislamiento de rutas (workspace boundary)**: validar que toda ruta
+  de tools resuelva dentro de cwd. *Estado: ⬜* (parcial: blocklist cubre
+  rm -rf fuera de cwd)
 
 ## Backlog v2 (Estado post-sesión 2026-09-08)
 
