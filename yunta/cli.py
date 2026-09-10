@@ -12,9 +12,10 @@ from .resilience import QuotaExhausted
 from .sandbox import cleanup_sandbox, create_sandbox
 from .server_mcp import serve_stdio
 from .session import clear_session, load_session
+from .json_server import serve_json_stdin
 from .mcp import load_mcp_servers
 from .provider import LiteLLMProvider
-from .tools import bash, delegate, files, memory, search  # noqa: F401 — registro vía decoradores
+from .tools import bash, delegate, files, memory, search, subtask  # noqa: F401 — registro vía decoradores
 
 SYSTEM_PROMPT = """Eres un ingeniero de software que programa en pareja a través del harness Yunta.
 Trabajas iterando: lees archivos, ejecutas comandos y editas código usando tus tools.
@@ -128,6 +129,11 @@ def main():
         serve_stdio()
         return
 
+    # Despacho de servidor JSONL: `yunta serve-json` o `yunta json`
+    if len(sys.argv) > 1 and sys.argv[1].lower() in ("serve-json", "json"):
+        serve_json_stdin()
+        return
+
     # Despacho de comando `yunta check [ruta] [--json] [--tests]`
     if len(sys.argv) > 1 and sys.argv[1].lower() == "check":
         as_json = "--json" in sys.argv
@@ -155,6 +161,7 @@ def main():
     system = load_system_prompt(feedback)
     provider = LiteLLMProvider(system=system)
     delegate.set_provider(provider)
+    subtask.set_provider(provider)
 
     max_messages = int(os.environ.get("YUNTA_MAX_MESSAGES", "40"))
     compactor = SlidingWindow(max_messages=max_messages)

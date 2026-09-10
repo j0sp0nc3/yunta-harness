@@ -1,6 +1,10 @@
 import json
+import os
 import sys
-from .tools import bash, files, registry  # noqa: F401 — asegura registro de herramientas
+from .agent import SessionPermissions
+from .tools import bash, files, registry, subtask, delegate  # noqa: F401 — asegura registro de herramientas
+
+_mcp_permissions = SessionPermissions()
 
 
 def handle_rpc_message(msg: dict) -> dict | None:
@@ -26,7 +30,7 @@ def handle_rpc_message(msg: dict) -> dict | None:
                 },
                 "serverInfo": {
                     "name": "yunta",
-                    "version": "1.1.0"
+                    "version": "1.3.0"
                 }
             }
         }
@@ -54,6 +58,38 @@ def handle_rpc_message(msg: dict) -> dict | None:
             }
         }
 
+    elif method == "yunta/permissions":
+        action = params.get("action", "list")
+        if action == "clear":
+            _mcp_permissions.revoke_all()
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {"status": "cleared", "patterns": []}
+            }
+        patterns = [f"{t}:{p}" for t, p in _mcp_permissions.items()]
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {"patterns": patterns}
+        }
+
+    elif method == "yunta/approve":
+        tool_name = params.get("name", "")
+        cmd_pattern = params.get("pattern", "")
+        if tool_name and cmd_pattern:
+            _mcp_permissions.grant(tool_name, cmd_pattern)
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {"status": "granted", "name": tool_name, "pattern": cmd_pattern}
+            }
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "error": {"code": -32602, "message": "name y pattern son requeridos"}
+        }
+
     elif method == "tools/call":
         tool_name = params.get("name", "")
         arguments = params.get("arguments", {})
@@ -74,6 +110,24 @@ def handle_rpc_message(msg: dict) -> dict | None:
             }
 
         raw_input = json.dumps(arguments) if isinstance(arguments, dict) else (arguments or "{}")
+        require_approval_env = os.environ.get("YUNTA_MCP_REQUIRE_APPROVAL", "0") == "1"
+
+        if tool.requires_approval and require_approval_env:
+            if not _mcp_permissions.allowed(tool_name, raw_input):
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": f"Aprobación denegada vía MCP: la herramienta '{tool_name}' requiere aprobación previa o registro en yunta/approve."
+                            }
+                        ],
+                        "isError": True
+                    }
+                }
+
         try:
             res = tool.fn(raw_input)
             return {
@@ -124,7 +178,7 @@ def serve_stdio():
         except Exception:
             pass
 
-    sys.stderr.write("[yunta-mcp] Servidor MCP Yunta v1.1.0 iniciado en stdio\n")
+    sys.stderr.write("[yunta-mcp] Servidor MCP Yunta v1.3.0 iniciado en stdio\n")
     sys.stderr.flush()
 
     for line in sys.stdin:

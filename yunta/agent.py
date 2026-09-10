@@ -95,6 +95,7 @@ class Agent:
         session_permissions: SessionPermissions | None = None,
         initial_messages: list[Message] | None = None,
         initial_usage: Usage | None = None,
+        on_text=None,
     ):
         self.provider = provider
         self.system = system
@@ -102,6 +103,7 @@ class Agent:
         self.max_turns = max_turns
         self.confirm = confirm
         self.auto_save = auto_save
+        self.on_text = on_text
         self.session_permissions = session_permissions or SessionPermissions()
         self.messages: list[Message] = list(initial_messages) if initial_messages else []
         self._tools_subset = list(tools) if tools is not None else None
@@ -261,7 +263,10 @@ class Agent:
         if self._spinner:
             self._spinner.stop()
             self._spinner = None
-        print(delta, end="", flush=True)
+        if self.on_text:
+            self.on_text(delta)
+        else:
+            print(delta, end="", flush=True)
         self._streamed = True
 
     def _take_snapshot(self, name: str, raw_input: str) -> None:

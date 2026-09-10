@@ -23,7 +23,7 @@ def test_mcp_server_initialize():
     result = resp["result"]
     assert result["protocolVersion"] == "2024-11-05"
     assert result["serverInfo"]["name"] == "yunta"
-    assert result["serverInfo"]["version"] == "1.1.0"
+    assert result["serverInfo"]["version"] == "1.3.0"
     assert "tools" in result["capabilities"]
 
 
@@ -122,6 +122,24 @@ def test_mcp_server_unknown_method():
     assert resp["error"]["code"] == -32601
 
 
+def test_mcp_server_permissions_and_approve():
+    # List permissions
+    req_list = {"jsonrpc": "2.0", "id": 10, "method": "yunta/permissions", "params": {"action": "list"}}
+    resp = handle_rpc_message(req_list)
+    assert resp["id"] == 10
+    assert "patterns" in resp["result"]
+
+    # Grant permission via yunta/approve
+    req_approve = {"jsonrpc": "2.0", "id": 11, "method": "yunta/approve", "params": {"name": "bash", "pattern": "pytest"}}
+    resp_app = handle_rpc_message(req_approve)
+    assert resp_app["id"] == 11
+    assert resp_app["result"]["status"] == "granted"
+
+    # Verify granted permission is listed
+    resp_list2 = handle_rpc_message(req_list)
+    assert len(resp_list2["result"]["patterns"]) > 0
+
+
 def test_mcp_client_server_integration():
     # Prueba end-to-end conectando MCPClient nativo de Yunta al servidor stdio
     client = MCPClient(
@@ -150,3 +168,4 @@ def test_mcp_client_server_integration():
         if client.proc and client.proc.poll() is None:
             client.proc.terminate()
             client.proc.wait(timeout=5)
+

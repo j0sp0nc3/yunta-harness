@@ -6,6 +6,22 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [1.3.0] — 2026-09-09
+
+### Agregado & Mejorado
+- **P9 — Descomposición de Specs Complejas en Subtareas (`delegate_subtask`)**:
+  - `yunta/tools/subtask.py`: herramienta nativa `delegate_subtask(task, target_files)` que delega modificaciones enfocadas en máximo 1-2 archivos a un `Agent` interno con contexto limpio y acotado, previniendo la contaminación e inflación del historial en tareas complejas multi-archivo.
+  - `tests/test_subtask.py`: suite de 4 pruebas unitarias verificando límites de archivos, validación de parámetros y ejecución delegada.
+- **V3-10 — Aprobaciones de Herramientas canalizadas vía MCP (`yunta/permissions` y `yunta/approve`)**:
+  - `yunta/server_mcp.py`: adición de métodos JSON-RPC `yunta/permissions` y `yunta/approve` para que clientes MCP o extensiones de IDE puedan consultar y otorgar permisos de ejecución programáticamente sin requerir interacción manual en el REPL.
+  - `tests/test_server_mcp.py`: pruebas unitarias de consulta y concesión de permisos vía RPC.
+- **V3-11 — Modo Servidor `serve-json` para Integraciones CLI Ligeras (`JSONL`)**:
+  - `yunta/json_server.py`: servidor de eventos en tiempo real en formato JSON-Lines (`JSONL`) a través de `stdout` (`serve_json_stream` y `serve_json_stdin`). Emite eventos estructurados (`system`, `text_delta`, `tool_call`, `tool_result`, `usage`, `done`, `error`) permitiendo a extensiones de IDE y scripts CLI consumir ejecuciones sin montar el protocolo MCP completo.
+  - `yunta/cli.py`: despacho de comando `yunta serve-json` y alias `yunta json`.
+  - `tests/test_json_server.py`: suite de pruebas unitarias verificando la emisión de eventos y el procesamiento desde `stdin`.
+
+---
+
 ## [1.2.1] — 2026-09-09
 
 ### Agregado & Mejorado
