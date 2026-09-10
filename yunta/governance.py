@@ -174,7 +174,7 @@ def audit_repository(target_dir: Path | str = ".", run_tests: bool = False) -> d
                     text=True,
                     encoding="utf-8",
                     errors="replace",
-                    timeout=60,
+                    timeout=int(os.environ.get("YUNTA_CHECK_TIMEOUT", "300")),
                 )
                 if p.returncode == 0:
                     result["checks"]["tests"] = {
@@ -184,9 +184,14 @@ def audit_repository(target_dir: Path | str = ".", run_tests: bool = False) -> d
                     }
                     result["summary"]["passed"] += 1
                 else:
+                    failed_names = [
+                        line for line in (p.stdout + p.stderr).splitlines()
+                        if line.startswith("FAILED")
+                    ][:5]
                     result["checks"]["tests"] = {
                         "status": "FAIL",
-                        "detail": f"Fallo en tests ({test_runner}) — código {p.returncode}",
+                        "detail": f"Fallo en tests ({test_runner}) — código {p.returncode}"
+                        + (f" — {', '.join(failed_names)}" if failed_names else ""),
                         "runner": test_runner,
                         "output": (p.stdout + p.stderr)[-500:],
                     }
@@ -195,7 +200,7 @@ def audit_repository(target_dir: Path | str = ".", run_tests: bool = False) -> d
             except subprocess.TimeoutExpired:
                 result["checks"]["tests"] = {
                     "status": "WARN",
-                    "detail": f"Timeout al ejecutar tests ({test_runner}, >60s)",
+                    "detail": f"Timeout al ejecutar tests ({test_runner}) — ajustable vía YUNTA_CHECK_TIMEOUT",
                 }
                 result["summary"]["warnings"] += 1
             except Exception as e:

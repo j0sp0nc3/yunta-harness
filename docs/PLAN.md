@@ -125,7 +125,7 @@ Un harness que pierde trabajo o deja archivos a medias no cumple su función.
 - **P8 🟡 presupuesto de sesión invisible**: sesiones quemaron 200-270k
   tokens sin aviso. Fix: umbrales 70%/90% del presupuesto (extensión de
   TokenBudgetCompactor): aviso y cierre ordenado (P7) respectivamente.
-  *Estado: ⬜*
+  *Estado: ✅ v1.2.1 (6 tests)*
 - **P9 🟡 specs de >2 archivos inmanejables en un loop**: 2 sesiones
   descontroladas. Fix: descomposición en subtareas de 1-2 archivos con
   subagente por lote (contexto limpio por subtarea). *Estado: ⬜*
@@ -141,11 +141,11 @@ interacción externa vía `yunta "instrucción"`, nunca `import yunta`.
 - **W1 UTF-8 en consolas Windows**: crash UnicodeEncodeError con emojis en
   PowerShell/CMD (cp1252). Fix: reconfigure de stdout/stderr a UTF-8 al
   arranque del CLI. *Estado: ⬜* (verificar: partial de v1.0.7 cubre stdout
-  del REPL; faltan rutas del single-shot)
+  del REPL; faltan rutas del single-shot). *Estado: ⬜*
 - **W2 Modo headless `--headless/-y`**: la CLI se bloquea esperando y/n en
-  pipelines/scripts. Fix: flag de auto-aprobación + salida determinista. *Estado: ⬜*
+  pipelines/scripts. Fix: flag de auto-aprobación + salida determinista. *Estado: ✅ preexistente (`--yes/-y` en single-shot, confirmado en uso)*
 - **W3 `&&` no válido en PowerShell**: normalizar `&&`→`;` al detectar
-  PowerShell en bash tool. *Estado: ⬜*
+  PowerShell en bash tool. *Estado: ✅ v1.2.2 vía yunta CLI single-shot (detección PSModulePath, 3 tests)*
 - **W4 startup tax en cada invocación CLI**: flag `--light` que omite
   contexto extenso (AGENTS/SPEC/PLAN) para tareas simples. *Estado: ⬜*
   (parcial: V3-8 ya lo mide)
