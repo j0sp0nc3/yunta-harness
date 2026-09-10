@@ -47,7 +47,10 @@ def test_check_budget_critico_guarda_estado(tmp_path, monkeypatch, capsys):
     (tmp_path / ".yunta").mkdir(parents=True, exist_ok=True)
     b = SessionBudget(max_session_tokens=100)
     b.add(95)
-    check_budget(b, save_state=lambda: Path(".yunta/estado-de-tarea.md").write_text("x", encoding="utf-8"))
+    def _save():
+        Path(".yunta").mkdir(exist_ok=True)
+        Path(".yunta/estado-de-tarea.md").write_text("x", encoding="utf-8")
+    check_budget(b, save_state=_save)
     assert Path(".yunta/estado-de-tarea.md").exists()
     assert "90%" in capsys.readouterr().out
 
