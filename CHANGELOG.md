@@ -19,6 +19,11 @@ Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
   - `yunta/api.py` y `yunta/provider.py`: Soporte para el bloque de contenido `BlockType.IMAGE` traduciendo imágenes a Data URLs Base64 para modelos con visión (GPT-4o, Gemini 2.5, Claude 3.7).
   - `yunta/tools/vision.py`: Herramienta de lectura e inspección de imágenes (PNG, JPEG, WebP, GIF) de hasta 5MB.
   - `tests/test_vision.py`: 4 pruebas unitarias validando encoding Base64, caps de peso y payload en LiteLLM.
+- **V4-4 — Extensión Gráfica Nativa de IDE (`yunta-vscode-extension`)**:
+  - Repositorio `c:\Users\HP\.zcode\workspace\default\yunta-vscode-extension`: Cliente TypeScript para `yunta serve-mcp` / `yunta serve-json` y modo subproceso CLI.
+  - Comandos VS Code: `yunta.runTask`, `yunta.audit`, `yunta.showMetrics`, `yunta.initProject`.
+  - Panel WebView ROI: `src/roiPanel.ts` para visualización gráfica de dólares ahorrados por Prompt Caching, tokens evitados y uso.
+  - Test suite TypeScript: `src/test/suite/extension.test.ts` (3 tests 100% OK).
 
 ---
 
