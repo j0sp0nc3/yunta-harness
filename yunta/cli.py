@@ -16,7 +16,7 @@ from .session import clear_session, load_session
 from .json_server import serve_json_stdin
 from .mcp import load_mcp_servers
 from .provider import LiteLLMProvider
-from .tools import bash, delegate, files, memory, search, subtask  # noqa: F401 — registro vía decoradores
+from .tools import bash, delegate, files, memory, search, subtask, symbols, vision  # noqa: F401 — registro vía decoradores
 
 SYSTEM_PROMPT = """Eres un ingeniero de software que programa en pareja a través del harness Yunta.
 Trabajas iterando: lees archivos, ejecutas comandos y editas código usando tus tools.

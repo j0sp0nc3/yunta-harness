@@ -6,14 +6,19 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
-## [2.1.0-dev] — 2026-09-11
+## [2.1.0] — 2026-09-11
 
-### Agregado & Planificado
-- **Planificación de Backlog v4 (Áreas de Evolución Futura)** en `docs/PLAN.md`:
-  - **V4-1 — Indexación Semántica de Código (Grafo AST & Búsqueda de Símbolos Nativa)**: Módulo `yunta/tools/symbols.py` utilizando la librería estándar `ast` para extraer firmas de funciones, clases, métodos y referencias cruzadas sin cargar archivos completos (`find_symbol`, `get_ast_outline`).
-  - **V4-2 — Paralelización y Concurrencia de Subagentes (`delegate_batch`)**: Ampliación de `yunta/tools/delegate.py` permitiendo la ejecución concurrente de subtareas independientes mediante `ThreadPoolExecutor`/`asyncio` con agregación estructurada de respuestas y telemetría de tokens thread-safe.
-  - **V4-3 — Inspección Multimodal (Imágenes UI, Capturas y Mockups)**: Módulo `yunta/tools/vision.py` para analizar capturas de pantalla o diseños de UI (PNG/JPEG/WebP, cap de 5MB) convirtiendo a Data URL en Base64 e inyectando bloques `image_url` en la interfaz neutral para modelos con visión.
-  - **V4-4 — Extensión Gráfica Nativa de IDE (`yunta-vscode-extension`)**: Especificación de backlog para el repositorio independiente de la extensión de VS Code.
+### Agregado & Implementado
+- **V4-1 — Indexación Semántica de Código con AST (`find_symbol` y `get_ast_outline`)**:
+  - `yunta/tools/symbols.py`: Módulo estático nativo sin dependencias externas usando `ast` para buscar firmas de clases/funciones y generar esquemas estructurados del código base.
+  - `tests/test_symbols.py`: 4 pruebas unitarias verificando búsquedas exactas, parciales, esquemas e incompatibilidades sintácticas.
+- **V4-2 — Paralelización Concurrente de Subagentes (`delegate_batch`)**:
+  - `yunta/tools/delegate.py`: Herramienta para despachar múltiples subtareas de investigación en paralelo mediante `ThreadPoolExecutor` con consolidación estructurada de respuestas.
+  - `tests/test_delegate_batch.py`: 3 pruebas unitarias verificando paralelismo y manejo defensivo de errores.
+- **V4-3 — Inspección Multimodal (`read_image` y `BlockType.IMAGE`)**:
+  - `yunta/api.py` y `yunta/provider.py`: Soporte para el bloque de contenido `BlockType.IMAGE` traduciendo imágenes a Data URLs Base64 para modelos con visión (GPT-4o, Gemini 2.5, Claude 3.7).
+  - `yunta/tools/vision.py`: Herramienta de lectura e inspección de imágenes (PNG, JPEG, WebP, GIF) de hasta 5MB.
+  - `tests/test_vision.py`: 4 pruebas unitarias validando encoding Base64, caps de peso y payload en LiteLLM.
 
 ---
 

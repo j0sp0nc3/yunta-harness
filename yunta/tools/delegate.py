@@ -67,3 +67,59 @@ def delegate_research(raw: str) -> str:
         ],
     )
     return subagent.send(task)
+
+
+@registry.register(
+    "delegate_batch",
+    "Ejecuta múltiples subtareas de investigación en paralelo mediante un pool concurrente de subagentes y consolida sus hallazgos.",
+    {
+        "type": "object",
+        "properties": {
+            "tasks": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "task": {"type": "string", "description": "Descripción de la subtarea"},
+                    },
+                    "required": ["task"],
+                },
+                "description": "Lista de subtareas a ejecutar concurrentemente",
+            },
+        },
+        "required": ["tasks"],
+    },
+    requires_approval=False,
+)
+def delegate_batch(raw: str) -> str:
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    args = _parse(raw)
+    tasks_list = args.get("tasks")
+    if not isinstance(tasks_list, list) or not tasks_list:
+        raise ValueError("tasks debe ser una lista no vacía de subtareas")
+
+    if _provider is None:
+        raise RuntimeError("delegate no configurado: falta set_provider")
+
+    def _run_single(idx: int, t_info: dict) -> tuple[int, str]:
+        t_str = t_info.get("task", "")
+        if not t_str:
+            return idx, f"[Subtarea {idx+1}] Error: task es obligatorio"
+        try:
+            res = delegate_research(f'{{"task": "{t_str}"}}')
+            return idx, f"[Subtarea {idx+1} — '{t_str}']:\n{res}"
+        except Exception as e:
+            return idx, f"[Subtarea {idx+1}] Falló: {e}"
+
+    results = [None] * len(tasks_list)
+    max_workers = min(len(tasks_list), 5)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(_run_single, i, task_info) for i, task_info in enumerate(tasks_list)]
+        for future in as_completed(futures):
+            idx, res_text = future.result()
+            results[idx] = res_text
+
+    return "\n\n---\n\n".join(r for r in results if r is not None)
+

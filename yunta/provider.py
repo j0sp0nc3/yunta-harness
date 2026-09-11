@@ -263,10 +263,19 @@ class LiteLLMProvider(Provider):
 
     def _user_msgs(self, m: Message) -> list[dict]:
         text_parts = [b.text for b in m.content if b.type == BlockType.TEXT]
+        images = [b for b in m.content if b.type == BlockType.IMAGE]
         results = [b for b in m.content if b.type == BlockType.TOOL_RESULT]
         out = []
-        if text_parts:
-            out.append({"role": "user", "content": "\n".join(text_parts)})
+        if text_parts or images:
+            if not images:
+                out.append({"role": "user", "content": "\n".join(text_parts)})
+            else:
+                content_list = []
+                if text_parts:
+                    content_list.append({"type": "text", "text": "\n".join(text_parts)})
+                for img in images:
+                    content_list.append({"type": "image_url", "image_url": {"url": img.image_url}})
+                out.append({"role": "user", "content": content_list})
         for b in results:
             out.append(
                 {

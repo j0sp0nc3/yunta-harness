@@ -11,6 +11,7 @@ class BlockType(str, Enum):
     TEXT = "text"
     TOOL_USE = "tool_use"
     TOOL_RESULT = "tool_result"
+    IMAGE = "image"
 
 
 class StopReason(str, Enum):
@@ -27,6 +28,7 @@ class Block:
     tool_name: str = ""
     tool_input: str = ""
     tool_result: str = ""
+    image_url: str = ""
     is_error: bool = False
 
 

@@ -3,7 +3,7 @@ import os
 import sys
 from pathlib import Path
 from .agent import SessionPermissions
-from .tools import bash, files, registry, subtask, delegate  # noqa: F401 — asegura registro de herramientas
+from .tools import bash, delegate, files, registry, subtask, symbols, vision  # noqa: F401 — asegura registro de herramientas
 
 _mcp_permissions = SessionPermissions()
 
