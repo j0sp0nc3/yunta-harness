@@ -3,22 +3,42 @@ from pathlib import Path
 from . import _parse, registry
 
 
+import tempfile
+
+
 def _check_boundary(path: str) -> Path:
-    """Garantiza que la ruta resuelva sin escapar del directorio del proyecto mediante '..' (Path Traversal Prevention)."""
+    """W5: workspace boundary — garantiza que la ruta (relativa O absoluta)
+    resuelva dentro del directorio del proyecto o el directorio temporal de pruebas.
+    Previene path traversal fuera de las fronteras autorizadas."""
     if not path:
         raise ValueError("path es obligatorio")
     cwd = Path.cwd().resolve()
+    temp_dir = Path(tempfile.gettempdir()).resolve()
     p = Path(path)
-    if p.is_absolute():
-        return p.resolve()
-    target = (cwd / p).resolve()
+    target = (p if p.is_absolute() else cwd / p).resolve()
+    
     try:
         target.relative_to(cwd)
+        return target
     except ValueError:
-        raise ValueError(
-            f"acceso denegado por seguridad: la ruta '{path}' resuelve fuera del directorio del proyecto ({cwd})"
-        )
-    return target
+        pass
+
+    if p.is_absolute():
+        try:
+            target.relative_to(temp_dir)
+            return target
+        except ValueError:
+            pass
+
+    raise ValueError(
+        f"acceso denegado por seguridad: la ruta '{path}' resuelve fuera del directorio del proyecto ({cwd})"
+    )
+
+
+def ensure_within_cwd(path: str) -> None:
+    """W5: workspace boundary — toda ruta de archivo debe resolver dentro del
+    directorio de trabajo o directorio temporal. Evita lecturas/ediciones fuera del proyecto."""
+    _check_boundary(path)
 
 
 @registry.register(

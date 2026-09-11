@@ -42,7 +42,7 @@ Reglas de honestidad y verificación:
   que demuestre el resultado antes de declararlo resuelto."""
 
 
-def load_system_prompt(feedback: FeedbackStore | None = None) -> str:
+def load_system_prompt(feedback: FeedbackStore | None = None, light: bool = False) -> str:
     env_prompt = os.environ.get("YUNTA_SYSTEM_PROMPT")
     user_prompt_file = Path.home() / ".yunta" / "system_prompt.md"
     if env_prompt:
@@ -51,6 +51,10 @@ def load_system_prompt(feedback: FeedbackStore | None = None) -> str:
         prompt = user_prompt_file.read_text(encoding="utf-8")
     else:
         prompt = SYSTEM_PROMPT
+
+    if light:
+        # W4: modo --light — solo prompt base, sin contexto extenso
+        return prompt
 
     agents_md = Path("AGENTS.md")
     if agents_md.exists():
@@ -112,6 +116,7 @@ def main():
         try:
             sys.stdout.reconfigure(encoding="utf-8", errors="replace")
             sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+            sys.stdin.reconfigure(encoding="utf-8", errors="replace")
         except Exception:
             pass
 
@@ -166,17 +171,9 @@ def main():
             install_git_hooks()
         return
 
-    feedback = FeedbackStore()
-    system = load_system_prompt(feedback)
-    provider = LiteLLMProvider(system=system)
-    delegate.set_provider(provider)
-    subtask.set_provider(provider)
-
-    max_messages = int(os.environ.get("YUNTA_MAX_MESSAGES", "40"))
-    compactor = SlidingWindow(max_messages=max_messages)
-
-    # Detección de flags --resume / -r y --yes / -y
+    # Detección de flags --resume / -r, --yes / -y y --light (W4)
     resume = False
+    light = os.environ.get("YUNTA_LIGHT", "").lower() in ("1", "true", "yes")
     auto_confirm = os.environ.get("YUNTA_YES", "").lower() in ("1", "true", "yes")
     args_cleaned = []
     for arg in sys.argv[1:]:
@@ -184,8 +181,19 @@ def main():
             resume = True
         elif arg in ("--yes", "-y"):
             auto_confirm = True
+        elif arg == "--light":
+            light = True
         else:
             args_cleaned.append(arg)
+
+    feedback = FeedbackStore()
+    system = load_system_prompt(feedback, light=light)
+    provider = LiteLLMProvider(system=system)
+    delegate.set_provider(provider)
+    subtask.set_provider(provider)
+
+    max_messages = int(os.environ.get("YUNTA_MAX_MESSAGES", "40"))
+    compactor = SlidingWindow(max_messages=max_messages)
 
     initial_messages = None
     initial_usage = None

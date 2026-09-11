@@ -6,6 +6,17 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.1.0-dev] — 2026-09-11
+
+### Agregado & Planificado
+- **Planificación de Backlog v4 (Áreas de Evolución Futura)** en `docs/PLAN.md`:
+  - **V4-1 — Indexación Semántica de Código (Grafo AST & Búsqueda de Símbolos Nativa)**: Módulo `yunta/tools/symbols.py` utilizando la librería estándar `ast` para extraer firmas de funciones, clases, métodos y referencias cruzadas sin cargar archivos completos (`find_symbol`, `get_ast_outline`).
+  - **V4-2 — Paralelización y Concurrencia de Subagentes (`delegate_batch`)**: Ampliación de `yunta/tools/delegate.py` permitiendo la ejecución concurrente de subtareas independientes mediante `ThreadPoolExecutor`/`asyncio` con agregación estructurada de respuestas y telemetría de tokens thread-safe.
+  - **V4-3 — Inspección Multimodal (Imágenes UI, Capturas y Mockups)**: Módulo `yunta/tools/vision.py` para analizar capturas de pantalla o diseños de UI (PNG/JPEG/WebP, cap de 5MB) convirtiendo a Data URL en Base64 e inyectando bloques `image_url` en la interfaz neutral para modelos con visión.
+  - **V4-4 — Extensión Gráfica Nativa de IDE (`yunta-vscode-extension`)**: Especificación de backlog para el repositorio independiente de la extensión de VS Code.
+
+---
+
 ## [2.0.0] — 2026-09-09
 
 ### Agregado & Mejorado

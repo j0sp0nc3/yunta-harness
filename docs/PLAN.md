@@ -263,8 +263,18 @@ entrada en CHANGELOG. Cualquier agente/IDE puede retomar donde esté.
 ### OLEADA 2 (siguiente): V3-10 aprobaciones vía MCP → V3-1 doom-loop.
 ### OLEADA 3: V3-11 serve-json → V3-13 extensión VS Code (repo aparte).
 
+## Backlog v4 (áreas de evolución futura — 2026-09-11)
+
+Iniciativas planeadas para potenciar la precisión semántica, ejecución paralela, análisis visual e integración en IDE:
+
+- **V4-1 ⬜ Indexación semántica de código (Grafo AST & Búsqueda de Símbolos Nativa)**: Módulo `yunta/tools/symbols.py` utilizando la librería estándar `ast` para extraer firmas de funciones, clases, métodos y referencias cruzadas sin cargar archivos completos (`find_symbol`, `get_ast_outline`). ~120 líneas. *Verificar: tests en `tests/test_symbols.py` con parsing AST, búsquedas y manejo de sintaxis inválida.*
+- **V4-2 ⬜ Paralelización y concurrencia de subagentes (`delegate_batch`)**: Ampliación de `yunta/tools/delegate.py` permitiendo la ejecución concurrente de subtareas independientes mediante `ThreadPoolExecutor`/`asyncio` con agregación estructurada de respuestas y telemetría de tokens thread-safe. ~90 líneas. *Verificar: tests en `tests/test_delegate_batch.py` con N subagentes simultáneos.*
+- **V4-3 ⬜ Inspección multimodal (Imágenes UI, capturas y mockups)**: Módulo `yunta/tools/vision.py` para analizar capturas de pantalla o diseños de UI (PNG/JPEG/WebP, cap de 5MB) convirtiendo a Data URL en Base64 e inyectando bloques `image_url` en la interfaz neutral para modelos con visión (GPT-4o, Gemini 2.5 Flash, Claude 3.7). ~70 líneas. *Verificar: tests en `tests/test_vision.py` con validación MIME, límites de peso y fallback de solo texto.*
+- **V4-4 ⬜ Extensión gráfica nativa de IDE (`yunta-vscode-extension`)**: Desarrollo en el repositorio independiente `c:\Users\HP\.zcode\workspace\default\yunta-vscode-extension` de un cliente TS para `yunta serve-mcp` / `yunta serve-json` con paneles WebView para ROI, métricas de tokens, visor de diffs y confirmación de permisos. *Verificar: tests de integración TypeScript con VS Code Extension Test Runner.*
+
 ## Reglas que gobiernan el plan
 
 Ver `AGENTS.md` (reglas inviolables) y la sección "Convenciones" de
 `CHANGELOG.md`. Resumen: sin SDKs fuera de `provider.py`, sin proveedor por
 defecto, sin frameworks, todo cambio registrado en `CHANGELOG.md`.
+
