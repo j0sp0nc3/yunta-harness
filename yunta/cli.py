@@ -67,7 +67,12 @@ def load_system_prompt(feedback: FeedbackStore | None = None, light: bool = Fals
 
 
 def print_version():
-    print("yunta v2.0.0")
+    try:
+        from importlib.metadata import version
+        v = version("yunta-harness")
+        print(f"yunta v{v}")
+    except Exception:
+        print("yunta v2.1.0")
 
 
 def print_help():
