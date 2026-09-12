@@ -31,7 +31,7 @@ Diseñado desde cero para ser independiente de cualquier proveedor de modelos: e
 ## Características Principales
 
 - **Agnóstico al Proveedor**: Conecta OpenAI, Anthropic Claude, Google Gemini, DeepSeek, Groq, o modelos locales vía Ollama/vLLM sin tocar una sola línea de código.
-- **Minimalismo Extremo (~500 líneas)**: Sin frameworks de agentes pesados (sin LangChain ni CrewAI). Código comprensible, auditable y fácil de hackear.
+- **Minimalismo Extremo (~500 líneas)**: Sin frameworks de agentes pesados (sin LangChain ni CrewAI). Código comprensible, auditable y fácil de personalizar.
 - **Edición Quirúrgica de Código (`str_replace`)**: Edita fragmentos exactos de archivos validando unicidad de contexto al estilo de Anthropic Claude Code y SWE-bench.
 - **Aprobaciones Humanas con Diff Unificado**: Visualiza exactamente qué líneas se agregarán o eliminarán antes de confirmar la escritura o ejecución.
 - **Prompt Caching Agnóstico**: Inyección de puntos de corte de caché (`cache_control`) para Anthropic Claude y detección automática en OpenAI/DeepSeek/Gemini, ahorrando hasta 90% en tokens de entrada y reduciendo la latencia.
