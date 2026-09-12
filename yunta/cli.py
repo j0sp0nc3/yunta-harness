@@ -1,4 +1,5 @@
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -74,7 +75,35 @@ def print_version():
         v = version("yunta-harness")
         print(f"yunta v{v}")
     except Exception:
-        print("yunta v2.1.0")
+        print("yunta v2.2.0")
+
+
+def run_update():
+    """Actualiza Yunta a la versión más reciente desde PyPI o repositorio git."""
+    print("🔄 Actualizando yunta-harness...")
+    git_dir = Path(".git")
+    if git_dir.exists():
+        try:
+            res = subprocess.run(["git", "pull", "--rebase"], capture_output=True, text=True)
+            if res.returncode == 0:
+                print("✨ Repositorio git actualizado (git pull --rebase).")
+                subprocess.run([sys.executable, "-m", "pip", "install", "-e", "."], capture_output=True)
+                print_version()
+                return
+        except Exception:
+            pass
+
+    try:
+        cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "yunta-harness"]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode == 0:
+            print("✨ Paquete yunta-harness actualizado exitosamente.")
+            print_version()
+        else:
+            err = (res.stderr or res.stdout).strip()
+            print(f"⚠️ Error al actualizar mediante pip: {err}")
+    except Exception as e:
+        print(f"⚠️ Error al ejecutar la actualización: {e}")
 
 
 def print_help():
@@ -84,6 +113,7 @@ Harness de agente de código para Spec-Driven Development (SDD), agnóstico al m
 
 Comandos de Terminal (CLI):
   yunta                        Inicia la sesión interactiva REPL
+  yunta update, --update       Actualiza Yunta a la versión más reciente (vía pip o git)
   yunta ide-init              Genera .vscode/mcp.json y tasks.json sin sobrescribir
   yunta serve-mcp, mcp         Inicia el servidor MCP local en stdio (para Claude Desktop, Cursor)
   yunta --resume, -r           Reanuda la sesión previa guardada en .yunta/session_state.json
@@ -135,6 +165,9 @@ def main():
             return
         if arg_lower in ("--version", "-v", "version"):
             print_version()
+            return
+        if arg_lower in ("update", "--update"):
+            run_update()
             return
 
     # Despacho de servidor MCP: `yunta serve-mcp` o `yunta mcp`

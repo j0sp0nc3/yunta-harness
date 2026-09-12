@@ -107,3 +107,12 @@ def test_permissions_lists_empty_then_registered_pattern(monkeypatch, tmp_path, 
     out3 = capsys.readouterr().out
     assert "permisos de sesión revocados" in out3
     assert "no hay permisos persistentes" in out3
+
+
+def test_cli_update_dispatch(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["yunta", "update"])
+    called = []
+    monkeypatch.setattr(cli_mod, "run_update", lambda: called.append(True) or print("mock update"))
+    cli_mod.main()
+    assert called == [True]
+    assert "mock update" in capsys.readouterr().out
