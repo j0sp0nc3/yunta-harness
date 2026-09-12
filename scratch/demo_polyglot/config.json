@@ -1,0 +1,6 @@
+{
+    "name": "yunta-polyglot-demo",
+    "version": "2.2.0",
+    "supported_languages": ["python", "typescript", "go", "rust", "json"],
+    "lazy_loading": true
+}

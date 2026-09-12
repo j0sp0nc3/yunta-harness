@@ -118,55 +118,11 @@ def write_file(raw: str) -> str:
 
 
 def _validate_content(path: str, content: str) -> None:
-    """P6: validación previa a escribir. Archivos .py se compilan; el resto
-    se revisa por balance de comillas/paréntesis/corchetes/llaves (fuera de
-    strings). Falla temprano para no dejar archivos a medias."""
-    if path.endswith(".py"):
-        import py_compile
-        import tempfile
+    """P6: validación previa a escribir. Delega en el registro de adaptadores
+    por lenguaje cargado bajo demanda."""
+    from ..adapters import registry as adapter_registry
+    adapter_registry.get_adapter(path).validate(content, path=path)
 
-        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8") as tf:
-            tf.write(content)
-        try:
-            py_compile.compile(tf.name, doraise=True)
-        except py_compile.PyCompileError as e:
-            raise ValueError(f"contenido con sintaxis Python inválida: {e}") from e
-        finally:
-            Path(tf.name).unlink(missing_ok=True)
-        return
-
-    pares = {"(": ")", "[": "]", "{": "}"}
-    cierres = {v: k for k, v in pares.items()}
-    stack = []
-    quote = None
-    escape = False
-    for ch in content:
-        if escape:
-            escape = False
-            continue
-        if ch == "\\":
-            escape = True
-            continue
-        if quote:
-            if ch == quote:
-                quote = None
-            continue
-        if ch in ("'", '"'):
-            quote = ch
-        elif ch in pares:
-            stack.append(ch)
-        elif ch in cierres:
-            if not stack or stack[-1] != cierres[ch]:
-                raise ValueError(
-                    f"contenido desbalanceado: '{ch}' inesperado (¿escritura truncada?)"
-                )
-            stack.pop()
-    if stack:
-        raise ValueError(
-            f"contenido desbalanceado: '{stack[-1]}' sin cerrar (¿escritura truncada?)"
-        )
-    if quote == '"':
-        raise ValueError('contenido desbalanceado: comilla doble sin cerrar (¿escritura truncada?)')
 
 
 

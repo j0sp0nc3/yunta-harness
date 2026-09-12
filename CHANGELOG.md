@@ -6,7 +6,21 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.2.0] — 2026-09-12
+
+### Agregado & Implementado
+- **Soporte Polyglot Ampliado para 20+ Lenguajes con Carga bajo Demanda (Lazy-Loading)**:
+  - `yunta/adapters.py`: Expansión de `LanguageAdapterRegistry` con adaptadores dinámicos para **Python, JavaScript/TypeScript, Go, Rust, Java, Kotlin, Scala, Groovy, C#, F#, C/C++, PHP, Ruby, Swift, Shell/Bash/Powershell, SQL y JSON/YAML/TOML**.
+  - Cada adaptador se importa e instancia en memoria de forma perezosa (*lazy-loading*) únicamente cuando el agente interactúa con un archivo de su extensión, manteniendo el consumo inicial de memoria en cero.
+  - `yunta/tools/files.py`: Refactorización de `_validate_content` para delegar la validación sintáctica atómica previa a la escritura en el registro de adaptadores según la extensión del archivo.
+  - `yunta/tools/symbols.py`: Extensión de `find_symbol` y `get_ast_outline` para realizar búsquedas semánticas e inspección de esquemas estructurados a lo largo de proyectos polyglot en 20+ extensiones soportadas.
+  - `tests/test_lazy_adapters.py`: Suite de 11 pruebas unitarias verificando la instanciación bajo demanda y la funcionalidad de extracción/validación por lenguaje.
+
+
+---
+
 ## [2.1.0] — 2026-09-11
+
 
 ### Agregado & Implementado
 - **V4-1 — Indexación Semántica de Código con AST (`find_symbol` y `get_ast_outline`)**:

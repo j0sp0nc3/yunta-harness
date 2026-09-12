@@ -6,6 +6,7 @@ subtareas de ≤2 archivos sin solapamiento y las ejecuta SECUENCIALMENTE con
 subagentes de contexto limpio. Ante cuota agotada, persiste el lote exacto
 en .yunta/estado-de-tarea.md (P7) para reanudar sin repetir trabajo."""
 import json
+import re
 from dataclasses import dataclass, field
 
 from .api import Block, BlockType, Message, Role
@@ -36,6 +37,24 @@ class Subtask:
     goal: str
     files: list[str] = field(default_factory=list)
     verify: str = ""
+
+
+_FILE_PATH_RE = re.compile(r"[\w\-/\.]+\.\w{1,4}")
+_LOOKS_MULTI_FILE_STOPWORDS = {
+    "e.g.", "i.e.", "w/", "v1.0", "v2.0",
+}
+
+
+def looks_multi_file(prompt: str) -> bool:
+    """M-B: True si el prompt menciona 3+ rutas de archivo distintas.
+
+    Cuenta coincidencias únicas de rutas (p. ej. 'docs/PLAN.md' cuenta);
+    descarta stopwords comunes que parecen rutas pero no lo son."""
+    matches = {
+        m for m in _FILE_PATH_RE.findall(prompt)
+        if m not in _LOOKS_MULTI_FILE_STOPWORDS
+    }
+    return len(matches) >= 3
 
 
 def _parse_subtasks(text: str) -> list[Subtask]:

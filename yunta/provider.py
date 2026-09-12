@@ -34,6 +34,15 @@ class LiteLLMProvider(Provider):
                 "  export LLM_MODEL=ollama/llama3          (local, sin API key)\n"
                 "Cualquier modelo soportado por LiteLLM: https://docs.litellm.ai/docs/providers"
             )
+        if os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
+            if not any("gemini" in m for m in self._models):
+                self._models.append("gemini/gemini-1.5-flash")
+        if os.environ.get("GROQ_API_KEY"):
+            if not any("groq" in m for m in self._models):
+                self._models.append("groq/llama-3.3-70b-versatile")
+        if os.environ.get("OPENAI_API_KEY"):
+            if not any("gpt-4o-mini" in m for m in self._models):
+                self._models.append("openai/gpt-4o-mini")
         self._model_idx = 0
         self._system = system
         self.total_usage = Usage()
@@ -74,8 +83,17 @@ class LiteLLMProvider(Provider):
             if tools:
                 kwargs["tools"] = [self._tool_def(t) for t in tools]
             base_url = os.environ.get("LLM_API_BASE")
-            if base_url:
-                kwargs["api_base"] = base_url
+            if "glm-" in current_model.lower() or "z.ai" in current_model.lower():
+                kwargs["api_base"] = base_url or os.environ.get("ZAI_BASE_URL", "https://api.z.ai/api/coding/paas/v4")
+                litellm.api_base = kwargs["api_base"]
+            else:
+                kwargs.pop("api_base", None)
+                litellm.api_base = None
+                os.environ.pop("OPENAI_BASE_URL", None)
+                os.environ.pop("OPENAI_API_BASE", None)
+                if base_url:
+                    kwargs["api_base"] = base_url
+                    litellm.api_base = base_url
             api_key = os.environ.get("LLM_API_KEY")
             if api_key:
                 kwargs["api_key"] = api_key
@@ -148,7 +166,7 @@ class LiteLLMProvider(Provider):
                 err_name = type(e).__name__
                 is_fallback_candidate = any(
                     x in err_str or x in err_name.lower()
-                    for x in ["429", "503", "unavailable", "exhausted", "ratelimit", "quota", "serviceunavailable", "midstreamfallback"]
+                    for x in ["429", "503", "401", "400", "unauthorized", "authentication", "badrequest", "unknown model", "unavailable", "exhausted", "ratelimit", "quota", "serviceunavailable", "midstreamfallback"]
                 )
                 if is_fallback_candidate and (self._model_idx + 1 < len(self._models)):
                     old_m = self.model()

@@ -1,23 +1,19 @@
-import ast
+"""yunta/tools/symbols.py — Búsqueda semántica de símbolos e inspección de esquemas AST polyglot.
+
+Soporta múltiples lenguajes (Python, JS/TS, Go, Rust, JSON) delegando en el
+registro de adaptadores por lenguaje cargados bajo demanda (Lazy-Loading)."""
+
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import List
 
 from . import _parse, registry
 from .files import _check_boundary
-
-
-def _format_args(args: ast.arguments) -> str:
-    arg_names = [a.arg for a in args.args]
-    if args.vararg:
-        arg_names.append(f"*{args.vararg.arg}")
-    if args.kwarg:
-        arg_names.append(f"**{args.kwarg.arg}")
-    return ", ".join(arg_names)
+from ..adapters import registry as adapter_registry
 
 
 @registry.register(
     "find_symbol",
-    "Busca definiciones de clases, funciones y métodos en archivos Python del proyecto usando el analizador estático AST.",
+    "Busca definiciones de clases, funciones, interfaces y métodos en archivos del proyecto (Python, JS/TS, Go, Rust, JSON, etc.).",
     {
         "type": "object",
         "properties": {
@@ -35,26 +31,37 @@ def find_symbol(raw: str) -> str:
     exact = bool(args.get("exact", False))
 
     cwd = Path.cwd().resolve()
-    ignored_dirs = {".git", ".venv", "venv", "node_modules", "__pycache__", "build", "dist", ".pytest_cache"}
+    ignored_dirs = {".git", ".venv", "venv", "node_modules", "__pycache__", "build", "dist", ".pytest_cache", ".yunta"}
+    supported_exts = {
+        ".py", ".pyw", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".go", ".rs",
+        ".java", ".kt", ".kts", ".scala", ".groovy", ".cs", ".fs", ".vb", ".cpp",
+        ".cxx", ".cc", ".c", ".h", ".hpp", ".php", ".rb", ".swift", ".sh", ".bash",
+        ".zsh", ".ps1", ".sql", ".json"
+    }
     results: List[str] = []
 
-    for path in cwd.rglob("*.py"):
+
+
+    for path in cwd.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in supported_exts:
+            continue
         if any(part in ignored_dirs for part in path.parts):
             continue
         try:
             rel_path = path.relative_to(cwd)
             content = path.read_text(encoding="utf-8", errors="replace")
-            tree = ast.parse(content, filename=str(rel_path))
+            adapter = adapter_registry.get_adapter(str(rel_path))
+            symbols = adapter.find_symbols(content, query=query)
         except Exception:
             continue
 
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
-                match = (node.name == query) if exact else (query.lower() in node.name.lower())
-                if match:
-                    kind = "class" if isinstance(node, ast.ClassDef) else "func"
-                    arg_str = "" if isinstance(node, ast.ClassDef) else f"({_format_args(node.args)})"
-                    results.append(f"{rel_path}:{node.lineno} — {kind} {node.name}{arg_str}")
+        for sym in symbols:
+            name = sym.get("name", "")
+            match = (name == query) if exact else (query.lower() in name.lower())
+            if match:
+                kind = sym.get("type", "symbol")
+                line = sym.get("line", 1)
+                results.append(f"{rel_path}:{line} — {kind} {name}")
 
     if not results:
         return f"no se encontraron símbolos coincidentes con '{query}'"
@@ -63,11 +70,11 @@ def find_symbol(raw: str) -> str:
 
 @registry.register(
     "get_ast_outline",
-    "Genera el esquema estructurado (outline) de un archivo Python mostrando clases, métodos y funciones con sus números de línea.",
+    "Genera el esquema estructurado (outline) de un archivo del proyecto (Python, JS/TS, Go, Rust, JSON, etc.).",
     {
         "type": "object",
         "properties": {
-            "path": {"type": "string", "description": "Ruta relativa o absoluta del archivo Python a esquematizar"},
+            "path": {"type": "string", "description": "Ruta relativa o absoluta del archivo a esquematizar"},
         },
         "required": ["path"],
     },
@@ -83,31 +90,15 @@ def get_ast_outline(raw: str) -> str:
         raise FileNotFoundError(f"el archivo '{path_str}' no existe")
 
     content = p.read_text(encoding="utf-8", errors="replace")
-    try:
-        tree = ast.parse(content, filename=str(p))
-    except SyntaxError as e:
-        return f"error de sintaxis en '{path_str}': línea {e.lineno} — {e.msg}"
+    adapter = adapter_registry.get_adapter(path_str)
+    outline = adapter.get_outline(content) or []
 
-    outline: List[str] = [f"esquema AST de {p.name}:"]
+    if outline and "error de sintaxis en" in outline[0].lower():
+        return f"error de sintaxis en '{path_str}': {outline[0]}"
 
-    for node in tree.body:
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            if isinstance(node, ast.Import):
-                names = ", ".join(alias.name for alias in node.names)
-                outline.append(f"  L{node.lineno}: import {names}")
-            else:
-                names = ", ".join(alias.name for alias in node.names)
-                outline.append(f"  L{node.lineno}: from {node.module or ''} import {names}")
-        elif isinstance(node, ast.ClassDef):
-            bases = ", ".join(b.id for b in node.bases if isinstance(b, ast.Name))
-            base_str = f"({bases})" if bases else ""
-            outline.append(f"  L{node.lineno}: class {node.name}{base_str}")
-            for item in node.body:
-                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    args_str = _format_args(item.args)
-                    outline.append(f"    L{item.lineno}: def {item.name}({args_str})")
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            args_str = _format_args(node.args)
-            outline.append(f"  L{node.lineno}: def {node.name}({args_str})")
 
-    return "\n".join(outline)
+    header = f"esquema AST de {p.name}:" if p.suffix.lower() == ".py" else f"esquema estructurado de {p.name}:"
+    res = [header]
+    res.extend(f"  {line}" if not line.startswith("esquema") else line for line in outline)
+    return "\n".join(res)
+

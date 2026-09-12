@@ -7,6 +7,7 @@ from .api import Block, BlockType, Message, Role
 from .compact import SlidingWindow, TokenBudgetCompactor
 from .feedback import FeedbackStore
 from .governance import run_check
+from .decompose import _FILE_PATH_RE, looks_multi_file
 from .hooks import install_git_hooks, uninstall_git_hooks
 from .ide import ide_init
 from .init import run_init
@@ -215,35 +216,43 @@ def main():
         else:
             print("yunta — aviso: no se encontró sesión previa guardada para reanudar")
 
-    # Despacho single-shot: `yunta "mi tarea directa"` (P9: --chunks por lotes)
-    if args_cleaned and chunks:
-        from .decompose import decompose_task, run_chunks
-        prompt = " ".join(args_cleaned).strip()
-        confirm_cb = (lambda n, d: True) if auto_confirm else None
-        subtasks = decompose_task(provider, prompt)
-        print(f"[P9] spec descompuesta en {len(subtasks)} lotes:")
-        for i, t in enumerate(subtasks, 1):
-            print(f"  {i}. {t.goal} — archivos: {', '.join(t.files)}")
-        summaries = run_chunks(provider, subtasks, system, confirm=confirm_cb)
-        print("\n[P9] " + str(len(summaries)) + " lotes completados.")
-        # M-A: auto-feedback también en el comentario del despacho --chunks.
-        try:
-            transcript = [
-                Message(role=Role.USER, content=[Block(type=BlockType.TEXT, text=prompt)])
-            ] + [
-                Message(role=Role.ASSISTANT, content=[Block(type=BlockType.TEXT, text=str(s))])
-                for s in summaries
-            ]
-            feedback.summarize(provider, transcript)
-        except Exception:
-            pass
-        for c in mcp_clients:
-            c.close()
-        return
-
     # Despacho single-shot: `yunta "mi tarea directa"`
+    # (P9: --chunks por lotes; M-B: auto-trigger por heurística de archivos)
     if args_cleaned:
-        confirm_cb = (lambda n, d: True) if auto_confirm else None
+        prompt = " ".join(args_cleaned).strip()
+        # M-B: si la tarea menciona 3+ archivos distintos y no se pidió
+        # --chunks explícitamente, degradar a modo por lotes (P9).
+        if not chunks and looks_multi_file(prompt):
+            print(
+                f"[M-B] la tarea menciona {len(set(_FILE_PATH_RE.findall(prompt)))} archivos; "
+                "activando modo por lotes (--chunks)"
+            )
+            chunks = True
+        if chunks:
+            from .decompose import decompose_task, run_chunks
+            confirm_cb = (lambda n, d: True) if auto_confirm else None
+            subtasks = decompose_task(provider, prompt)
+            print(f"[P9] spec descompuesta en {len(subtasks)} lotes:")
+            for i, t in enumerate(subtasks, 1):
+                print(f"  {i}. {t.goal} — archivos: {', '.join(t.files)}")
+            summaries = run_chunks(provider, subtasks, system, confirm=confirm_cb)
+            print("\n[P9] " + str(len(summaries)) + " lotes completados.")
+            # M-A: auto-feedback también en el comentario del despacho --chunks.
+            try:
+                transcript = [
+                    Message(role=Role.USER, content=[Block(type=BlockType.TEXT, text=prompt)])
+                ] + [
+                    Message(role=Role.ASSISTANT, content=[Block(type=BlockType.TEXT, text=str(s))])
+                    for s in summaries
+                ]
+                feedback.summarize(provider, transcript)
+            except Exception:
+                pass
+            for c in mcp_clients:
+                c.close()
+            return
+
+        confirm_cb = (lambda n, desc: True) if auto_confirm else None
         agent = Agent(
             provider=provider,
             system=system,
@@ -252,7 +261,6 @@ def main():
             initial_usage=initial_usage,
             confirm=confirm_cb,
         )
-        prompt = " ".join(args_cleaned).strip()
         try:
             agent.send(prompt)
         except KeyboardInterrupt:
