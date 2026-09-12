@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 
 from .agent import Agent
+from .api import Block, BlockType, Message, Role
 from .compact import SlidingWindow, TokenBudgetCompactor
 from .feedback import FeedbackStore
 from .governance import run_check
@@ -225,6 +226,17 @@ def main():
             print(f"  {i}. {t.goal} — archivos: {', '.join(t.files)}")
         summaries = run_chunks(provider, subtasks, system, confirm=confirm_cb)
         print("\n[P9] " + str(len(summaries)) + " lotes completados.")
+        # M-A: auto-feedback también en el comentario del despacho --chunks.
+        try:
+            transcript = [
+                Message(role=Role.USER, content=[Block(type=BlockType.TEXT, text=prompt)])
+            ] + [
+                Message(role=Role.ASSISTANT, content=[Block(type=BlockType.TEXT, text=str(s))])
+                for s in summaries
+            ]
+            feedback.summarize(provider, transcript)
+        except Exception:
+            pass
         for c in mcp_clients:
             c.close()
         return
@@ -247,6 +259,12 @@ def main():
             print()
         except QuotaExhausted as e:
             print(f"\n⚠️ {e}\n(puedes reanudar en cualquier momento con `yunta --resume` cuando se restablezca la cuota del proveedor)\n")
+        # M-A: auto-feedback también en single-shot (best-effort)
+        if agent.messages:
+            try:
+                feedback.summarize(provider, agent.messages)
+            except Exception:
+                pass
         return
 
 
