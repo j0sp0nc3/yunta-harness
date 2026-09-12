@@ -769,6 +769,31 @@ publicación).
 
 ---
 
+## [2.2.0] — 2026-09-12
+
+### Agregado
+- **P9 — descomposición de specs grandes** (`yunta/decompose.py`):
+  - `decompose_task(provider, spec)`: pide al modelo subtareas JSON
+    [{goal, files(≤2), verify}], validación dura (sin solape de archivos,
+    máximo 2 por lote), una regeneración ante plan inválido.
+  - `run_chunks()`: ejecución SECUENCIAL por lotes con subagente de
+    contexto limpio (solo su subtarea + sus archivos), max_turns 15;
+    ante cuota/fallo persiste el lote exacto pendiente en
+    `.yunta/estado-de-tarea.md` (integración con P7) y acepta
+    `start_from` para reanudar.
+  - Flag CLI `--chunks` (y env `YUNTA_CHUNKS`) en single-shot.
+  - `tests/test_decompose.py`: 10 tests (parser, validación, regeneración,
+    secuencia con contexto limpio, muerte de lote con persistencia,
+    reanudación desde lote N).
+
+### Cerrado
+- Último bug estructural del dogfooding: las sesiones multi-archivo ya no
+  mueren por acumulación de contexto (evidencia: v0.7 streaming, O1-c,
+  ronda W). E2E real: spec de 4 archivos → 2 lotes → completada con
+  verificación pytest en cada lote.
+
+---
+
 ## Convenciones para futuros cambios
 
 1. Toda modificación se registra en este archivo: qué cambió, en qué archivo y por qué.
