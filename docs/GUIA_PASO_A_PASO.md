@@ -71,12 +71,12 @@ Al ejecutar `yunta` en la terminal sin argumentos, ingresas al REPL interactivo:
 * **Razonamiento**: Si un agente de IA importara a Yunta dentro del proceso del código en desarrollo, se crearía una dependencia circular destructiva donde el entorno de prueba alteraría el entorno de producción.
 * **Solución**: Toda interacción con Yunta ocurre desde el límite externo del proceso (CLI, stdio JSON-RPC MCP o streaming JSONL), garantizando aislamiento absoluto.
 
-### 2. Análisis de Resiliencia (Resolución de Defectos P1 a P9)
-Las rondas de dogfooding demostraron que un harness debe tolerar fallos catastróficos del entorno sin perder trabajo:
-* **Escritura Atómica (P6)**: Previene la corrupción de archivos mediante el patrón `.tmp` + validación sintáctica (`py_compile`).
-* **Degradación ante Cuotas (P7)**: Ante `RateLimitError` o `QuotaExhausted`, persiste `.yunta/estado-de-tarea.md` y sincroniza `.yunta/session_state.json`, permitiendo reanudar con `yunta --resume`.
-* **Presupuesto Defensivo (P8)**: Detiene sesiones descontroladas al 90% del presupuesto de tokens.
-* **Subagentes por Lote (P9)**: Evita la saturación de contexto al acotar ediciones a 1-2 archivos por subtarea.
+### 2. Análisis de Resiliencia y Garantías de Ejecución
+Yunta implementa mecanismos deterministas para garantizar la integridad del código y la tolerancia a fallos del entorno:
+* **Escritura Atómica de Archivos**: Previene la corrupción mediante el patrón `.tmp` con validación sintáctica previa (`py_compile`).
+* **Resiliencia y Conmutación de Cuotas**: Ante límites de cuota (`RateLimitError` o `QuotaExhausted`), persiste `.yunta/estado-de-tarea.md`, sincroniza `.yunta/session_state.json` y permite reanudar con `yunta --resume`.
+* **Presupuesto Defensivo de Tokens**: Previene desbordamientos aplicando compactación por etapas (70%/85%/99%).
+* **Subagentes Concurrentes por Lote (`delegate_batch`)**: Permite la ejecución concurrente en paralelo evitando la saturación de la ventana de contexto principal.
 
 ### 3. Estrategia de Desacoplamiento de Extensiones de IDE
 Para construir interfaces de usuario gráficas (como `yunta-vscode-extension`):

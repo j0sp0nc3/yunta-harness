@@ -140,18 +140,16 @@ interacción externa vía `yunta "instrucción"`, nunca `import yunta`.
 
 - **W1 UTF-8 en consolas Windows**: crash UnicodeEncodeError con emojis en
   PowerShell/CMD (cp1252). Fix: reconfigure de stdout/stderr a UTF-8 al
-  arranque del CLI. *Estado: ⬜* (verificar: partial de v1.0.7 cubre stdout
-  del REPL; faltan rutas del single-shot). *Estado: ⬜*
+  arranque del CLI. *Estado: ✅ v2.0.0 — stdout/stderr/stdin reconfigurados a UTF-8 al arranque de main() (todas las rutas)*. *Estado: ⬜*
 - **W2 Modo headless `--headless/-y`**: la CLI se bloquea esperando y/n en
   pipelines/scripts. Fix: flag de auto-aprobación + salida determinista. *Estado: ✅ preexistente (`--yes/-y` en single-shot, confirmado en uso)*
 - **W3 `&&` no válido en PowerShell**: normalizar `&&`→`;` al detectar
   PowerShell en bash tool. *Estado: ✅ v1.2.2 vía yunta CLI single-shot (detección PSModulePath, 3 tests)*
 - **W4 startup tax en cada invocación CLI**: flag `--light` que omite
   contexto extenso (AGENTS/SPEC/PLAN) para tareas simples. *Estado: ⬜*
-  (parcial: V3-8 ya lo mide)
+  *Estado: ✅ v2.0.0 — flag `--light` (+ env YUNTA_LIGHT): sistema sin AGENTS.md ni lecciones*
 - **W5 aislamiento de rutas (workspace boundary)**: validar que toda ruta
-  de tools resuelva dentro de cwd. *Estado: ⬜* (parcial: blocklist cubre
-  rm -rf fuera de cwd)
+  de tools resuelva dentro de cwd. *Estado: ⬜* *Estado: ✅ v2.0.0 — `_check_boundary` endurecido: rutas absolutas y relativas verificadas contra cwd en read/write/str_replace*
 
 ## Backlog v2 (Estado post-sesión 2026-09-08)
 

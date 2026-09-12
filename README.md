@@ -22,23 +22,21 @@ En la metodología **Spec-Driven Development (SDD)**, el código no se genera po
 - ⚡ **Prompt Caching Agnóstico**: Permite iterar continuamente contra especificaciones y arquitecturas extensas con hasta un 90% de ahorro en costos y latencia.
 - 🔄 **Bucle Cerrado de Verificación**: El agente valida autónomamente sus cambios contra la suite de pruebas (`pytest`) antes de dar por cerrada la tarea.
 
-👉 **[Ver la Guía y Presentación Completa de Yunta + SDD](docs/sdd.md)**
-
-Diseñado desde cero para ser independiente de cualquier proveedor de modelos: el acceso a los LLMs es 100% vía [LiteLLM](https://docs.litellm.ai/docs/), por lo que cualquier proveedor soportado funciona cambiando una variable de entorno.
+👉 **[Ver la Guía y Metodología SDD en Detalle (docs/sdd.md)](docs/sdd.md)**
 
 ---
 
-## Características Principales
+## ✨ Características y Capacidades Principales
 
-- **Agnóstico al Proveedor**: Conecta OpenAI, Anthropic Claude, Google Gemini, DeepSeek, Groq, o modelos locales vía Ollama/vLLM sin tocar una sola línea de código.
-- **Minimalismo Extremo (~500 líneas)**: Sin frameworks de agentes pesados (sin LangChain ni CrewAI). Código comprensible, auditable y fácil de personalizar.
-- **Edición Quirúrgica de Código (`str_replace`)**: Edita fragmentos exactos de archivos validando unicidad de contexto al estilo de Anthropic Claude Code y SWE-bench.
-- **Aprobaciones Humanas con Diff Unificado**: Visualiza exactamente qué líneas se agregarán o eliminarán antes de confirmar la escritura o ejecución.
-- **Prompt Caching Agnóstico**: Inyección de puntos de corte de caché (`cache_control`) para Anthropic Claude y detección automática en OpenAI/DeepSeek/Gemini, ahorrando hasta 90% en tokens de entrada y reduciendo la latencia.
-- **Interrupción Limpia (`Ctrl+C`)**: Cancela un turno largo o llamada a herramienta en cualquier momento sin perder la sesión del REPL ni romper el historial de la conversación.
-- **Soporte Nativo de MCP (Model Context Protocol)**: Conecta servidores MCP externos vía `stdio` JSON-RPC 2.0 sin librerías adicionales.
-- **Memoria Persistente y Aprendizaje Continuo**: Recuerda hechos clave entre sesiones (`.yunta/memory.json`) y acumula lecciones aprendidas (`.yunta/learnings.md`).
-- **Subagentes de Investigación**: Delega tareas de lectura intensiva a subagentes secundarios sin saturar la ventana de contexto principal.
+- 🔌 **Agnóstico al Proveedor**: Conecta OpenAI (`gpt-4o`), Anthropic Claude (`claude-3-7-sonnet`), Google Gemini (`gemini-2.5-flash`), DeepSeek, Groq, o modelos locales vía Ollama/vLLM sin tocar una sola línea de código.
+- 🔍 **Indexación Semántica AST (`find_symbol`, `get_ast_outline`)**: Búsqueda instantánea de firmas de clases y funciones y generación de mapas de estructura sintáctica sin saturar la ventana de contexto.
+- ⚡ **Concurrencia y Paralelización (`delegate_batch`)**: Ejecución en paralelo de múltiples subtareas de investigación con `ThreadPoolExecutor`.
+- 🖼️ **Inspección Multimodal UI (`read_image`)**: Lectura de capturas de pantalla, mockups y diagramas (PNG, JPEG, WebP hasta 5MB) para modelos con capacidad de visión.
+- 🛡️ **Gobernanza y Auditoría SDD (`yunta check` & `yunta hooks`)**: Auditoría local determinista ($0 en API) y hooks pre-commit automatizados para impedir commits con pruebas rotas o contratos violados.
+- 🔬 **Edición Quirúrgica de Código (`str_replace`)**: Edita fragmentos exactos de archivos validando unicidad de contexto al estilo de Anthropic Claude Code y SWE-bench.
+- 🔄 **Resiliencia & Tolerancia a Fallos**: Escritura atómica anti-corrupción (`.tmp`), auto-guardado de estado (`.yunta/session_state.json`), conmutación automática entre modelos ante 429/503 (`LLM_MODELS`), y recuperación con `yunta --resume`.
+- 💸 **Control de Presupuesto, ROI y Undo**: Compactación por etapas (70%/85%/99%), dashboard de ahorro en USD (`/roi`), telemetría de tokens (`/metrics`, `/tokens`) y time-travel undo (`/undo`).
+- 🌐 **Soporte Nativo de MCP & JSON-RPC**: Servidor MCP stdio RPC (`yunta serve-mcp`), streaming NDJSON (`yunta serve-json`) y extensión gráfica nativa oficial para VS Code & Cursor (`yunta-vscode-extension`).
 
 ---
 
