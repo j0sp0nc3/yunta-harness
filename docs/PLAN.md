@@ -281,6 +281,16 @@ Iniciativas planeadas para potenciar la precisión semántica, ejecución parale
 - **V4-3 ✅ (v2.1.0) Inspección multimodal (Imágenes UI, capturas y mockups)**: Módulo `yunta/tools/vision.py` para analizar capturas de pantalla o diseños de UI (PNG/JPEG/WebP, cap de 5MB) convirtiendo a Data URL en Base64 e inyectando bloques `BlockType.IMAGE` en la interfaz neutral para modelos con visión. (4 tests en `tests/test_vision.py`).
 - **V4-4 ✅ (v2.1.0) Extensión gráfica nativa de IDE (`yunta-vscode-extension`)**: Desarrollo en el repositorio independiente [`yunta-vscode-extension`](file:///c:/Users/HP/.zcode/workspace/default/yunta-vscode-extension) de un cliente TS para `yunta serve-mcp` / `yunta serve-json` con paneles WebView para ROI, métricas de tokens, visor de diffs y confirmación de permisos. (3 tests 100% OK en `src/test/suite/extension.test.ts`).
 
+
+## Mejoras M-A a M-F — del análisis empírico del dogfooding (docs/LECCIONES-DOGFOODING.md)
+
+- **M-A 🔴 auto-feedback en single-shot**: summarize() al completar CLI -y.
+- **M-B 🔴 auto-disparo de --chunks**: detectar spec multi-archivo o budget ≥70%.
+- **M-C 🟡 self-review del diff contra la spec** antes de declarar terminado.
+- **M-D 🟡 ledger automático de rondas** (.yunta/rounds.jsonl).
+- **M-E 🟢 detección de flaky por orden invertido** en yunta check.
+- **M-F 🟢 presupuesto por tarea (~80k default)** en dogfooding.
+
 ## Reglas que gobiernan el plan
 
 Ver `AGENTS.md` (reglas inviolables) y la sección "Convenciones" de
