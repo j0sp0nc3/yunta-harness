@@ -128,9 +128,20 @@ Un harness que pierde trabajo o deja archivos a medias no cumple su función.
   *Estado: ✅ v1.2.1 (6 tests)*
 - **P9 🟡 specs de >2 archivos inmanejables en un loop**: 2 sesiones
   descontroladas. Fix: descomposición en subtareas de 1-2 archivos con
-  subagente por lote (contexto limpio por subtarea). *Estado: ⬜*
+  subagente por lote (contexto limpio por subtarea). *Estado: ✅ v2.2.0 (decompose.py + run_chunks + flag --chunks; 10 tests; E2E real con spec de 4 archivos completada en 2 lotes)*
 
 Orden: P6 → P7 → P8 → P9.
+
+### P9 — diseño aprobado (2026-09-12)
+- `yunta/decompose.py` NUEVO: `decompose_task(provider, spec)` pide al modelo
+  subtareas JSON [{goal, files(≤2), verify}], valida sin-solape y ≤2 archivos,
+  1 regeneración si inválido. `run_chunks()` ejecuta subagentes SECUENCIALES
+  con contexto limpio (solo su spec + archivos), max_turns 15, verificación
+  por lote, y ante cuota escribe lote-exacto en estado-de-tarea.md (P7).
+- `yunta/cli.py`: flag `--chunks` (y env YUNTA_CHUNKS) en single-shot.
+- Tests: parser JSON, validación solape, secuencia con FakeProvider,
+  reanudación desde lote N, contexto limpio por lote.
+
 
 
 ## BUGS W1-W5 — casos de borde del binario CLI (feedback de uso real en Windows/IDEs)

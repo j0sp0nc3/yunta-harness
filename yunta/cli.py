@@ -178,6 +178,7 @@ def main():
 
     # Detección de flags --resume / -r, --yes / -y y --light (W4)
     resume = False
+    chunks = os.environ.get("YUNTA_CHUNKS", "").lower() in ("1", "true", "yes")
     light = os.environ.get("YUNTA_LIGHT", "").lower() in ("1", "true", "yes")
     auto_confirm = os.environ.get("YUNTA_YES", "").lower() in ("1", "true", "yes")
     args_cleaned = []
@@ -186,6 +187,8 @@ def main():
             resume = True
         elif arg in ("--yes", "-y"):
             auto_confirm = True
+        elif arg == "--chunks":
+            chunks = True
         elif arg == "--light":
             light = True
         else:
@@ -210,6 +213,21 @@ def main():
             print(f"yunta — sesión reanudada ({len(initial_messages)} mensajes previos, {initial_usage.turns} turnos)")
         else:
             print("yunta — aviso: no se encontró sesión previa guardada para reanudar")
+
+    # Despacho single-shot: `yunta "mi tarea directa"` (P9: --chunks por lotes)
+    if args_cleaned and chunks:
+        from .decompose import decompose_task, run_chunks
+        prompt = " ".join(args_cleaned).strip()
+        confirm_cb = (lambda n, d: True) if auto_confirm else None
+        subtasks = decompose_task(provider, prompt)
+        print(f"[P9] spec descompuesta en {len(subtasks)} lotes:")
+        for i, t in enumerate(subtasks, 1):
+            print(f"  {i}. {t.goal} — archivos: {', '.join(t.files)}")
+        summaries = run_chunks(provider, subtasks, system, confirm=confirm_cb)
+        print("\n[P9] " + str(len(summaries)) + " lotes completados.")
+        for c in mcp_clients:
+            c.close()
+        return
 
     # Despacho single-shot: `yunta "mi tarea directa"`
     if args_cleaned:
