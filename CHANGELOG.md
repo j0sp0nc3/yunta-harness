@@ -9,6 +9,8 @@ Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 ## [2.5.0] — 2026-09-13
 
 ### Corregido & Mejorado
+- **Generalización y Polivalencia de `SYSTEM_PROMPT` (`yunta/cli.py`)**:
+  - Se rediseñó `SYSTEM_PROMPT` para declarar formalmente a Yunta como un asistente autónomo e inteligente y compañero de trabajo versátil. Expande explícitamente sus capacidades más allá del desarrollo de software para abarcar tareas de **investigación, síntesis de información, análisis de datos, extracción de textos (multimedia/documentos/OCR) y redacción de informes**, preservando al 100% el soporte para metodología SDD, ejecución ágil de pruebas y verificación empírica.
 - **Persistencia de Métricas de Uso de Tokens en Sesión (`yunta/agent.py`)**:
   - `_save_session_state()` invocaba `save_session()` enviando únicamente `self.usage` (métricas locales de ejecuciones de tools sin contadores de tokens de la API) en lugar de `self.total_usage`. Esto ocasionaba que `.yunta/session_state.json` se guardase con 0 tokens de entrada, salida y caché, mostrando `0.0% Hit Rate` y `$0.0000 USD` al ejecutar `python main.py --roi`.
   - `Agent.total_usage`: Corregido el cálculo para sumar las métricas de tokens de sesiones previas (`self.usage`) con los tokens de la llamada actual (`provider.total_usage`), preservando la continuidad histórica al reanudar sesiones con `--resume`.
