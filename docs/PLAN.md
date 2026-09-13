@@ -282,6 +282,17 @@ Iniciativas planeadas para potenciar la precisión semántica, ejecución parale
 - **V4-4 ✅ (v2.1.0) Extensión gráfica nativa de IDE (`yunta-vscode-extension`)**: Desarrollo en el repositorio independiente [`yunta-vscode-extension`](file:///c:/Users/HP/.zcode/workspace/default/yunta-vscode-extension) de un cliente TS para `yunta serve-mcp` / `yunta serve-json` con paneles WebView para ROI, métricas de tokens, visor de diffs y confirmación de permisos. (3 tests 100% OK en `src/test/suite/extension.test.ts`).
 
 
+## Backlog v5 (Evolución de Voz y Manos Libres — 2026-09-13)
+
+Iniciativas candidatas para potenciar la interacción por voz, respuesta parlante y experiencia zero-typing:
+
+- **V5-1 (Auto-Stop por Silencio VAD en Micrófono)**: Detección dinámica de silencios en tiempo real en la grabación de micrófono (`record_microphone`) usando Silero VAD / umbral de silencio RMS (1.5s) para finalizar la captura sin presionar `[ENTER]` (Zero-Typing real).
+- **V5-2 (Síntesis de Respuesta Hablada — TTS Opcional `--speak`)**: Módulo agnóstico de salida hablada compatible con endpoints HTTP `/v1/audio/speech` (OpenAI, ElevenLabs, Cartesia) y síntesis offline local (Piper TTS / `pyttsx3`) activable mediante `--speak` o `/speak`.
+- **V5-3 (Fuzzy Matching Fonético en `normalize_voice_response`)**: Incorporación de distancia Levenshtein/Damerau a `normalize_voice_response` en `yunta/voice.py` para tolerar errores o variaciones fonéticas de Whisper (ej. *"avansado"*, *"aprobau"*) mapeando a opciones válidas.
+- **V5-4 (Palabra de Activación Local / Wake Word "Hey Yunta")**: Integración opcional con `openWakeWord` (motor local de 0-Cloud) para activar el micrófono en segundo plano mediante la voz sin tocar la terminal.
+- **V5-5 (Diarización de Hablantes en Audios Extensos)**: Soporte para identificación de hablantes (`[Hablante 1]`, `[Hablante 2]`) en `AudioChunker` y `transcribe_audio` para reuniones y cátedras universitarias.
+
+
 ## Mejoras M-A a M-F — del análisis empírico del dogfooding (docs/LECCIONES-DOGFOODING.md)
 
 - **M-A 🔴 auto-feedback en single-shot**: summarize() al completar CLI -y.

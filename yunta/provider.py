@@ -14,12 +14,11 @@ _FINISH_REASONS = {
 
 
 class Provider:
-    def send(self, messages: list[Message], tools: list[ToolDef], on_text=None) -> Response: ...
+    def send(self, messages: list[Message], tools: list[ToolDef], on_text=None, reasoning_effort: str | None = None) -> Response: ...
     def model(self) -> str: ...
     @property
     def startup_tax(self) -> int:
         return 0
-
 
 
 class LiteLLMProvider(Provider):
@@ -73,7 +72,7 @@ class LiteLLMProvider(Provider):
         return self.estimate_startup_tax()
 
 
-    def send(self, messages: list[Message], tools: list[ToolDef], on_text=None) -> Response:
+    def send(self, messages: list[Message], tools: list[ToolDef], on_text=None, reasoning_effort: str | None = None) -> Response:
         while True:
             current_model = self.model()
             kwargs = {
@@ -97,6 +96,31 @@ class LiteLLMProvider(Provider):
             api_key = os.environ.get("LLM_API_KEY")
             if api_key:
                 kwargs["api_key"] = api_key
+            session_id = os.environ.get("YUNTA_SESSION_ID")
+            if session_id:
+                kwargs["user"] = session_id
+                kwargs["metadata"] = {"session_id": session_id}
+
+            effort = reasoning_effort or os.environ.get("LLM_REASONING_EFFORT")
+            if effort:
+                clean_effort = effort.lower().strip()
+                if clean_effort in ("high", "profundo", "on", "1", "true"):
+                    kwargs["reasoning_effort"] = "high"
+                    thinking_budget = int(os.environ.get("LLM_THINKING_BUDGET", "8192"))
+                    kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
+                elif clean_effort in ("medium", "medio"):
+                    kwargs["reasoning_effort"] = "medium"
+                    thinking_budget = int(os.environ.get("LLM_THINKING_BUDGET", "4096"))
+                    kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
+                elif clean_effort in ("low", "bajo"):
+                    kwargs["reasoning_effort"] = "low"
+                    thinking_budget = int(os.environ.get("LLM_THINKING_BUDGET", "1024"))
+                    kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
+                elif clean_effort in ("off", "desactivado", "false", "0"):
+                    kwargs.pop("reasoning_effort", None)
+                    kwargs.pop("thinking", None)
+                else:
+                    kwargs["reasoning_effort"] = effort
 
             try:
                 if on_text is not None:

@@ -36,6 +36,7 @@ En la metodología **Spec-Driven Development (SDD)**, el código no se genera po
 - 🔬 **Edición Quirúrgica de Código (`str_replace`)**: Edita fragmentos exactos de archivos validando unicidad de contexto al estilo de Anthropic Claude Code y SWE-bench.
 - 🔄 **Resiliencia & Tolerancia a Fallos**: Escritura atómica anti-corrupción (`.tmp`), auto-guardado de estado (`.yunta/session_state.json`), conmutación automática entre modelos ante 429/503 (`LLM_MODELS`), y recuperación con `yunta --resume`.
 - 💸 **Control de Presupuesto, ROI y Undo**: Compactación por etapas (70%/85%/99%), dashboard de ahorro en USD (`/roi`), telemetría de tokens (`/metrics`, `/tokens`) y time-travel undo (`/undo`).
+- 🎙️ **Dictado por Voz y Respuestas Rápidas (`yunta voice` / `/voice`)**: Captura desde micrófono local o archivos de audio con Whisper, puerta de ruido espectral (150ms), pre-revisión interactiva y normalizador fonético (`normalize_voice_response`) para confirmaciones rápidas sin presionar teclas.
 - 🌐 **Soporte Nativo de MCP & JSON-RPC**: Servidor MCP stdio RPC (`yunta serve-mcp`), streaming NDJSON (`yunta serve-json`) y extensión gráfica nativa oficial para VS Code & Cursor (`yunta-vscode-extension`).
 
 ---

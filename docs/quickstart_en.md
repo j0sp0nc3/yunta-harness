@@ -249,6 +249,53 @@ When you ask Yunta to make code modifications:
 
 ---
 
+## Step 6: Voice Prompts, Hands-Free Dictation & Quick Responses
+
+Yunta includes native, provider-agnostic support for **voice dictation and audio processing** powered by the **Whisper** neural architecture.
+
+### 1. Voice Modes
+
+#### A. Direct CLI Mode (`yunta voice` or `yunta --voice [audio_file.mp3]`)
+- **Live Recording**: Run `yunta voice` and speak into your microphone. Press `[ENTER]` when done.
+- **Spectral Noise Gate (`trim_initial_noise_and_silence`)**: Automatically strips keyboard clicks (150ms) and initial silence before transcribing.
+- **Interactive Review Menu**: Review transcribed text before sending:
+  ```text
+  🗣️ Captured Transcription:
+     "Review project tests and verify coverage"
+
+  Options: [ENTER/s] Send to agent | [e] Edit text | [c] Cancel
+  > 
+  ```
+
+#### B. Interactive REPL Mode (`/voice` or `/listen`)
+- **Inside REPL**: Type `/voice` in the prompt `> ` to record a 5-second hands-free burst, or `/voice lecture.mp3` to transcribe a file.
+- **Instant Dispatch**: The transcribed prompt is immediately sent to the active conversational context.
+
+---
+
+### 2. Quick Voice Response Matcher (`normalize_voice_response`)
+
+No need to type exact single characters (`s`, `c`, `e`). Yunta uses a deterministic matcher for common spoken synonyms:
+
+| Intended Action | Supported Words / Colloquialisms | Canonical Choice |
+| :--- | :--- | :--- |
+| **Approve / Send** | `"sí"`, `"si"`, `"yes"`, `"approved"`, `"ok"`, `"okay"`, `"go ahead"`, `"sure"` | **`s`** (Send) |
+| **Reject / Cancel** | `"no"`, `"rejected"`, `"cancel"`, `"stop"`, `"abort"` | **`c`** / **`n`** (Cancel) |
+| **Edit Text** | `"edit"`, `"modify"`, `"change"`, `"fix"` | **`e`** (Edit) |
+| **Persistent Grant** | `"always"`, `"forever"`, `"yes to all"` | **`siempre`** (Grant) |
+
+---
+
+### 3. STT Provider Setup (Agnostic Whisper)
+
+Yunta supports any HTTP endpoint compatible with OpenAI's Whisper API (`/v1/audio/transcriptions`):
+
+- **Cloudflare Workers AI**: `VOICE_API_BASE="https://your-worker.workers.dev/v1" VOICE_MODEL="@cf/openai/whisper"`
+- **Groq Cloud**: `VOICE_API_BASE="https://api.groq.com/openai/v1" VOICE_MODEL="groq/whisper-large-v3"`
+- **Local Docker (100% Offline)**: Run `fedirz/faster-whisper-server` on `http://localhost:8000/v1`. Yunta automatically falls back to local Docker if cloud endpoints are unavailable.
+
+---
+
 ## Step 7: REPL Commands & Session Control
 
 At any point during your session, use these control commands:

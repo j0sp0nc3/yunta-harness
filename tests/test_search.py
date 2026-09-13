@@ -43,3 +43,10 @@ def test_entrada_invalida():
         grep('{"pattern": "["}')  # regex inválido
     with pytest.raises(FileNotFoundError):
         glob('{"pattern": "*.py", "path": "directorio_que_no_existe_xyz"}')
+
+
+def test_web_search_valida_query_obligatoria():
+    from yunta.tools.search import web_search
+    with pytest.raises(ValueError):
+        web_search('{"query": ""}')
+

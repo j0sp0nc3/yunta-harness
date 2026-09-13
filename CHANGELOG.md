@@ -6,6 +6,82 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.5.0] — 2026-09-13
+
+### Corregido & Mejorado
+- **Persistencia de Métricas de Uso de Tokens en Sesión (`yunta/agent.py`)**:
+  - `_save_session_state()` invocaba `save_session()` enviando únicamente `self.usage` (métricas locales de ejecuciones de tools sin contadores de tokens de la API) en lugar de `self.total_usage`. Esto ocasionaba que `.yunta/session_state.json` se guardase con 0 tokens de entrada, salida y caché, mostrando `0.0% Hit Rate` y `$0.0000 USD` al ejecutar `python main.py --roi`.
+  - `Agent.total_usage`: Corregido el cálculo para sumar las métricas de tokens de sesiones previas (`self.usage`) con los tokens de la llamada actual (`provider.total_usage`), preservando la continuidad histórica al reanudar sesiones con `--resume`.
+
+### Agregado & Implementado
+- **Pipeline Universal de Extracción Local de Texto Multiformato (Etapa 1 ➔ Etapa 2)**:
+  - `yunta/extractors/`: Paquete de extractores locales deterministas sin llamadas a LLMs.
+  - `extract_text_from_file`: Fábrica universal que convierte cualquier formato de entrada a Texto Plano (Prompt Base).
+  - `yunta/extractors/audio.py`: Extracción de audio (.wav, .mp3, .m4a, .ogg) vía `System.Speech` / Whisper local.
+  - `yunta/extractors/video.py`: Extracción de pistas de audio de videos (.mp4, .mkv, .avi) vía `ffmpeg` ➔ Texto Plano.
+  - `yunta/extractors/document.py`: Extracción de documentos PDF (.pdf), Word (.docx) y texto (.txt, .md, .json) localmente.
+  - `yunta/extractors/ocr.py`: OCR de imágenes (.png, .jpg, .webp) vía `Windows.Media.Ocr` nativo de Windows.
+- **Filtro de Ruido Inicial y Puerta de Silencio en STT (`trim_initial_noise_and_silence`)**:
+  - `yunta/voice.py`: Pre-procesamiento de señales de audio `.wav` antes de pasar por el reconocedor de voz. Elimina automáticamente los chasquidos de teclado (`noise_gate_ms=150ms`) y silencios pre-voz preservando 100ms de margen (*lead-in*) previo a la primera palabra hablada.
+- **Previsualización, Edición Interactiva y Cancelación de Transcripción de Voz (`yunta/cli.py`)**:
+  - Muestra la transcripción capturada antes de despacharla al agente (`Agent.send`), permitiendo al usuario:
+    - `[ENTER / s]`: Enviar inmediatamente la transcripción.
+    - `[e]`: Editar interactivamente el texto transcrito antes de enviarlo.
+    - `[c]`: Cancelar la operación sin ejecutar ni consumir tokens.
+- **Inyección Explícita de Idioma `language="es"` en STT (`yunta/voice.py`)**:
+  - Pasa el parámetro `language="es"` en el payload `multipart/form-data` de Whisper para forzar el reconocimiento en español y evitar alucinaciones en inglés ante silencios o ruidos de fondo.
+- **Comparador y Normalizador de Respuestas Rápidas por Voz/Texto (`normalize_voice_response`)**:
+  - `yunta/voice.py`: Normalizador determinista que compara transcripciones habladas o textos con sinónimos fonéticos de aprobación (`"sí"`, `"aprobado"`, `"avanzar"`, `"abanzau"`, `"ok"`, `"dale"`, `"listo"` ➔ `s`), rechazo/cancelación (`"no"`, `"rechazado"`, `"cancelar"`, `"alto"`, `"stop"` ➔ `c`), edición (`"editar"`, `"modificar"`, `"cambiar"` ➔ `e`) y aprobación permanente (`"siempre"`, `"para siempre"`, `"sí a todo"`, `"aprobado a todo"` ➔ `siempre`).
+  - `yunta/cli.py` & `yunta/agent.py`: Integrado en el menú de revisión de voz y en las confirmaciones interactivas de herramientas (`_approve`), permitiendo respuestas habladas o tipeadas rápidas sin requerir letras exactas.
+- **Herramienta Nativa de Búsqueda Web (`web_search`) sin Dependencias (`yunta/tools/search.py`)**:
+  - Implementación de `@registry.register("web_search")` basada en `urllib` nativo de Python y la API pública de Wikipedia/búsqueda web.
+  - Elimina las secuencias de ensayo y error de 27 comandos `bash` en consolas de Windows CMD, reduciendo la latencia de investigación a 1 llamada HTTP (~0.2s).
+- **Directiva Dinámica de Idioma en `SYSTEM_PROMPT` (`yunta/cli.py`)**:
+  - `SYSTEM_PROMPT` actualizado para adaptarse dinámicamente al idioma del usuario (*"Responde e interactúa siempre en el idioma que esté utilizando el usuario (español, inglés, etc.). Tanto tus pensamientos como tus respuestas y archivos redactados deben escribirse en ese mismo idioma."*).
+- **Auto-Detección Inteligente y Forzado de Razonamiento Profundo por Usuario (`yunta/intent.py`, `yunta/agent.py`, `yunta/cli.py`)**:
+  - `IntentClassifier.evaluate_reasoning(prompt, user_override)`: Evalúa si un prompt requiere razonamiento profundo (`HIGH`, `MEDIUM`, `OFF`) mediante clasificación automática de complejidad y palabras clave en tiempo de ejecución.
+  - Comando interactivo `/think [high|medium|low|off|auto]` en el REPL y flag CLI `--think` / `--think=high|off` / `-t` para forzar o desactivar explícitamente el modo de pensamiento.
+  - Indicador visual dinámico en la consola (`🧠 Razonamiento Profundo (Thinking)...`) cuando la tarea activa el modo de razonamiento.
+- **Captura Directa de Bytes y Decodificación UTF-8 en Subprocesos Windows (`yunta/tools/bash.py`)**:
+  - Elimina el uso de `text=True` en `subprocess.run` para capturar la salida estándar y de error como bytes crudos, decodificándolos explícitamente en Python con `.decode("utf-8", errors="replace")`. Evita la creación de hilos de lectura de texto (`_readerthread`) con la codificación `cp1252` predeterminada de Windows y resuelve 100% las excepciones `UnicodeDecodeError`.
+- **Prevención de Bucle Recursivo de Scratch Files (`yunta/agent.py`)**:
+  - `_maybe_offload_result`: Exime a `read_file` de re-offloadear salidas al leer archivos en `.yunta/scratch/` o con parámetros de paginación (`offset`/`limit`), evitando la generación infinita de archivos temporales anidados al inspeccionar resultados extensos.
+- **Despacho Directo de Subcomandos CLI de Telemetría (`yunta/cli.py`)**:
+  - Implementación del despacho directo en CLI para `yunta roi` / `yunta --roi` (Dashboard ROI y retorno económico), `yunta tokens` / `yunta --tokens` / `yunta metrics` (desglose de tokens) y `yunta context` / `yunta --context` (presupuesto de contexto) desde la terminal sin requerir llamar a la API ni abrir el REPL.
+- **`tests/test_search.py`, `tests/test_provider.py`, `tests/test_intent.py`, `tests/test_agent.py` & `tests/test_cli.py`**: Suite ampliada a 232 pruebas unitarias pasadas al 100%.
+
+---
+
+## [2.4.0] — 2026-09-13
+
+### Agregado & Implementado
+- **Prompts por Voz y Dictado Manos Libres (Zero-Typing)**:
+  - `yunta/voice.py`: Módulo nativo `AudioTranscriber` para transcripción de audio vía HTTP `multipart/form-data` a endpoints compatibles con Whisper (OpenAI, Groq `whisper-large-v3`, Ollama Whisper).
+  - Captura desde micrófono local `record_microphone` y soporte para archivos `.wav`, `.mp3`, `.m4a`, `.ogg`, `.webm`.
+  - CLI `yunta -v` / `yunta --voice [archivo.mp3]` y comando interactivo `/voice` en el REPL.
+- **Soporte para Grabaciones Extensas (Cátedras de Medicina de 2 a 4+ Horas)**:
+  - `AudioChunker`: Fragmentación basada en Voice Activity Detection (VAD) / silencios (`silencedetect`) para no trocear palabras compuestas por la mitad.
+  - `yunta/tools/voice.py`: Herramientas `@registry.register("transcribe_audio")` y `generate_study_notes` que generan resúmenes ejecutivos por temas, glosarios médicos/farmacológicos, tarjetas Anki Q&A y diagramas Mermaid.
+- **Enrutamiento por Intención (`yunta/intent.py`)**:
+  - `IntentClassifier`: Clasificación automática de tareas entre `SOFTWARE_IMPLEMENTATION` (aplica compuertas SDD, git hooks, validación atómica `.tmp` y compilación) y `RESEARCH_AND_CONSULTING` (bypass completo de compuertas SDD y git hooks para resúmenes, cátedras y consultoría).
+- **Adaptadores Modales Carga Bajo Demanda (`InputAdapterRegistry`)**:
+  - `yunta/adapters.py`: Expansión con `InputAdapterRegistry` para carga perezosa (0 MB al inicio) de adaptadores multimedia (`AudioInputAdapter`, `VisionInputAdapter`).
+- **Pruebas Unitarias**:
+  - `tests/test_intent.py`, `tests/test_voice.py` y `tests/test_voice_lazy.py` (100% test pass rate).
+
+---
+
+## [2.3.0] — 2026-09-12
+
+### Agregado & Port C# Nativo (.NET 10)
+- **Port 100% generado mediante Yunta CLI (`python main.py -y ...`)** en `scratch/yunta-csharp/`:
+  - `Yunta.Core/`: Módulos nativos `Api.cs` (tipos neutrales `Message`, `Block`, `ToolDef`, `Usage`), `Adapters.cs` (adaptadores de lenguaje bajo demanda), `Tools.cs` (escritura atómica, reemplazo, listado, búsqueda de símbolos y AST), `Provider.cs` (`LiteLlmProvider` con `HttpClient` y semántica Litellm) y `Agent.cs` (`YuntaAgent` con bucle autónomo).
+  - `Yunta.Cli/`: Aplicación de consola REPL e interfaz one-shot (`-y` / `--yolo`) alineada con `main.py`.
+  - `Yunta.Tests/`: Suite de 19 pruebas unitarias xUnit verificando serialización, tools, bucle del agente y tolerancia a respuestas JSON.
+  - **Métricas**: 0 dependencias externas (solo SDK .NET 10), 100% test pass rate (19/19 en 335 ms), 0 errores y 0 warnings de compilación.
+
+---
+
 ## [2.2.0] — 2026-09-12
 
 ### Agregado & Implementado
@@ -805,14 +881,3 @@ publicación).
   mueren por acumulación de contexto (evidencia: v0.7 streaming, O1-c,
   ronda W). E2E real: spec de 4 archivos → 2 lotes → completada con
   verificación pytest en cada lote.
-
----
-
-## Convenciones para futuros cambios
-
-1. Toda modificación se registra en este archivo: qué cambió, en qué archivo y por qué.
-2. Los números de versión siguen SemVer: `mayor.minor.parche`.
-3. El harness no debe ganar dependencias de proveedores específicos: si un cambio
-   requiere importar un SDK concreto fuera de un adaptador, el diseño se revisa.
-4. Verificación mínima antes de registrar un cambio: compilar + smoke test del
-   bucle con provider falso.

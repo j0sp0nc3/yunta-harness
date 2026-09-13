@@ -79,6 +79,16 @@ def deserialize_usage(data: dict) -> Usage:
     )
 
 
+def get_or_create_session_id() -> str:
+    """Obtiene o genera un identificador único universal de sesión (YUNTA_SESSION_ID)."""
+    session_id = os.environ.get("YUNTA_SESSION_ID")
+    if not session_id:
+        import uuid
+        session_id = f"yunta_sess_{uuid.uuid4().hex[:12]}"
+        os.environ["YUNTA_SESSION_ID"] = session_id
+    return session_id
+
+
 def save_session(
     messages: list[Message],
     usage: Usage,
@@ -87,7 +97,9 @@ def save_session(
 ) -> None:
     path = Path(session_file)
     path.parent.mkdir(parents=True, exist_ok=True)
+    session_id = get_or_create_session_id()
     payload = {
+        "session_id": session_id,
         "timestamp": time.time(),
         "model": model,
         "messages": serialize_messages(messages),
@@ -107,9 +119,13 @@ def load_session(
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
+        session_id = data.get("session_id")
+        if session_id:
+            os.environ["YUNTA_SESSION_ID"] = session_id
         messages = deserialize_messages(data.get("messages", []))
         usage = deserialize_usage(data.get("usage", {}))
         return {
+            "session_id": session_id,
             "timestamp": data.get("timestamp", 0.0),
             "model": data.get("model", ""),
             "messages": messages,

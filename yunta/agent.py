@@ -1,6 +1,7 @@
 import difflib
 import inspect
 import json
+import os
 import sys
 import threading
 import time
@@ -112,9 +113,14 @@ class Agent:
         self.snapshots: list[dict[str, str | None]] = []
         self._recent_tool_calls: list[tuple[str, str]] = []
         self._tool_calls_since_reminder: int = 0
+        self.think_override: str | None = None
+        self.current_reasoning_effort: str = "off"
 
     def send(self, prompt: str) -> str:
+        from .intent import IntentClassifier
         self.usage.turns += 1
+        reasoning_level = IntentClassifier.evaluate_reasoning(prompt, self.think_override)
+        self.current_reasoning_effort = reasoning_level.value
         self.messages.append(
             Message(role=Role.USER, content=[Block(type=BlockType.TEXT, text=prompt)])
         )
@@ -137,20 +143,26 @@ class Agent:
                     self.messages = self.compactor.compact(self.messages)
 
                 try:
-                    supports_stream = (
-                        "on_text" in inspect.signature(self.provider.send).parameters
+                    sig_params = inspect.signature(self.provider.send).parameters
+                    supports_stream = "on_text" in sig_params
+                    supports_reasoning = "reasoning_effort" in sig_params or any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig_params.values()
                     )
                 except (TypeError, ValueError):
                     supports_stream = False
+                    supports_reasoning = False
                 self._streamed = False
-                self._spinner = Spinner("Pensando...")
+                spinner_label = "🧠 Razonamiento Profundo (Thinking)..." if self.current_reasoning_effort == "high" else "Pensando..."
+                self._spinner = Spinner(spinner_label)
                 self._spinner.start()
                 try:
                     try:
+                        send_kwargs = {}
                         if supports_stream:
-                            resp = self.provider.send(self.messages, self._definitions(), on_text=self._stream_text)
-                        else:
-                            resp = self.provider.send(self.messages, self._definitions())
+                            send_kwargs["on_text"] = self._stream_text
+                        if supports_reasoning:
+                            send_kwargs["reasoning_effort"] = self.current_reasoning_effort
+                        resp = self.provider.send(self.messages, self._definitions(), **send_kwargs)
                     except Exception as prov_err:
                         # P7: degradación progresiva ante cuota agotada
                         if should_save_state(prov_err):
@@ -181,16 +193,18 @@ class Agent:
                     self.usage = self.usage.add(resp.usage)
                 self.messages.append(Message(role=Role.ASSISTANT, content=resp.content))
 
-                has_tool_call = False
+                has_tool_call = any(b.type == BlockType.TOOL_USE for b in resp.content)
+                verbose = os.environ.get("YUNTA_VERBOSE", "0") == "1"
+
                 for b in resp.content:
                     if b.type == BlockType.TEXT and b.text:
-                        if self._streamed:
-                            print()
-                        else:
-                            print(b.text)
                         final_text.append(b.text)
+                        if not has_tool_call or verbose:
+                            if self._streamed:
+                                print()
+                            else:
+                                print(b.text)
                     elif b.type == BlockType.TOOL_USE:
-                        has_tool_call = True
                         result, is_err = self._execute_tool(b.tool_name, b.tool_input)
                         current_tool_results.append(
                             Block(
@@ -255,7 +269,7 @@ class Agent:
     def _save_session_state(self) -> None:
         try:
             model_name = getattr(self.provider, "model", lambda: "")()
-            save_session(self.messages, self.usage, model=model_name)
+            save_session(self.messages, self.total_usage, model=model_name)
         except Exception:
             pass
 
@@ -346,7 +360,7 @@ class Agent:
             if sys.stdout.isatty():
                 sys.stdout.write("\033[K")
             print(f"[tool] {name} completado en {elapsed:.2f}s")
-            res = self._maybe_offload_result(name, res)
+            res = self._maybe_offload_result(name, res, raw_input=raw_input)
             if repeat_count >= 3:
                 res += f"\n\n[ADVERTENCIA DOOM-LOOP: La herramienta '{name}' con estos argumentos se ha ejecutado {repeat_count} veces recientemente. Evalúa cambiar de estrategia o revisar el error.]"
             return res, False
@@ -357,16 +371,20 @@ class Agent:
             print(f"[tool] {name} falló en {elapsed:.2f}s")
             self.usage.tool_errors += 1
             err_msg = f"{type(e).__name__}: {e}"
-            err_msg = self._maybe_offload_result(name, err_msg)
+            err_msg = self._maybe_offload_result(name, err_msg, raw_input=raw_input)
             err_msg += classify_tool_error(name, f"{type(e).__name__}: {e}")
             if repeat_count >= 3:
                 err_msg += f"\n\n[ADVERTENCIA DOOM-LOOP: La herramienta '{name}' con estos argumentos se ha ejecutado {repeat_count} veces recientemente. Evalúa cambiar de estrategia o revisar el error.]"
             return err_msg, True
 
-    def _maybe_offload_result(self, name: str, result: str) -> str:
+    def _maybe_offload_result(self, name: str, result: str, raw_input: str = "") -> str:
         """Si la salida excede 8.000 caracteres, la guarda en .yunta/scratch/ y retorna un preview de 500 chars (V3-3)."""
         if len(result) <= 8000:
             return result
+        # Prevención de bucle recursivo scratch: si se está leyendo un archivo dentro de scratch o read_file especifica offset/limit, no offloadear de nuevo
+        if name == "read_file":
+            if "scratch" in raw_input or "offset" in raw_input or "limit" in raw_input:
+                return result
         try:
             scratch_dir = Path(".yunta") / "scratch"
             scratch_dir.mkdir(parents=True, exist_ok=True)
@@ -431,27 +449,30 @@ class Agent:
         if detail:
             print(detail, end="")
 
+        from .voice import normalize_voice_response
+
         while True:
-            ans = input(f"Aprobar {name}? [s/siempre/n]: ").strip().lower()
+            ans_raw = input(f"Aprobar {name}? [s/siempre/n]: ").strip()
+            ans = normalize_voice_response(ans_raw)
             if ans in ("s", "si", "y", "yes"):
                 return True
             if ans in ("siempre", "always"):
                 if raw_input:
                     self.session_permissions.grant(name, raw_input)
                 return True
-            if ans in ("n", "no"):
+            if ans in ("c", "n", "no"):
                 return False
 
     @property
     def total_usage(self) -> Usage:
         p_usage = getattr(self.provider, "total_usage", None)
-        in_tok = p_usage.input_tokens if p_usage else self.usage.input_tokens
-        out_tok = p_usage.output_tokens if p_usage else self.usage.output_tokens
-        cached_tok = p_usage.cached_tokens if p_usage else self.usage.cached_tokens
+        p_in = p_usage.input_tokens if p_usage else 0
+        p_out = p_usage.output_tokens if p_usage else 0
+        p_cached = p_usage.cached_tokens if p_usage else 0
         return Usage(
-            input_tokens=in_tok,
-            output_tokens=out_tok,
-            cached_tokens=cached_tok,
+            input_tokens=p_in + self.usage.input_tokens,
+            output_tokens=p_out + self.usage.output_tokens,
+            cached_tokens=p_cached + self.usage.cached_tokens,
             tool_counts=dict(self.usage.tool_counts),
             tool_errors=self.usage.tool_errors,
             turns=self.usage.turns,

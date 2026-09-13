@@ -249,6 +249,65 @@ Cuando le pidas a Yunta realizar un cambio en el código:
 
 ---
 
+## Paso 6: Prompts por Voz, Dictado Manos Libres y Respuestas Rápidas
+
+Yunta incluye soporte nativo y agnóstico para **dictado por voz y procesamiento de audio** basado en la arquitectura neural **Whisper**.
+
+### 1. Modos de Operación por Voz
+
+#### A. Modo CLI Directo (`yunta voice` o `yunta --voice [archivo.mp3]`)
+- **Grabación en Vivo**: Ejecuta `yunta voice` y habla por el micrófono. Presiona `[ENTER]` cuando termines de hablar.
+- **Filtro Anti-Ruido Espectral (`trim_initial_noise_and_silence`)**: Elimina automáticamente chasquidos de teclado (150ms) y silencios iniciales antes de transcribir.
+- **Previsualización Interactiva**: Tras transcribir, Yunta muestra el texto capturado para su revisión:
+  ```text
+  🗣️ Transcripción capturada:
+     "Revisa los tests del proyecto yunta"
+
+  Opciones: [ENTER/s] Enviar al agente | [e] Editar texto | [c] Cancelar
+  > 
+  ```
+
+#### B. Modo REPL Interactivo (`/voice` o `/listen`)
+- **En la sesión interactiva**: Escribe `/voice` en el prompt `> ` para grabar una ráfaga de 5 segundos sin tocar teclas, o `/voice mi_clase.mp3` para transcribir un archivo.
+- **Despacho Inmediato**: La transcripción capturada se envía directamente al contexto conversacional activo para seguir iterando.
+
+---
+
+### 2. Normalizador de Respuestas Rápidas por Voz/Texto (`normalize_voice_response`)
+
+No necesitas escribir o pronunciar letras exactas (`s`, `c`, `e`). Yunta incluye un comparador determinista que traduce modismos fonéticos y coloquiales al instante:
+
+| Acción Deseada | Palabras / Modismos Soportados (Voz o Teclado) | Acción Canónica |
+| :--- | :--- | :--- |
+| **Aprobar / Enviar** | `"sí"`, `"si"`, `"aprobado"`, `"avanzar"`, `"abanzau"`, `"abanzau ok"`, `"ok"`, `"dale"`, `"listo"`, `"de acuerdo"` | **`s`** (Enviar) |
+| **Rechazar / Cancelar** | `"no"`, `"rechazado"`, `"cancelar"`, `"alto"`, `"stop"`, `"detener"`, `"abortar"` | **`c`** / **`n`** (Cancelar) |
+| **Editar Texto** | `"editar"`, `"modificar"`, `"cambiar"`, `"corregir"`, `"reescribir"` | **`e`** (Editar) |
+| **Aprobación Total** | `"sí a todo"`, `"siempre"`, `"para siempre"`, `"siempre si"`, `"aprobado a todo"` | **`siempre`** (Persistir) |
+
+> 💡 **Protección de Instrucciones**: Las tareas completas o frases largas (ej. *"Quiero que generes un archivo de prueba.txt"*) son detectadas como instrucciones de desarrollo y se envían intactas sin ser alteradas.
+
+---
+
+### 3. Configuración de Proveedores STT (Whisper Agnóstico)
+
+Yunta soporta cualquier servicio o contenedor compatible con la API HTTP de Whisper (`/v1/audio/transcriptions`):
+
+- **Cloudflare Workers AI (Serverless)**:
+  ```bash
+  export VOICE_API_BASE="https://tu-worker.workers.dev/v1"
+  export VOICE_MODEL="@cf/openai/whisper"
+  ```
+- **Groq Cloud (Súper Rápido)**:
+  ```bash
+  export VOICE_API_BASE="https://api.groq.com/openai/v1"
+  export VOICE_MODEL="groq/whisper-large-v3"
+  export VOICE_API_KEY="gsk_..."
+  ```
+- **Docker Local 100% Offline (0-Cloud / Privacidad)**:
+  Corre el contenedor `fedirz/faster-whisper-server` en tu puerto 8000. Yunta lo utilizará automáticamente como servidor local offline si falla la conexión en la nube.
+
+---
+
 ## Paso 7: Comandos de Sesión y Control en el REPL
 
 Durante cualquier momento de tu sesión puedes utilizar los comandos de control:

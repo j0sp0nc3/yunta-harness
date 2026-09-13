@@ -594,6 +594,16 @@ def test_decision_point_reminder_injected_after_15_calls(tmp_path, monkeypatch):
     assert "[RECORDATORIO DE SISTEMA: Han transcurrido 15 ejecuciones de herramientas." in text_blocks[0].text
 
 
+def test_read_file_scratch_not_recursively_offloaded(tmp_path, monkeypatch):
+    """read_file sobre archivos scratch o con offset/limit NO se offloadea recursivamente."""
+    monkeypatch.chdir(tmp_path)
+    a = Agent(provider=FakeProvider([]), system="s", auto_save=False)
+    largo = "X" * 10000
+    res = a._maybe_offload_result("read_file", largo, raw_input='{"path":".yunta/scratch/output_123_test.txt"}')
+    assert res == largo, "no debió offloadear de nuevo el archivo scratch"
+
+
+
 
 
 

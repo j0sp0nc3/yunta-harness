@@ -116,3 +116,16 @@ def test_cli_update_dispatch(monkeypatch, capsys):
     cli_mod.main()
     assert called == [True]
     assert "mock update" in capsys.readouterr().out
+
+
+def test_cli_roi_and_tokens_subcommands(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["yunta", "--roi"])
+    cli_mod.main()
+    out = capsys.readouterr().out
+    assert "YUNTA — DASHBOARD DE TELEMETRÍA Y RETORNO (ROI)" in out
+
+    monkeypatch.setattr(sys, "argv", ["yunta", "--tokens"])
+    cli_mod.main()
+    out2 = capsys.readouterr().out
+    assert "Tokens:" in out2 or "in=" in out2
+

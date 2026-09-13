@@ -39,6 +39,7 @@ Designed from the ground up to be completely independent of any single model pro
 - **Native MCP (Model Context Protocol) Support**: Connect local `stdio` MCP servers over JSON-RPC 2.0 without third-party agent libraries.
 - **Persistent Memory & Compound Learning**: Preserve key project facts across sessions (`.yunta/memory.json`) and store learned lessons (`.yunta/learnings.md`).
 - **Subagent Research Delegation**: Delegate intensive read-only exploration to secondary subagents without polluting the primary context window.
+- **Voice Dictation & Quick Responses (`yunta voice` / `/voice`)**: Capture audio from microphone or files with Whisper, spectral noise gate (150ms), interactive pre-review, and phonetic voice matcher (`normalize_voice_response`) for quick approvals.
 
 ---
 

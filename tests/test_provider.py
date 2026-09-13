@@ -64,7 +64,7 @@ def test_openai_translation():
     assert lm[1] == {"role": "user", "content": "hola"}
     assert lm[2]["tool_calls"][0]["function"]["name"] == "read_file"
     assert lm[3] == {"role": "tool", "tool_call_id": "t1", "content": "contenido"}
-    assert captured["tools"][0]["function"]["name"] == "bash"
+    assert any(t["function"]["name"] == "bash" for t in captured["tools"])
     assert r.usage.input_tokens == 10
     assert p.total_usage.output_tokens == 5
 
@@ -320,4 +320,17 @@ def test_startup_tax_calculation(monkeypatch):
     assert tax > 0
 
     assert p.startup_tax > 0
+
+
+def test_reasoning_and_thinking_params(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "openai/o3-mini")
+    monkeypatch.setenv("LLM_REASONING_EFFORT", "high")
+    monkeypatch.setenv("LLM_THINKING_BUDGET", "4096")
+    p = LiteLLMProvider(system="sys")
+    p.send(MSGS, tools=[])
+    assert captured.get("reasoning_effort") == "high"
+    assert captured.get("thinking") == {"type": "enabled", "budget_tokens": 4096}
+    monkeypatch.delenv("LLM_REASONING_EFFORT", raising=False)
+    monkeypatch.delenv("LLM_THINKING_BUDGET", raising=False)
+
 

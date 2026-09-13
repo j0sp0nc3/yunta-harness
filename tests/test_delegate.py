@@ -84,7 +84,8 @@ def test_no_subset_sends_all_definitions():
     p = FakeProvider(read_file_then("listo"))
     a = Agent(provider=p, system="s", confirm=lambda n, d: True)
     a.send("x")
-    assert set(p.tool_names()) == ALL_NAMES
+    expected_names = set(d.name for d in registry.definitions())
+    assert set(p.tool_names()) == expected_names
 
 
 def test_subset_only_filters_definitions_not_execution():
