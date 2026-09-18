@@ -182,6 +182,26 @@ def run_roi():
     print("└────────────────────────────────────────────────────────┘\n")
 
 
+def print_roi_footer(usage, turn_usage=None):
+    tokens_in = usage.input_tokens
+    tokens_cached = usage.cached_tokens
+    raw_tokens = usage.theoretical_raw_tokens
+    tokens_saved = max(0, raw_tokens - (tokens_in + tokens_cached))
+    savings = (tokens_cached * 0.00000095) + (tokens_saved * 0.00000125)
+
+    parts = []
+    if turn_usage:
+        t_tools = f", {turn_usage.total_tool_calls} tools" if turn_usage.total_tool_calls else ""
+        parts.append(f"Turno: +{turn_usage.input_tokens:,} in, +{turn_usage.output_tokens:,} out{t_tools}")
+
+    parts.append(f"Sesión: {tokens_in + tokens_cached:,} tokens")
+    if tokens_cached > 0 or usage.cache_rate > 0:
+        parts.append(f"⚡ {usage.cache_rate:.1f}% caché")
+    parts.append(f"💰 Ahorro API: ~${savings:.4f} USD")
+
+    print("\n📊 [ROI & Telemetría] " + " │ ".join(parts))
+
+
 def run_tokens():
     session_data = load_session()
     u = session_data.get("usage") if session_data else None
@@ -361,7 +381,10 @@ def main():
         else:
             # V5-1: sin archivo, la escucha continua del REPL toma el control
             prompt = None
-        if prompt:
+        if prompt is not None and not prompt.strip() and voice_input_file:
+            print("⚠️ No se pudo obtener transcripción de audio.")
+            return
+        if prompt and prompt.strip():
             print(f"\n🗣️ Transcripción capturada ({len(prompt)} caracteres):\n   \"{prompt[:300]}{'...' if len(prompt) > 300 else ''}\"\n")
             prompt = offload_transcript(prompt)
             if not auto_confirm:
@@ -386,9 +409,6 @@ def main():
                         print("🚫 Operación cancelada.")
                         return
             args_cleaned.append(prompt)
-        else:
-            print("⚠️ No se pudo obtener transcripción de audio.")
-            return
 
     feedback = FeedbackStore()
     system = load_system_prompt(feedback, light=light)
@@ -461,7 +481,10 @@ def main():
             confirm=confirm_cb,
         )
         try:
+            prev_u = agent.total_usage
             agent.send(prompt)
+            curr_u = agent.total_usage
+            print_roi_footer(curr_u, curr_u.delta(prev_u))
         except KeyboardInterrupt:
             print()
         except QuotaExhausted as e:
@@ -540,7 +563,11 @@ def main():
     if agent.think_override:
         print(f"🧠 Modo Razonamiento Profundo: FORZADO EN {agent.think_override.upper()}")
     if voice_listener is not None:
-        print("🎙️ Escucha continua activa (VAD calibrado). Habla cuando quieras; di \"salir\" para terminar.\n")
+        print("🎙️ MODO VOZ CONTINUA — ciclo de cada turno:")
+        print("   🟢 en espera  →  🔴 escuchando (al detectar tu voz)")
+        print("   →  🟠 transcribiendo (tras 1.5s de silencio)  →  🤖 el agente responde")
+        print("   (micrófono en silencio mientras el agente trabaja o el TTS habla)")
+        print('   Di "salir" para terminar. Frases cortas ("métricas", "sí") se resuelven local.\n')
     else:
         print("Escribe tu consulta, /help para ver comandos, o /exit para salir.\n")
 
@@ -815,10 +842,13 @@ def main():
                 if voice_listener is not None:
                     voice_listener.pause()
                 try:
+                    prev_u = agent.total_usage
                     res_text = agent.send(prompt)
+                    curr_u = agent.total_usage
+                    print_roi_footer(curr_u, curr_u.delta(prev_u))
                     if agent.messages:
                         try:
-                            save_session(agent.messages, agent.total_usage, model=provider.model())
+                            save_session(agent.messages, curr_u, model=provider.model())
                         except Exception:
                             pass
                     if speak_mode and res_text:

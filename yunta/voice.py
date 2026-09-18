@@ -791,11 +791,14 @@ class VoiceListener:
                 samples = np.frombuffer(raw, dtype="<i2")
                 rms = int(np.sqrt(np.mean(samples.astype(float) ** 2)))
                 if rms >= self.threshold:
+                    if not utterance:
+                        print("\n🔴 escuchando... (habla; cierra con 1.5s de silencio)", flush=True)
                     utterance.extend(raw)
                     silence_ms_acc = 0
                 elif utterance:
                     silence_ms_acc += self.BLOCK_MS
                     if silence_ms_acc >= self.silence_ms:
+                        print("\r🟠 frase cerrada, transcribiendo...          ", flush=True)
                         self._finish_utterance(bytes(utterance))
                         utterance.clear()
                         silence_ms_acc = 0
@@ -808,6 +811,7 @@ class VoiceListener:
 
     def _finish_utterance(self, audio: bytes) -> None:
         if len(audio) < self.SAMPLE_RATE * 2 * 0.3:  # < 0.3s: ruido espurio
+            print("\r🟢 en espera de tu voz...                       ", flush=True)
             return
         import tempfile
         import wave
