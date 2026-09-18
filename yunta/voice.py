@@ -62,6 +62,33 @@ def _clean_response_text(text: str) -> str:
     return t.strip()
 
 
+def _levenshtein(a: str, b: str) -> int:
+    """Distancia de edición clásica (DP con una fila) — sin dependencias externas."""
+    if a == b:
+        return 0
+    if not a or not b:
+        return max(len(a), len(b))
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        curr = [i]
+        for j, cb in enumerate(b, 1):
+            curr.append(min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = curr
+    return prev[-1]
+
+
+def _fuzzy_in(word: str, candidates: set[str]) -> bool:
+    """Tolerancia fonética ante errores de Whisper (V5-3): distancia ≤1 para
+    palabras cortas (≤5 chars) y ≤2 para largas."""
+    for cand in candidates:
+        max_d = 1 if len(cand) <= 5 else 2
+        if abs(len(word) - len(cand)) > max_d:
+            continue
+        if _levenshtein(word, cand) <= max_d:
+            return True
+    return False
+
+
 def normalize_voice_response(text: str) -> str:
     """Normaliza y compara respuestas de voz o texto frecuente para aprobaciones o elecciones.
 
@@ -71,6 +98,7 @@ def normalize_voice_response(text: str) -> str:
     - 'e': si coincide con sinónimos de edición ("editar", "modificar", "cambiar", etc.)
     - 'siempre': si coincide con aprobación permanente ("siempre", "para siempre")
     - El texto original sin modificar si no es una palabra/frase corta de respuesta rápida.
+    Frases de una palabra no exactas se comparan con tolerancia fonética (V5-3).
     """
     if not text:
         return text
@@ -88,6 +116,17 @@ def normalize_voice_response(text: str) -> str:
         return "c"
     if cleaned in EDIT_SYNONYMS:
         return "e"
+
+    # Fuzzy (V5-3): una sola palabra no exacta contra los sinónimos de cada acción
+    if " " not in cleaned:
+        if _fuzzy_in(cleaned, ALWAYS_SYNONYMS):
+            return "siempre"
+        if _fuzzy_in(cleaned, APPROVAL_SYNONYMS):
+            return "s"
+        if _fuzzy_in(cleaned, REJECTION_SYNONYMS):
+            return "c"
+        if _fuzzy_in(cleaned, EDIT_SYNONYMS):
+            return "e"
 
     words = cleaned.split()
     if len(words) <= 4:
@@ -570,3 +609,226 @@ def record_microphone(duration: int | None = None, output_path: str = None) -> s
         "No se detectó un micrófono activo o librerías de audio. "
         "Puedes instalar el soporte completo de voz ejecutando: `pip install yunta-harness[voice]`"
     )
+
+
+# ============================ Escucha continua (V5-1) ============================
+
+# Comandos REPL resolubles por voz sin consultar al LLM (0 tokens).
+# Ampliable por el usuario en .yunta/voice_keywords.json sin tocar código.
+DEFAULT_VOICE_KEYWORDS: dict[str, str] = {
+    "salir": "/exit",
+    "terminar sesion": "/exit",
+    "cerrar sesion": "/exit",
+    "limpiar": "/clear",
+    "borrar conversacion": "/clear",
+    "metricas": "/metrics",
+    "consumo": "/tokens",
+    "presupuesto": "/roi",
+    "rentabilidad": "/roi",
+    "permisos": "/permissions",
+    "reanudar": "/resume",
+    "hablar": "/speak on",
+    "activar voz": "/speak on",
+    "silencio": "/speak off",
+    "desactivar voz": "/speak off",
+}
+
+
+def load_voice_keywords() -> dict[str, str]:
+    """Carga las palabras clave por defecto + las del usuario (.yunta/voice_keywords.json).
+
+    El archivo es un JSON plano {"frase hablada": "comando REPL"}: las palabras
+    clave del usuario persisten entre sesiones y ahorran consultas al LLM."""
+    keywords = dict(DEFAULT_VOICE_KEYWORDS)
+    path = Path(".yunta") / "voice_keywords.json"
+    try:
+        if path.exists():
+            custom = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(custom, dict):
+                keywords.update({k.lower().strip(): v for k, v in custom.items()})
+    except Exception:
+        pass
+    return keywords
+
+
+def route_keyword(text: str, keywords: dict[str, str] | None = None) -> str | None:
+    """Si la frase hablada es una palabra clave conocida, retorna el comando REPL
+    equivalente (0 consultas LLM). None si debe ir al modelo."""
+    if not text:
+        return None
+    if keywords is None:
+        keywords = load_voice_keywords()
+    cleaned = _clean_response_text(text)
+    if not cleaned:
+        return None
+    if cleaned in keywords:
+        return keywords[cleaned]
+    # Fuzzy de una sola palabra ("métricas" → "metricas" ya lo maneja el clean;
+    # toleramos errores de Whisper también aquí)
+    if " " not in cleaned:
+        for kw, cmd in keywords.items():
+            if " " not in kw and _fuzzy_in(cleaned, {kw}):
+                return cmd
+    return None
+
+
+class VoiceListener:
+    """Escucha continua del micrófono con VAD por umbral RMS calibrado (V5-1).
+
+    Hilo daemon: detecta el inicio de voz, acumula el audio hasta 1.5s de
+    silencio y deposita la transcripción de cada frase en una cola. Requiere
+    `sounddevice` (opcional). `pause()` evita el eco mientras el agente genera
+    o el TTS habla.
+    """
+
+    SAMPLE_RATE = 16000
+    BLOCK_MS = 480  # ~30 muestras de Whisper por bloque, baja latencia
+
+    def __init__(self, transcriber: AudioTranscriber | None = None, silence_ms: int = 1500):
+        self.transcriber = transcriber or AudioTranscriber()
+        self.silence_ms = silence_ms
+        self.threshold = int(os.environ.get("YUNTA_VAD_THRESHOLD", "0")) or None
+        self._queue: "queue.Queue[str]" = __import__("queue").Queue()
+        self._blocks: "queue.Queue[bytes]" = __import__("queue").Queue()
+        self._paused = __import__("threading").Event()
+        self._stopped = __import__("threading").Event()
+        self._thread = None
+        self._stream = None
+
+    # --- ciclo de vida ---
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        try:
+            import sounddevice  # dependencia opcional
+        except ImportError as err:
+            raise NotImplementedError(
+                "La escucha continua requiere `sounddevice` (pip install sounddevice)."
+            ) from err
+        self._calibrate()
+        import threading
+
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="yunta-mic")
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stopped.set()
+        self._paused.clear()
+        if self._stream is not None:
+            try:
+                self._stream.close()
+            except Exception:
+                pass
+
+    def pause(self) -> None:
+        """Silencia el micrófono (eco del TTS o generación del agente)."""
+        self._paused.set()
+
+    def resume(self) -> None:
+        self._paused.clear()
+
+    # --- consumo de frases ---
+    def get(self, timeout: float | None = None) -> str | None:
+        try:
+            return self._queue.get(timeout=timeout)
+        except Exception:
+            return None
+
+    # --- internos ---
+    def _calibrate(self) -> None:
+        """Mide 1s de ruido ambiental y fija el umbral de voz (3x el RMS ambiente)."""
+        if self.threshold is not None:
+            return
+        import numpy as np
+        import sounddevice as sd
+
+        blocks = []
+        frames = int(self.SAMPLE_RATE * 1.0)
+
+        def cb(indata, nframes, time_info, status):
+            blocks.append(indata.copy())
+
+        with sd.InputStream(samplerate=self.SAMPLE_RATE, channels=1, dtype="int16",
+                            blocksize=int(self.SAMPLE_RATE * self.BLOCK_MS / 1000), callback=cb):
+            import time
+
+            t0 = time.monotonic()
+            while sum(len(b) for b in blocks) < frames and time.monotonic() - t0 < 2.0:
+                time.sleep(0.05)
+        if not blocks:
+            self.threshold = 600
+            return
+        ambient = np.concatenate(blocks)
+        self.threshold = max(int(np.sqrt(np.mean(ambient.astype(float) ** 2)) * 3), 350)
+
+    def _loop(self) -> None:
+        import numpy as np
+        import sounddevice as sd
+
+        def cb(indata, nframes, time_info, status):
+            if not self._stopped.is_set():
+                self._blocks.put(indata.tobytes())
+
+        utterance = bytearray()
+        silence_ms_acc = 0
+        block_samples = int(self.SAMPLE_RATE * self.BLOCK_MS / 1000)
+
+        try:
+            self._stream = sd.InputStream(samplerate=self.SAMPLE_RATE, channels=1,
+                                          dtype="int16", blocksize=block_samples, callback=cb)
+            self._stream.start()
+            import time
+
+            while not self._stopped.is_set():
+                try:
+                    raw = self._blocks.get(timeout=0.2)
+                except Exception:
+                    continue
+                if self._paused.is_set():
+                    utterance.clear()
+                    silence_ms_acc = 0
+                    continue
+                samples = np.frombuffer(raw, dtype="<i2")
+                rms = int(np.sqrt(np.mean(samples.astype(float) ** 2)))
+                if rms >= self.threshold:
+                    utterance.extend(raw)
+                    silence_ms_acc = 0
+                elif utterance:
+                    silence_ms_acc += self.BLOCK_MS
+                    if silence_ms_acc >= self.silence_ms:
+                        self._finish_utterance(bytes(utterance))
+                        utterance.clear()
+                        silence_ms_acc = 0
+                    else:
+                        # conservar el silencio final natural de la frase
+                        utterance.extend(raw)
+        except Exception as err:
+            if not self._stopped.is_set():
+                print(f"\n⚠️ Escucha continua detenida: {err}")
+
+    def _finish_utterance(self, audio: bytes) -> None:
+        if len(audio) < self.SAMPLE_RATE * 2 * 0.3:  # < 0.3s: ruido espurio
+            return
+        import tempfile
+        import wave
+
+        try:
+            fd, wav_path = tempfile.mkstemp(suffix=".wav", prefix="yunta_vad_")
+            os.close(fd)
+            with wave.open(wav_path, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(self.SAMPLE_RATE)
+                wf.writeframes(audio)
+            try:
+                text = self.transcriber.transcribe(wav_path).strip()
+            finally:
+                try:
+                    os.remove(wav_path)
+                except OSError:
+                    pass
+            # "you" es la alucinación típica de Whisper sobre ruido espurio
+            if text and text.lower() != "you":
+                self._queue.put(text)
+        except Exception:
+            pass

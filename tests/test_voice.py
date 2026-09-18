@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 import pytest
 
-from yunta.voice import AudioTranscriber, AudioChunker, normalize_voice_response
+from yunta.voice import AudioTranscriber, VoiceListener, route_keyword, AudioChunker, normalize_voice_response
 from yunta.tools.voice import transcribe_audio, generate_study_notes
 
 
@@ -152,3 +152,101 @@ def test_chunker_passes_tail_as_prompt_and_supports_interrupt(tmp_path, monkeypa
     assert "transcripción parcial" in result
     # Los chunks no procesados fueron limpiados
     assert not tmp_path.joinpath("c2.mp3").exists()
+
+
+# ==================== V5-1/V5-3: escucha continua y fuzzy ====================
+
+def test_fuzzy_matching_tolerates_whisper_errors():
+    """V5-3: errores fonéticos de una palabra se mapean a la acción correcta."""
+    assert normalize_voice_response("aprobau") == "s"
+    assert normalize_voice_response("avansar") == "s"
+    assert normalize_voice_response("cancelal") == "c"
+    assert normalize_voice_response("editat") == "e"
+    # una frase larga y específica NO se toca (debe ir al LLM)
+    long = "explícame el algoritmo de dijkstra con un ejemplo"
+    assert normalize_voice_response(long) == long
+
+
+def test_route_keyword_resolves_locally():
+    """Las palabras clave se resuelven a comandos REPL sin consultar al LLM."""
+    assert route_keyword("métricas") == "/metrics"
+    assert route_keyword("metricass") == "/metrics"  # fuzzy
+    assert route_keyword("salir") == "/exit"
+    assert route_keyword("analiza este código por favor") is None
+
+
+def test_voice_keywords_json_overrides(tmp_path, monkeypatch):
+    """El usuario puede ampliar el registro en .yunta/voice_keywords.json."""
+    monkeypatch.chdir(tmp_path)
+    kd = tmp_path / ".yunta"
+    kd.mkdir()
+    (kd / "voice_keywords.json").write_text('{"guarda todo": "/snapshot"}', encoding="utf-8")
+    assert route_keyword("guarda todo") == "/snapshot"
+    assert route_keyword("métricas") == "/metrics"  # defaults intactos
+
+
+def test_voice_listener_vad_segments_by_silence():
+    """Segmentación VAD: bloques sobre el umbral + silencio final = una frase en cola."""
+    import struct
+
+    vl = VoiceListener.__new__(VoiceListener)  # sin __init__ (evita hardware)
+    import queue as q
+    vl._queue = q.Queue()
+    vl.silence_ms = 960
+    vl.threshold = 500
+    vl.BLOCK_MS = 480
+    vl.SAMPLE_RATE = 16000
+
+    transcribed = []
+
+    class FakeTranscriber:
+        def transcribe(self, path, prompt=""):
+            transcribed.append(path)
+            return "hola yunta"
+
+    vl.transcriber = FakeTranscriber()
+
+    def block(amplitude):
+        return struct.pack("<h", amplitude) * int(16000 * 0.48)
+
+    utterance = bytearray()
+    silence = 0
+    for raw in [block(100), block(2000), block(3000), block(2000), block(50), block(40), block(30)]:
+        # replicar la lógica del loop _loop (RMS >= threshold)
+        import numpy as np
+        samples = np.frombuffer(raw, dtype="<i2")
+        rms = int(np.sqrt(np.mean(samples.astype(float) ** 2)))
+        if rms >= vl.threshold:
+            utterance.extend(raw)
+            silence = 0
+        elif utterance:
+            silence += vl.BLOCK_MS
+            if silence >= vl.silence_ms:
+                vl._finish_utterance(bytes(utterance))
+                utterance = bytearray()
+                silence = 0
+            else:
+                utterance.extend(raw)
+
+    assert vl.get(timeout=1) == "hola yunta"
+    assert len(transcribed) == 1
+
+    # una frase de ruido puro (<0.3s de voz) no se transcribe
+    tiny = block(3000)[: int(16000 * 2 * 0.2)]  # 0.2s
+    vl._finish_utterance(tiny)
+    assert vl.get(timeout=0.2) is None
+
+
+def test_voice_listener_pause_discards_audio():
+    """En pausa (eco del TTS) el audio se descarta: no genera frases."""
+    import queue as q
+    vl = VoiceListener.__new__(VoiceListener)
+    vl._queue = q.Queue()
+    import threading
+    vl._paused = threading.Event()
+    vl._paused.set()
+    # en el loop real, _paused.is_set() → clear() del buffer; aquí verificamos la API
+    vl.pause()
+    assert vl._paused.is_set()
+    vl.resume()
+    assert not vl._paused.is_set()

@@ -348,29 +348,19 @@ def main():
             args_cleaned.append(arg)
 
     if is_voice_mode:
-        from .voice import AudioTranscriber, normalize_voice_response, record_microphone, offload_transcript
+        from .voice import AudioTranscriber, normalize_voice_response, offload_transcript
         transcriber = AudioTranscriber()
-        try:
-            if voice_input_file:
+        if voice_input_file:
+            # Transcripción de archivo + single-shot (comportamiento clásico)
+            try:
                 print(f"🎙️ Transcribiendo audio: {voice_input_file} (Ctrl+C para detener)...")
                 prompt = transcriber.transcribe(voice_input_file)
-            else:
-                try:
-                    temp_wav = record_microphone(duration=None)
-                    prompt = transcriber.transcribe(temp_wav)
-                    try:
-                        os.remove(temp_wav)
-                    except OSError:
-                        pass
-                except NotImplementedError as err:
-                    print(f"⚠️ {err}")
-                    prompt = input("Ruta al archivo de audio (.wav, .mp3, .m4a): ").strip()
-                    if prompt:
-                        prompt = transcriber.transcribe(prompt)
-        except KeyboardInterrupt:
-            print("\n⏹️ Transcripción cancelada por el usuario.")
-            return
-
+            except KeyboardInterrupt:
+                print("\n⏹️ Transcripción cancelada por el usuario.")
+                return
+        else:
+            # V5-1: sin archivo, la escucha continua del REPL toma el control
+            prompt = None
         if prompt:
             print(f"\n🗣️ Transcripción capturada ({len(prompt)} caracteres):\n   \"{prompt[:300]}{'...' if len(prompt) > 300 else ''}\"\n")
             prompt = offload_transcript(prompt)
@@ -503,18 +493,76 @@ def main():
     if think_flag:
         agent.think_override = think_flag
 
+    # V5-1: escucha continua si se pidió `yunta --voice` (sin archivo) en el REPL
+    voice_listener = None
+    if is_voice_mode and not voice_input_file and not auto_confirm:
+        from .voice import VoiceListener, load_voice_keywords, normalize_voice_response, route_keyword
+
+        try:
+            voice_listener = VoiceListener()
+            voice_listener.start()
+            agent.voice_keywords = load_voice_keywords()
+
+            def _voice_approval(name: str, detail: str = "") -> bool:
+                """Aprobación de tools 100% por voz: reactiva el micrófono (pausado
+                durante la generación), espera 'sí'/'siempre'/'no' y vuelve a pausar."""
+                if detail:
+                    print(detail)
+                print(f'🗣️ Di "sí", "siempre" o "no" para {name}...')
+                voice_listener.resume()
+                try:
+                    while True:
+                        text = voice_listener.get(timeout=180)
+                        if text is None:
+                            print("⚠️ Sin respuesta de voz: se rechaza por seguridad.")
+                            return False
+                        print(f'🗣️ "{text}"')
+                        ans = normalize_voice_response(text)
+                        if ans == "siempre":
+                            agent.session_permissions.grant_tool(name)
+                            return True
+                        if ans == "s":
+                            return True
+                        if ans == "c":
+                            return False
+                        if ans == "e":
+                            print("✏️ Edición no soportada por voz en aprobaciones: se rechaza.")
+                            return False
+                        print('(no entendido — di "sí", "siempre" o "no")')
+                finally:
+                    voice_listener.pause()
+
+            agent.voice_approval = _voice_approval
+        except NotImplementedError as err:
+            print(f"⚠️ {err}\n   Continuando con entrada por teclado.\n")
+
     print(f"yunta — modelo: {provider.model()}")
     if agent.think_override:
         print(f"🧠 Modo Razonamiento Profundo: FORZADO EN {agent.think_override.upper()}")
-    print("Escribe tu consulta, /help para ver comandos, o /exit para salir.\n")
+    if voice_listener is not None:
+        print("🎙️ Escucha continua activa (VAD calibrado). Habla cuando quieras; di \"salir\" para terminar.\n")
+    else:
+        print("Escribe tu consulta, /help para ver comandos, o /exit para salir.\n")
 
     try:
         while True:
-            try:
-                prompt = input("> ").strip()
-            except (EOFError, KeyboardInterrupt):
-                print()
-                break
+            if voice_listener is not None:
+                prompt = (voice_listener.get(timeout=0.5) or "").strip()
+                if not prompt:
+                    continue
+                # Router local: palabras clave → comando REPL sin consultar al LLM (0 tokens)
+                routed = route_keyword(prompt, getattr(agent, "voice_keywords", None))
+                if routed:
+                    print(f'🗣️ "{prompt}" → ⚡ {routed} (palabra clave local, 0 consultas LLM)\n')
+                    prompt = routed
+                else:
+                    print(f'🗣️ "{prompt}"\n')
+            else:
+                try:
+                    prompt = input("> ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    print()
+                    break
 
             # Un input nuevo corta la locución TTS en curso (no encimar audio)
             try:
@@ -762,18 +810,28 @@ def main():
                 print("🔬 [Modo Investigación & Consultoría Activo] Analizando información con contexto persistente...\n")
 
             try:
-                res_text = agent.send(prompt)
-                if agent.messages:
-                    try:
-                        save_session(agent.messages, agent.total_usage, model=provider.model())
-                    except Exception:
-                        pass
-                if speak_mode and res_text:
-                    try:
-                        from .tts import TTSProvider, speak
-                        speak(TTSProvider(), res_text)
-                    except Exception:
-                        pass
+                # Gate de eco: micrófono silenciado mientras el agente genera y
+                # mientras el TTS habla (voice_approval lo reabre si pide confirmar)
+                if voice_listener is not None:
+                    voice_listener.pause()
+                try:
+                    res_text = agent.send(prompt)
+                    if agent.messages:
+                        try:
+                            save_session(agent.messages, agent.total_usage, model=provider.model())
+                        except Exception:
+                            pass
+                    if speak_mode and res_text:
+                        try:
+                            from .tts import TTSProvider, speak, wait_until_done
+                            speak(TTSProvider(), res_text)
+                            if voice_listener is not None:
+                                wait_until_done()  # no reabrir el micrófono mientras habla
+                        except Exception:
+                            pass
+                finally:
+                    if voice_listener is not None:
+                        voice_listener.resume()
             except KeyboardInterrupt:
                 print()
             except QuotaExhausted as e:

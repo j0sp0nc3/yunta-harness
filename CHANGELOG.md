@@ -6,6 +6,19 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.7.0] — 2026-09-18
+
+- **Escucha Continua Manos Libres V5-1 (`yunta/voice.py` + `yunta/cli.py`)**:
+  - Nueva clase `VoiceListener`: hilo daemon con captura `sounddevice` (16kHz, bloques de 0.5s) y **VAD por umbral RMS calibrado con 1s de ruido ambiental** (umbral ajustable vía `YUNTA_VAD_THRESHOLD`). Detecta inicio de voz, acumula hasta 1.5s de silencio y deposita cada frase transcrita en una cola. `yunta --voice` sin archivo ya no graba una sola toma: entra al REPL con micrófono siempre activo.
+  - **Gate de eco**: el micrófono se pausa mientras el agente genera y mientras el TTS habla (nueva `wait_until_done()` en `tts.py`), evitando que yunta se escuche a sí misma; se reanuda incluso si `send()` falla (try/finally).
+  - **Aprobación de tools 100% por voz**: nuevo hook `Agent.voice_approval` — al pedir permiso (`Aprobar bash?`), el callback reactiva el micrófono, espera "sí"/"siempre"/"no" (con fuzzy fonético) y vuelve a pausarlo. Sin respuesta en 180s rechaza por seguridad.
+- **Fuzzy Matching Fonético V5-3 (`yunta/voice.py`)**:
+  - `normalize_voice_response` ahora tolera errores de transcripción de Whisper en palabras sueltas vía Levenshtein (≤1 para palabras ≤5 chars, ≤2 para largas): "aprobau"→s, "avansar"→s, "cancelal"→c, "editat"→e. Frases largas quedan intactas (van al LLM).
+- **Router de Palabras Clave Local — 0 consultas LLM (`yunta/voice.py`)**:
+  - `route_keyword()` + `load_voice_keywords()`: frases habladas como "métricas", "salir", "limpiar", "rentabilidad" se resuelven a comandos REPL localmente sin gastar tokens. **Registro persistente ampliable por el usuario** en `.yunta/voice_keywords.json` (`{"frase": "/comando"}`) que sobrevive entre sesiones.
+  - El REPL de voz anuncia cuándo una frase se resolvió localmente: `⚡ /metrics (palabra clave local, 0 consultas LLM)`.
+- **Tests: 248** (5 nuevos: fuzzy, router, overrides de keywords JSON, segmentación VAD por silencio con audio sintético, API de pausa/reanudación). Smoke test de hardware: calibración y captura OK.
+
 ## [2.6.0] — 2026-09-15
 
 - **Replanteo del TTS al estándar de yunta (`yunta/tts.py`, 2026-09-18)**:

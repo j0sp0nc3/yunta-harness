@@ -256,3 +256,11 @@ def stop_speaking() -> None:
     if _speak_thread is not None and _speak_thread.is_alive():
         _speak_thread.join(timeout=1.0)
     _speak_thread = None
+
+
+def wait_until_done(timeout: float = 300.0) -> None:
+    """Espera (bloqueante) a que termine la locución en curso — usado por el
+    gate de eco para no reabrir el micrófono mientras el TTS habla."""
+    t = _speak_thread
+    if t is not None and t.is_alive():
+        t.join(timeout=timeout)

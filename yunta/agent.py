@@ -119,6 +119,10 @@ class Agent:
         self._tool_calls_since_reminder: int = 0
         self.think_override: str | None = None
         self.current_reasoning_effort: str = "off"
+        # V5-1: callback opcional de aprobación por voz (inyectado por el REPL
+        # con escucha continua). Si está seteado, reemplaza todo prompt de permiso.
+        self.voice_approval = None
+        self.voice_keywords = None
 
     def send(self, prompt: str) -> str:
         from .intent import IntentClassifier
@@ -441,6 +445,9 @@ class Agent:
     def _approve(
         self, name: str, detail: str = "", raw_input: str = "", force_prompt: bool = False
     ) -> bool:
+        # V5-1: en modo voz continua la aprobación es 100% hablada
+        if self.voice_approval is not None:
+            return self.voice_approval(name, detail)
         if not force_prompt:
             if self.confirm is not None:
                 return self.confirm(name, detail)
