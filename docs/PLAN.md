@@ -293,6 +293,30 @@ Iniciativas candidatas para potenciar la interacción por voz, respuesta parlant
 - **V5-5 (Diarización de Hablantes en Audios Extensos)**: Soporte para identificación de hablantes (`[Hablante 1]`, `[Hablante 2]`) en `AudioChunker` y `transcribe_audio` para reuniones y cátedras universitarias.
 
 
+## Backlog v6 (Robustez del pipeline STT para audios largos — 2026-09-14)
+
+Iniciativas derivadas del análisis comparativo contra implementaciones de referencia (WhisperX, faster-whisper, OpenAI Cookbook Whisper guide). Client-side, sin nuevas dependencias salvo indicación:
+
+### Nivel 1 — alto impacto, ~60 líneas
+
+- **V6-1 🔴 Marcas de tiempo reales por chunk (ffprobe)**: Medir la duración real de cada fragmento con ffprobe en lugar de asumir `índice × 10 min`; con `-c copy` los segmentos varían y las marcas actuales se desincronizan acumulativamente.
+- **V6-2 🔴 Retry por chunk con backoff**: 3 reintentos ante 429/5xx por fragmento antes de rendirse; una cátedra de 2h son ~12 requests y hoy un fallo transitorio deja un chunk vacío silencioso.
+- **V6-3 🔴 Checkpoint incremental de transcripción**: Persistir cada transcript de fragmento a `.yunta/scratch/transcript_<audio>.part<N>.txt` al completarse; si el proceso muere, relanzar reanuda desde el último chunk en vez de empezar de cero.
+- **V6-4 🟡 Filtro de alucinaciones de Whisper**: Descartar/flaggear chunks que solo contienen frases alucinadas conocidas ("Gracias por ver el video", "Subtítulos por...", "Amara.org") en silencios largos.
+
+### Nivel 2 — moderado, ~40 líneas
+
+- **V6-5 🟡 Corte de chunks en silencios**: Usar `ffmpeg silencedetect` para cortar cada fragmento (límite 10 min) en la pausa natural más cercana en vez de corte fijo — elimina palabras partidas entre fragmentos (técnica estándar en WhisperX/faster-whisper).
+- **V6-6 🟢 Chunks en paralelo (ThreadPool 2-3)**: Transcripción 2-3x más rápida si el endpoint STT tolera concurrencia; controlar rate limits.
+
+### Nivel 3 — server-side, cambio de stack (mediano plazo)
+
+- **V6-7 🟡 faster-whisper local con VAD Silero**: Imagen Docker en localhost:8000 (ya soportado por `AudioTranscriber` como fallback): ~4x realtime, sin límite de 25MB ni bloqueos de Cloudflare, y el VAD elimina alucinaciones de raíz. Opción correcta si la transcripción de cátedras es diaria.
+- **V6-8 🟢 Diarización pyannote**: Identificación de hablantes en cátedras/entrevistas (relacionado con V5-5); dependencia pesada (~2GB de modelos) — solo si el caso de uso lo exige.
+
+Referencias: [WhisperX](https://github.com/m-bain/whisperx), [faster-whisper VAD](https://github.com/SYSTRAN/faster-whisper/issues/183), [OpenAI Cookbook Whisper processing guide](https://developers.openai.com/cookbook/examples/whisper_processing_guide), [Long-form transcription guide](https://medium.com/@yoad/whisper-long-form-transcription-1924c94a9b86).
+
+
 ## Mejoras M-A a M-F — del análisis empírico del dogfooding (docs/LECCIONES-DOGFOODING.md)
 
 - **M-A 🔴 auto-feedback en single-shot**: summarize() al completar CLI -y.

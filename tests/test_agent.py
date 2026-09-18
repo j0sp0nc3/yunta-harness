@@ -409,7 +409,7 @@ def test_session_permissions_always_skips_same_pattern(monkeypatch):
 
 
 def test_session_permissions_pattern_is_per_first_token(monkeypatch):
-    """Un comando distinto (otro primer token) SÍ vuelve a preguntar."""
+    """'siempre' aprueba la tool completa: un comando distinto NO vuelve a preguntar (V2.5.1)."""
     agent, _ = _approval_scenario(monkeypatch, ["siempre"])
     assert agent.session_permissions.allowed("bash", "rm temporal.txt")
 
@@ -426,7 +426,7 @@ def test_session_permissions_pattern_is_per_first_token(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda _p="": (prompts.append(_p), "s")[1])
     p2_agent = Agent(provider=p, system="s", auto_save=False, session_permissions=agent.session_permissions)
     p2_agent.send("usa curl")
-    assert prompts, "patrón distinto (curl) debió volver a preguntar"
+    assert prompts == [], "'siempre' debió aprobar cualquier comando de bash sin volver a preguntar"
 
 
 def test_session_permissions_grant_via_s_also_stores_pattern(monkeypatch):
@@ -477,7 +477,7 @@ def test_session_permissions_listing_has_entries(monkeypatch):
     """items() expone la lista para /permissions."""
     agent, _ = _approval_scenario(monkeypatch, ["siempre"])
     items = agent.session_permissions.items()
-    assert ("bash", "rm") in items
+    assert ("bash", "*") in items
 
 
 def test_long_output_offloaded_to_scratch_file(tmp_path, monkeypatch):

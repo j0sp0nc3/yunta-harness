@@ -98,3 +98,57 @@ def test_generate_study_notes_tool(tmp_path):
     assert "Guía Maestra de Estudio" in content
     assert "Glosario de Términos Médicos" in content
     assert "Diagrama de Flujo" in content
+
+
+def test_offload_transcript_short_kept(tmp_path, monkeypatch):
+    """Transcripts cortos entran completos al contexto."""
+    from yunta.voice import offload_transcript
+    monkeypatch.chdir(tmp_path)
+    text = "transcripción corta"
+    assert offload_transcript(text) == text
+
+
+def test_offload_transcript_long_saved_to_scratch(tmp_path, monkeypatch):
+    """Transcripts >8000 chars se guardan en .yunta/scratch/ con preview + referencia."""
+    from yunta.voice import offload_transcript
+    monkeypatch.chdir(tmp_path)
+    text = "clase de cardiología. " * 1000  # ~22K chars
+    result = offload_transcript(text)
+    assert len(result) < 1000
+    assert "guardado en:" in result
+    scratch_files = list((tmp_path / ".yunta" / "scratch").glob("transcript_*.txt"))
+    assert len(scratch_files) == 1
+    assert scratch_files[0].read_text(encoding="utf-8") == text
+
+
+def test_chunker_passes_tail_as_prompt_and_supports_interrupt(tmp_path, monkeypatch):
+    """AudioChunker: (1) pasa el final del chunk anterior como prompt de continuidad,
+    (2) Ctrl+C interrumpe y devuelve transcripción parcial marcada."""
+    from yunta.voice import AudioChunker, AudioTranscriber
+
+    calls = []
+
+    class FakeTranscriber(AudioTranscriber):
+        def transcribe(self, file_path, prompt=""):
+            calls.append(prompt)
+            # Interrumpir en el fragmento 3 de 4
+            if len(calls) == 3:
+                raise KeyboardInterrupt
+            return f"texto del fragmento {len(calls)} con terminología médica"
+
+    chunker = AudioChunker(FakeTranscriber())
+    chunks = [str(tmp_path / f"c{i}.mp3") for i in range(4)]
+    for c in chunks:
+        Path(c).write_bytes(b"\xff\xfb\x90\x00" + b"x" * 1024)  # frame MP3 fake + contenido
+
+    monkeypatch.setattr(chunker, "split_audio_by_silence", lambda fp, cm=10: chunks)
+    result = chunker.transcribe_large_audio("audio.mp3")
+
+    assert "[00:00:00]" in result and "[00:10:00]" in result
+    # Continuidad: chunk 2 recibió el tail del chunk 1 como prompt
+    assert calls[1] == "texto del fragmento 1 con terminología médica"[-200:]
+    # Interrupción conservó lo transcrito y lo marcó como parcial
+    assert "fragmento 2" in result and "fragmento 4" not in result
+    assert "transcripción parcial" in result
+    # Los chunks no procesados fueron limpiados
+    assert not tmp_path.joinpath("c2.mp3").exists()

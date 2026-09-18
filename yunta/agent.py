@@ -73,8 +73,12 @@ class SessionPermissions:
     def grant(self, tool: str, raw: str) -> None:
         self._granted.add(self._pattern(tool, raw))
 
+    def grant_tool(self, tool: str) -> None:
+        """'siempre' aprueba la tool completa: un comando distinto no vuelve a preguntar."""
+        self._granted.add((tool, "*"))
+
     def allowed(self, tool: str, raw: str) -> bool:
-        return self._pattern(tool, raw) in self._granted
+        return (tool, "*") in self._granted or self._pattern(tool, raw) in self._granted
 
     def revoke_all(self) -> None:
         self._granted.clear()
@@ -216,7 +220,7 @@ class Agent:
                         )
 
                 if resp.stop_reason != StopReason.TOOL_USE or not has_tool_call:
-                    return "\n".join(final_text).strip()
+                    break  # respuesta final: salir del bucle para pasar por auto_save
 
                 # V3-5: Recordatorios como role:user en punto de decisión (tras ~15 tool calls)
                 if self._tool_calls_since_reminder >= 15:
@@ -457,8 +461,9 @@ class Agent:
             if ans in ("s", "si", "y", "yes"):
                 return True
             if ans in ("siempre", "always"):
-                if raw_input:
-                    self.session_permissions.grant(name, raw_input)
+                # V2.5.1: 'siempre' aprueba la tool completa (antes solo memorizaba
+                # el primer token del comando y volvía a preguntar ante cada comando nuevo).
+                self.session_permissions.grant_tool(name)
                 return True
             if ans in ("c", "n", "no"):
                 return False
@@ -477,3 +482,8 @@ class Agent:
             tool_errors=self.usage.tool_errors,
             turns=self.usage.turns,
         )
+
+    @total_usage.setter
+    def total_usage(self, value: Usage) -> None:
+        """Restaura usage acumulado de una sesión previa (usado por /resume)."""
+        self.usage = value

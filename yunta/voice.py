@@ -165,6 +165,40 @@ def trim_initial_noise_and_silence(wav_path: str, noise_gate_ms: int = 150, lead
     return wav_path
 
 
+def offload_transcript(text: str, preview_chars: int = 500, threshold: int = 8000) -> str:
+    """Si el transcript supera el umbral, lo guarda en .yunta/scratch/ y retorna
+    un preview + referencia, para no saturar el contexto del agente (V3-3)."""
+    if len(text) <= threshold:
+        return text
+    from datetime import datetime
+
+    scratch_dir = Path(".yunta") / "scratch"
+    scratch_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    scratch_file = scratch_dir / f"transcript_{ts}.txt"
+    scratch_file.write_text(text, encoding="utf-8")
+    preview = text[:preview_chars]
+    return (
+        f"{preview}\n\n[... transcript completo ({len(text)} caracteres, {len(text)//4} tokens aprox) "
+        f"guardado en: {scratch_file} — usa read_file con offset/limit para leerlo por partes]"
+    )
+
+
+class _TranscribeError(Exception):
+    """Error HTTP o de red al transcribir, con clasificación para retry/fragmentación."""
+
+    def __init__(self, msg: str, code: int | None, detail: str):
+        super().__init__(msg)
+        self.code = code
+        self.detail = detail.lower()
+        self.too_large = "too large" in self.detail or "3006" in self.detail or self.code == 413
+        self.retryable = (
+            self.code is None
+            or (self.code is not None and self.code >= 500)
+            or self.code == 429
+        )
+
+
 class AudioTranscriber:
     """Cliente HTTP nativo y agnóstico a proveedores para transcripción de voz (Whisper)."""
 
@@ -185,7 +219,12 @@ class AudioTranscriber:
         )
 
     def transcribe(self, file_path: str, prompt: str = "") -> str:
-        """Transcribe un archivo de audio (.mp3, .wav, .m4a, .ogg, .webm)."""
+        """Transcribe un archivo de audio (.mp3, .wav, .m4a, .ogg, .webm).
+
+        - Reintenta hasta 3 veces ante errores transitorios (429/5xx) con backoff (V6-2).
+        - Si el endpoint rechaza el payload por tamaño (3006/"too large"), reintenta
+          automáticamente fragmentando el audio en partes menores (V6-2).
+        """
         path = Path(file_path)
         if not path.exists():
             raise FileNotFoundError(f"Archivo de audio no encontrado: {file_path}")
@@ -194,6 +233,38 @@ class AudioTranscriber:
         if path.stat().st_size > 25 * 1024 * 1024:
             return AudioChunker(self).transcribe_large_audio(str(path))
 
+        last_err = None
+        for attempt in range(3):
+            try:
+                return self._post_transcription(path, prompt)
+            except _TranscribeError as err:
+                last_err = err
+                if err.too_large:
+                    # El endpoint rechaza el tamaño: fragmentar y reintentar.
+                    # Guard: bajo ~256 KB ya no tiene sentido seguir dividiendo.
+                    if path.stat().st_size <= 256 * 1024:
+                        break
+                    print(f"⚠️ Endpoint rechazó el audio por tamaño ({err}). Reintentando por fragmentos...")
+                    return AudioChunker(self).transcribe_large_audio(str(path))
+                if err.retryable and attempt < 2:
+                    wait = (attempt + 1) * 3
+                    print(f"⚠️ {err}. Reintentando en {wait}s (intento {attempt + 2}/3)...")
+                    import time
+
+                    time.sleep(wait)
+                    continue
+                break
+        if last_err is not None:
+            print(f"⚠️ Error de transcripción con {self.api_base}: {last_err}")
+        # Fallback: servidor Whisper local (Docker) en localhost:8000, si no era la URL principal
+        local_text = self.transcribe_offline_local(str(path))
+        if local_text:
+            print("💡 (Transcripción realizada con el servidor Whisper local de resguardo)")
+            return local_text
+        return ""
+
+    def _post_transcription(self, path: Path, prompt: str = "") -> str:
+        """Un POST multipart al endpoint de transcripción. Lanza _TranscribeError."""
         endpoint = f"{self.api_base}/audio/transcriptions"
         boundary = f"----WebKitFormBoundary{uuid.uuid4().hex}"
 
@@ -243,13 +314,15 @@ class AudioTranscriber:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 return data.get("text", "")
+        except urllib.error.HTTPError as err:
+            try:
+                detail = err.read().decode("utf-8", errors="replace")[:200]
+            except Exception:
+                detail = ""
+            raise _TranscribeError(f"HTTP {err.code}: {detail or err.reason}", err.code, detail) from err
         except Exception as err:
-            # Fallback de transcripción local offline vía contenedor Whisper o speech_recognition
-            local_text = self.transcribe_offline_local(str(path))
-            if local_text:
-                print("💡 (Transcripción realizada con el servidor Whisper local de respaldo)")
-                return local_text
-            return ""
+            # Errores de red (timeout, DNS, conexión): reintentables
+            raise _TranscribeError(f"{type(err).__name__}: {err}", None, "") from err
 
     def transcribe_offline_local(self, file_path: str) -> str:
         """Transcribe audio localmente mediante contenedor Whisper Docker en localhost:8000 o speech_recognition."""
@@ -294,13 +367,15 @@ class AudioTranscriber:
             except Exception:
                 pass
 
-        # 2. Fallback secundario mediante speech_recognition local si está instalado
+        # 2. Respaldo local offline vía `faster_whisper` (Lazy Loading) si está instalado
         try:
-            import speech_recognition as sr
-            r = sr.Recognizer()
-            with sr.AudioFile(str(path)) as source:
-                audio_data = r.record(source)
-                return r.recognize_google(audio_data, language="es-ES")
+            from faster_whisper import WhisperModel
+            model_size = os.environ.get("LOCAL_WHISPER_MODEL", "tiny")
+            model = WhisperModel(model_size, device="cpu", compute_type="int8")
+            segments, _ = model.transcribe(str(path), language="es")
+            text = " ".join(s.text.strip() for s in segments if s.text.strip()).strip()
+            if text:
+                return text
         except Exception:
             pass
 
@@ -314,30 +389,78 @@ class AudioChunker:
         self.transcriber = transcriber
 
     def transcribe_large_audio(self, file_path: str) -> str:
-        """Divide el audio en fragmentos de 10 minutos y concatena las transcripciones."""
+        """Divide el audio en fragmentos de 10 minutos y concatena las transcripciones.
+
+        - Continuidad: el final del fragmento anterior se pasa como 'prompt' de
+          Whisper al siguiente, para mantener nombres propios y terminología.
+        - Ctrl+C: interrumpe la transcripción y devuelve lo transcrito hasta ese
+          momento, marcado como parcial.
+        """
         chunks = self.split_audio_by_silence(file_path)
         transcripts = []
+        tail = ""
+        # Offset temporal acumulado: proporcional a bytes (corte binario) o minutos (ffmpeg)
+        total_size = sum(os.path.getsize(c) for c in chunks) or 1
+        total_secs = self._estimate_duration_secs(file_path) or (len(chunks) * 600)
+        offset_secs = 0.0
 
-        for idx, chunk_file in enumerate(chunks):
-            # Agregar marca de tiempo estimada (ej. [00:10:00])
-            mins = idx * 10
-            hours = mins // 60
-            remaining_mins = mins % 60
-            timestamp = f"[{hours:02d}:{remaining_mins:02d}:00]"
+        try:
+            for idx, chunk_file in enumerate(chunks):
+                print(f"🎙️ Transcribiendo fragmento {idx + 1}/{len(chunks)} (Ctrl+C para detener)...")
+                h, rem = int(offset_secs // 3600), int(offset_secs % 3600)
+                timestamp = f"[{h:02d}:{rem // 60:02d}:{rem % 60:02d}]"
 
-            text = self.transcriber.transcribe(chunk_file)
-            transcripts.append(f"{timestamp}\n{text.strip()}")
+                text = self.transcriber.transcribe(chunk_file, prompt=tail).strip()
+                transcripts.append(f"{timestamp}\n{text}")
+                # Whisper usa ~200 caracteres finales como guía de continuidad
+                tail = text[-200:] if text else tail
+                offset_secs += (os.path.getsize(chunk_file) / total_size) * total_secs
 
-            # Limpiar archivo temporal de fragmento
-            try:
-                os.remove(chunk_file)
-            except OSError:
-                pass
+                # Limpiar archivo temporal de fragmento
+                try:
+                    os.remove(chunk_file)
+                except OSError:
+                    pass
+        except KeyboardInterrupt:
+            print("\n⏹️ Transcripción interrumpida por el usuario. Conservando lo transcrito hasta ahora...")
+            for chunk_file in chunks[idx:]:
+                try:
+                    os.remove(chunk_file)
+                except (OSError, NameError):
+                    pass
 
-        return "\n\n".join(transcripts)
+        if not transcripts:
+            return ""
+        result = "\n\n".join(transcripts)
+        if tail and len(transcripts) < len(chunks):
+            result += "\n\n[NOTA: transcripción parcial — el proceso fue detenido por el usuario antes de completar todos los fragmentos.]"
+        return result
 
-    def split_audio_by_silence(self, file_path: str, chunk_minutes: int = 10) -> list[str]:
-        """Divide el archivo de audio usando ffmpeg si está disponible, o fragmentos físicos."""
+    @staticmethod
+    def _estimate_duration_secs(file_path: str) -> float:
+        """Estima la duración de un MP3 asumiendo CBR (bitrate del primer frame). 0 si no se puede."""
+        if Path(file_path).suffix.lower() != ".mp3":
+            return 0.0
+        _BITRATES = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0]
+        try:
+            data = Path(file_path).read_bytes()[:8192]
+            for i in range(len(data) - 4):
+                b = data[i:i + 4]
+                if b[0] == 0xFF and (b[1] & 0xE0) == 0xE0:  # sync MP3 frame
+                    bitrate = _BITRATES[(b[2] >> 4) & 0x0F] * 1000
+                    if bitrate:
+                        return (os.path.getsize(file_path) * 8) / bitrate
+        except Exception:
+            pass
+        return 0.0
+
+    def split_audio_by_silence(self, file_path: str, chunk_minutes: int = 10, chunk_bytes: int = 1024 * 1024) -> list[str]:
+        """Divide el archivo de audio usando ffmpeg si está disponible.
+
+        Sin ffmpeg: para MP3 se permite el corte por bytes (~1 MB por fragmento)
+        porque sus frames son autocontenidos y decodifican desde casi cualquier
+        offset; para otros formatos se falla con mensaje claro.
+        """
         temp_dir = tempfile.mkdtemp(prefix="yunta_audio_")
         chunk_files = []
 
@@ -357,24 +480,30 @@ class AudioChunker:
         except Exception:
             pass
 
-        # Fallback: si ffmpeg no está, dividir el archivo binario en partes de ~15MB
-        chunk_size = 15 * 1024 * 1024
-        path = Path(file_path)
-        ext = path.suffix or ".mp3"
+        # Fallback por bytes: solo válido para MP3 (frames autocontenidos).
+        # Si el archivo ya cabe en un fragmento, dividirlo en 2 mitades de todos
+        # modos: garantiza progreso si el endpoint rechaza el tamaño actual.
+        if Path(file_path).suffix.lower() == ".mp3":
+            size = os.path.getsize(file_path)
+            effective = min(chunk_bytes, max(1, size // 2))
+            with open(file_path, "rb") as src:
+                part = 0
+                while True:
+                    data = src.read(effective)
+                    if not data:
+                        break
+                    part_file = os.path.join(temp_dir, f"chunk_{part:03d}.mp3")
+                    with open(part_file, "wb") as dst:
+                        dst.write(data)
+                    chunk_files.append(part_file)
+                    part += 1
+            if chunk_files:
+                return chunk_files
 
-        with open(file_path, "rb") as src:
-            part = 0
-            while True:
-                data = src.read(chunk_size)
-                if not data:
-                    break
-                part_file = os.path.join(temp_dir, f"chunk_{part:03d}{ext}")
-                with open(part_file, "wb") as dst:
-                    dst.write(data)
-                chunk_files.append(part_file)
-                part += 1
-
-        return chunk_files
+        raise RuntimeError(
+            f"ffmpeg no está disponible y es necesario para fragmentar '{file_path}' "
+            "(formato no MP3 o audio de varias horas). Instálalo: https://ffmpeg.org/download.html"
+        )
 
 
 def record_microphone(duration: int | None = None, output_path: str = None) -> str:

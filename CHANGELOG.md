@@ -6,6 +6,62 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.6.0] — 2026-09-15
+
+- **Módulo Neutral de Síntesis de Voz Hablada TTS (`yunta/tts.py`)**:
+  - `TTSProvider`: Motor agnóstico de salida de voz con fallback automático en 2 niveles: proveedor primario HTTP OpenAI-compatible (`/v1/audio/speech`, Cloudflare Worker) y respaldo secundario con Microsoft Edge TTS (`edge-tts` con voces neuronales en español de alta fidelidad `es-CL-CatalinaNeural`).
+  - `chunk_text_by_sentences`: Troceo inteligente por oraciones y pausas de puntuación para iniciar la reproducción de audio en menos de 0.5s sin esperar a la finalización completa de la respuesta del LLM.
+- **Respaldo Local Offline de Transcripción `faster-whisper` (`yunta/voice.py`)**:
+  - Carga bajo demanda (*lazy import*) de `faster-whisper` en `transcribe_offline_local` para permitir transcripción local en CPU con 0 MB de costo de inicio.
+- **Soporte CLI y REPL para Lectura Hablada (`yunta/cli.py`)**:
+  - Bandera CLI `--speak` / `-s` y comando interactivo REPL `/speak [on|off]` para activar y desactivar la lectura en voz alta de las respuestas del agente.
+- **Pruebas Unitarias Ampliadas (`tests/test_tts.py`)**:
+  - Suite de pruebas unitarias verificando inicialización, troceo por oraciones y mecanismos de resiliencia del motor TTS.
+
+## [2.5.1] — 2026-09-14
+
+- **Diagnóstico y resilencia STT ante fallos del endpoint (`yunta/voice.py`)**:
+  - Causa raíz encontrada transcribiendo `SDD.mp3` (8.9 MB): el worker de Cloudflare pasa el audio a Workers AI como array JSON de números (`[...Uint8Array]`), lo que infla el payload ~4-5x y Workers AI lo rechaza con `3006: Request is too large` de forma intermitente. El worker devolvía 500 genérico.
+  - `AudioTranscriber.transcribe()` ahora reintenta 3x con backoff ante errores transitorios (429/5xx/timeout), y ante error "too large"/3006/413 **fragmenta el audio automáticamente** y reintenta por partes (guard anti-recursión bajo 256 KB).
+  - `AudioChunker` soporta corte por bytes (~1 MB) para MP3 sin ffmpeg (frames autocontenidos; verificado empíricamente); para otros formatos sin ffmpeg falla con mensaje claro.
+  - Marcas de tiempo de fragmentos ahora proporcionales a bytes con duración MP3 estimada por bitrate (antes `índice × 10 min`, incorrecto con cortes binarios).
+  - Fix worker (`scratch/yunta-stt-worker`, pusheado a GitHub): error 3006 mapeado a HTTP 413 con mensaje accionable.
+  - Verificado con audio real: `SDD.mp3` completo → 9.310 caracteres transcritos (algunos fragmentos requirieron retry).
+- **Backlog v6 registrado (`docs/PLAN.md`, por instrucción humana)**:
+  - Robustez del pipeline STT para audios largos, derivada del análisis comparativo contra WhisperX/faster-whisper/OpenAI Cookbook: V6-1 timestamps reales (ffprobe), V6-2 retry por chunk, V6-3 checkpoint incremental, V6-4 filtro de alucinaciones, V6-5 corte en silencios, V6-6 chunks en paralelo, V6-7 faster-whisper local con VAD, V6-8 diarización. Priorizados por nivel de impacto y costo.
+- **Fix: crash de `/resume` en REPL (`yunta/agent.py`)**:
+  - `AttributeError: property 'total_usage' of 'Agent' object has no setter` — el handler de `/resume` en el REPL asignaba `agent.total_usage` (propiedad de solo lectura). Se agregó un setter que restaura el usage acumulado de la sesión previa en `agent.usage`.
+- **Offload de transcripts largos a scratch (`yunta/voice.py` + `yunta/cli.py`)**:
+  - Nueva función `offload_transcript()`: transcripciones >8.000 caracteres se guardan en `.yunta/scratch/transcript_*.txt` y al agente solo le entra un preview de 500 chars con la ruta y estimación de tokens. Antes el transcript completo entraba de golpe al contexto y el SlidingWindow terminaba expulsándolo por ser el mensaje más viejo. Aplica tanto en `yunta voice` (arranque) como en `/voice` (REPL).
+- **Continuidad entre fragmentos de Whisper (`yunta/voice.py`)**:
+  - `AudioChunker` pasa ahora los últimos ~200 caracteres del fragmento anterior como `prompt` de Whisper al siguiente, manteniendo coherencia de nombres propios y terminología técnica en cátedras largas. Además muestra progreso por fragmento (`fragmento 3/12`).
+- **Cancelación de transcripciones largas con Ctrl+C (`yunta/voice.py` + `yunta/cli.py`)**:
+  - Ctrl+C durante la transcripción de un audio grande interrumpe el proceso, conserva los fragmentos ya transcritos (marcados como "[NOTA: transcripción parcial...]"), limpia los temporales y devuelve el control al REPL. En modo single-shot cancela limpiamente.
+- **Fix: 'siempre' ahora aprueba la tool completa (`yunta/agent.py`)**:
+  - Antes, responder "siempre" a "Aprobar bash?" memorizaba solo el primer token del comando (`("bash","git")`), por lo que cada comando nuevo volvía a preguntar. Ahora registra un comodín `("bash","*")` que aprueba toda la tool por el resto de la sesión. Tests actualizados a la nueva semántica.
+- **Fix: `-y`/`--yes` ahora aplica también en el REPL (`yunta/cli.py`)**:
+  - El agente del modo interactivo se creaba sin el callback `confirm`, así que `--yes` solo silenciaba aprobaciones en single-shot y --chunks, pero seguía preguntando en el chat interactivo.
+- **Proveedor Secundario con Endpoint Propio (`yunta/provider.py`)**:
+  - Nuevas variables `LLM_FALLBACK_MODEL` / `LLM_FALLBACK_API_BASE` / `LLM_FALLBACK_API_KEY`: si el proveedor primario falla (429/503/cuota), el router conmuta a un endpoint y credencial completamente distintos. Ejemplo verificado contra la doc oficial de Z.AI (`docs.z.ai/guides/llm/glm-5.3`): GLM-5.3 vía GLM Coding Plan usa protocolo OpenAI Chat en `https://api.z.ai/api/coding/paas/v4` con model ID `glm-5.3` (los suscriptores del Coding Plan no pueden usar el endpoint Anthropic). Antes la cascada `LLM_MODELS` solo cambiaba el nombre del modelo; ahora base URL y API key se conmutan junto con el modelo.
+  - Documentado en `.env.example` y en la ayuda de variables del CLI.
+- **Grabación en vivo ilimitada en REPL (`yunta/cli.py`)**:
+  - `/voice` y `/listen` sin archivo ahora graban indefinidamente hasta presionar ENTER (igual que `yunta voice`), en lugar del límite fijo de 5 segundos que cortaba la conversación hablada dentro del chat.
+- **Eliminado fallback oculto a Google (`yunta/voice.py`)**:
+  - Se removió `recognize_google` como último recurso de transcripción: el audio del micrófono ya no se envía a un servicio cloud sin consentimiento explícito (regla #2 de AGENTS.md: sin fallbacks ocultos).
+- **Errores de transcripción visibles (`yunta/voice.py`)**:
+  - Un fallo HTTP contra el endpoint STT ahora imprime la causa real (URL y error) en lugar de solo "No se obtuvo transcripción".
+- **Chunking sin ffmpeg falla con mensaje claro (`yunta/voice.py`)**:
+  - Para audios >25 MB sin ffmpeg instalado se lanza `RuntimeError` indicando cómo instalarlo; el fallback anterior dividía el archivo en partes binarias crudas que producían fragmentos de audio corruptos.
+- **Desacoplamiento de `LLM_API_BASE` para Modelos Gemini Nativos (`yunta/provider.py`)**:
+  - Se corrigió el enrutamiento para asegurar que los modelos oficiales de Google Gemini (`gemini/gemini-3.6-flash`) omitan `api_base` cuando este apunta a proxies como Z.AI, conectando directamente con el endpoint oficial `https://generativelanguage.googleapis.com`.
+- **Carga Nativa de Archivos de Entorno `.env` (`yunta/cli.py`)**:
+  - Se agregó `_load_dotenv()` al inicio de `main()` para cargar automáticamente variables desde `.env` en la raíz del proyecto o `~/.yunta/.env` sin necesidad de librerías externas.
+  - Creados los archivos [`.env`](file:///c:/Users/HP/.zcode/workspace/default/yunta/.env) y [`.env.example`](file:///c:/Users/HP/.zcode/workspace/default/yunta/.env.example), y actualizado `.gitignore` para proteger credenciales.
+- **Soporte REPL Interactivo para `/resume` y `--resume` (`yunta/cli.py`)**:
+  - Se añadió la captura de `/resume`, `--resume` y `-r` directamente dentro del bucle del REPL interactivo para cargar la sesión anterior desde `.yunta/session_state.json` sin enviar el texto de la bandera como prompt al modelo de IA.
+- **Script de Modo Investigación para Transcripción de Audio en Lote (`scripts/investigar_audios.py`)**:
+  - Evaluación masiva de transcripciones de audio (.mp3, .wav, .m4a, .ogg) con métricas e informe de rendimiento.
+
 ## [2.5.0] — 2026-09-13
 
 ### Corregido & Mejorado

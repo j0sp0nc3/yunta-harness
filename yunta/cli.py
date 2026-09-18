@@ -15,7 +15,7 @@ from .init import run_init
 from .resilience import QuotaExhausted
 from .sandbox import cleanup_sandbox, create_sandbox
 from .server_mcp import serve_stdio
-from .session import clear_session, load_session
+from .session import clear_session, load_session, save_session
 from .json_server import serve_json_stdin
 from .mcp import load_mcp_servers
 from .provider import LiteLLMProvider
@@ -143,6 +143,9 @@ Comandos Interactivos del REPL (dentro de Yunta):
 Variables de Entorno Principales:
   LLM_MODEL                    Proveedor/modelo a utilizar (ej. gemini/gemini-2.5-flash, openai/gpt-4o)
   LLM_MODELS                   Cascada de respaldo separada por comas (ante 429/503/cuota agotada)
+  LLM_FALLBACK_MODEL           Proveedor secundario con endpoint propio (ej. openai/glm-5.3)
+  LLM_FALLBACK_API_BASE        URL base del proveedor secundario
+  LLM_FALLBACK_API_KEY         Credencial del proveedor secundario
   LLM_API_BASE                 URL base para endpoints OpenAI-compatibles (ej. http://localhost:8000/v1)
   LLM_API_KEY                  API Key o token Bearer para el endpoint
   VOICE_MODEL                  Modelo STT de voz Whisper (default: whisper-1)
@@ -205,7 +208,35 @@ def run_context():
     print("└────────────────────────────────────────────────────────┘\n")
 
 
+def _load_dotenv():
+    """Carga automáticamente variables de entorno desde un archivo .env si existe."""
+    if os.environ.get("YUNTA_NO_DOTENV"):
+        return
+    project_root = Path(__file__).resolve().parent.parent
+    possible_paths = [
+        project_root / ".env",
+        Path.cwd() / ".env",
+        Path.home() / ".yunta" / ".env",
+    ]
+    for env_path in possible_paths:
+        if env_path.exists() and env_path.is_file():
+            try:
+                for line in env_path.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, val = line.split("=", 1)
+                    key = key.strip()
+                    val = val.strip().strip('"').strip("'")
+                    if key:
+                        os.environ[key] = val
+            except Exception:
+                pass
+
+
+
 def main():
+    _load_dotenv()
     mcp_clients: list = []
     if sys.platform == "win32":
         try:
@@ -292,10 +323,13 @@ def main():
     think_flag = None
     voice_input_file = None
     is_voice_mode = False
+    speak_mode = False
     args_cleaned = []
     for arg in sys.argv[1:]:
         if arg in ("--resume", "-r"):
             resume = True
+        elif arg in ("--speak", "-s"):
+            speak_mode = True
         elif arg in ("--yes", "-y"):
             auto_confirm = True
         elif arg == "--chunks":
@@ -314,27 +348,32 @@ def main():
             args_cleaned.append(arg)
 
     if is_voice_mode:
-        from .voice import AudioTranscriber, normalize_voice_response, record_microphone
+        from .voice import AudioTranscriber, normalize_voice_response, record_microphone, offload_transcript
         transcriber = AudioTranscriber()
-        if voice_input_file:
-            print(f"🎙️ Transcribiendo audio: {voice_input_file}...")
-            prompt = transcriber.transcribe(voice_input_file)
-        else:
-            try:
-                temp_wav = record_microphone(duration=None)
-                prompt = transcriber.transcribe(temp_wav)
+        try:
+            if voice_input_file:
+                print(f"🎙️ Transcribiendo audio: {voice_input_file} (Ctrl+C para detener)...")
+                prompt = transcriber.transcribe(voice_input_file)
+            else:
                 try:
-                    os.remove(temp_wav)
-                except OSError:
-                    pass
-            except NotImplementedError as err:
-                print(f"⚠️ {err}")
-                prompt = input("Ruta al archivo de audio (.wav, .mp3, .m4a): ").strip()
-                if prompt:
-                    prompt = transcriber.transcribe(prompt)
+                    temp_wav = record_microphone(duration=None)
+                    prompt = transcriber.transcribe(temp_wav)
+                    try:
+                        os.remove(temp_wav)
+                    except OSError:
+                        pass
+                except NotImplementedError as err:
+                    print(f"⚠️ {err}")
+                    prompt = input("Ruta al archivo de audio (.wav, .mp3, .m4a): ").strip()
+                    if prompt:
+                        prompt = transcriber.transcribe(prompt)
+        except KeyboardInterrupt:
+            print("\n⏹️ Transcripción cancelada por el usuario.")
+            return
 
         if prompt:
-            print(f"\n🗣️ Transcripción capturada:\n   \"{prompt}\"\n")
+            print(f"\n🗣️ Transcripción capturada ({len(prompt)} caracteres):\n   \"{prompt[:300]}{'...' if len(prompt) > 300 else ''}\"\n")
+            prompt = offload_transcript(prompt)
             if not auto_confirm:
                 print("Opciones: [ENTER/s] Enviar al agente | [e] Editar texto | [c] Cancelar")
                 try:
@@ -459,6 +498,7 @@ def main():
         compactor=compactor,
         initial_messages=initial_messages,
         initial_usage=initial_usage,
+        confirm=(lambda n, desc: True) if auto_confirm else None,
     )
     if think_flag:
         agent.think_override = think_flag
@@ -529,32 +569,37 @@ def main():
 
             if prompt.startswith("/voice") or prompt.startswith("/listen"):
                 target_audio = prompt.split(maxsplit=1)[1].strip() if " " in prompt else None
-                from .voice import AudioTranscriber, record_microphone
+                from .voice import AudioTranscriber, record_microphone, offload_transcript
                 transcriber = AudioTranscriber()
-                if target_audio:
-                    print(f"🎙️ Transcribiendo audio: {target_audio}...")
-                    prompt = transcriber.transcribe(target_audio)
-                else:
-                    print("🎙️ Grabando micrófono durante 5 segundos (modo manos libres)...")
-                    try:
-                        temp_wav = record_microphone(duration=5)
-                        prompt = transcriber.transcribe(temp_wav)
+                try:
+                    if target_audio:
+                        print(f"🎙️ Transcribiendo audio: {target_audio} (Ctrl+C para detener)...")
+                        prompt = transcriber.transcribe(target_audio)
+                    else:
+                        print("🎙️ Grabando micrófono en vivo... Presiona [ENTER] en la terminal cuando termines de hablar.")
                         try:
-                            os.remove(temp_wav)
-                        except OSError:
-                            pass
-                    except NotImplementedError as err:
-                        print(f"⚠️ {err}")
-                        prompt = input("Ruta al archivo de audio (.wav, .mp3, .m4a): ").strip()
-                        if prompt:
-                            prompt = transcriber.transcribe(prompt)
+                            temp_wav = record_microphone(duration=None)
+                            prompt = transcriber.transcribe(temp_wav)
+                            try:
+                                os.remove(temp_wav)
+                            except OSError:
+                                pass
+                        except NotImplementedError as err:
+                            print(f"⚠️ {err}")
+                            prompt = input("Ruta al archivo de audio (.wav, .mp3, .m4a): ").strip()
+                            if prompt:
+                                prompt = transcriber.transcribe(prompt)
+                except KeyboardInterrupt:
+                    print("\n⏹️ Transcripción cancelada por el usuario.\n")
+                    continue
 
                 if not prompt:
                     print("⚠️ No se obtuvo transcripción de audio.\n")
                     continue
 
                 from .voice import normalize_voice_response
-                print(f"\n🗣️ Transcripción capturada:\n   \"{prompt}\"\n")
+                print(f"\n🗣️ Transcripción capturada ({len(prompt)} caracteres):\n   \"{prompt[:300]}{'...' if len(prompt) > 300 else ''}\"\n")
+                prompt = offload_transcript(prompt)
                 print("Opciones: [ENTER/s] Enviar al agente | [e] Editar texto | [c] Cancelar")
                 try:
                     raw_act = input("> ").strip()
@@ -679,6 +724,26 @@ def main():
                 st = provider.startup_tax
                 print(u.format_summary(startup_tax=st) + "\n")
                 continue
+            if prompt in ("/resume", "--resume", "-r"):
+                sess = load_session()
+                if sess and sess.get("messages"):
+                    agent.messages = sess["messages"]
+                    if sess.get("usage"):
+                        agent.total_usage = sess["usage"]
+                    print(f"✨ Sesión reanudada ({len(agent.messages)} mensajes cargados en contexto).\n")
+                else:
+                    print("(no hay ninguna sesión previa guardada para reanudar)\n")
+                continue
+
+            if prompt in ("/speak", "--speak", "-s") or prompt.startswith("/speak "):
+                sub = prompt[7:].strip().lower() if prompt.startswith("/speak ") else ""
+                if sub in ("off", "desactivar", "0", "false"):
+                    speak_mode = False
+                    print("🔊 Modo de lectura hablada (TTS) desactivado.\n")
+                else:
+                    speak_mode = True
+                    print("🔊 Modo de lectura hablada (TTS) activado.\n")
+                continue
 
             if prompt.startswith("/") and not prompt.startswith("//"):
                 print(f"Comando desconocido: '{prompt}'. Escribe /help para ver los comandos disponibles.\n")
@@ -690,10 +755,16 @@ def main():
                 print("🔬 [Modo Investigación & Consultoría Activo] Analizando información con contexto persistente...\n")
 
             try:
-                agent.send(prompt)
+                res_text = agent.send(prompt)
                 if agent.messages:
                     try:
                         save_session(agent.messages, agent.total_usage, model=provider.model())
+                    except Exception:
+                        pass
+                if speak_mode and res_text:
+                    try:
+                        from .tts import TTSProvider
+                        TTSProvider().speak(res_text)
                     except Exception:
                         pass
             except KeyboardInterrupt:

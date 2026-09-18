@@ -85,11 +85,15 @@ def test_custom_base_url():
 
 
 def test_missing_model_fails_clearly():
+    env = dict(os.environ)
+    env["LLM_MODEL"] = ""
+    env["LLM_MODELS"] = ""
+    env["YUNTA_NO_DOTENV"] = "1"
     r = subprocess.run(
         [sys.executable, "-c", "from yunta.provider import LiteLLMProvider; LiteLLMProvider(system='s')"],
         capture_output=True,
         text=True,
-        env={k: v for k, v in os.environ.items() if k != "LLM_MODEL"},
+        env=env,
     )
     assert r.returncode != 0
     assert "LLM_MODEL" in r.stderr

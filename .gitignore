@@ -8,4 +8,8 @@ build/
 .yunta/
 scratch/
 *.code-workspace
+.env
+.env.*
+!.env.example
+
 
