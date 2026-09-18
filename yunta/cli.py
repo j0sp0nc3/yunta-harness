@@ -516,6 +516,13 @@ def main():
                 print()
                 break
 
+            # Un input nuevo corta la locución TTS en curso (no encimar audio)
+            try:
+                from .tts import stop_speaking
+                stop_speaking()
+            except Exception:
+                pass
+
             if not prompt:
                 continue
             if prompt == "/exit":
@@ -763,8 +770,8 @@ def main():
                         pass
                 if speak_mode and res_text:
                     try:
-                        from .tts import TTSProvider
-                        TTSProvider().speak(res_text)
+                        from .tts import TTSProvider, speak
+                        speak(TTSProvider(), res_text)
                     except Exception:
                         pass
             except KeyboardInterrupt:

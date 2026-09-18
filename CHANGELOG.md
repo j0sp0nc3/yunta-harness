@@ -8,13 +8,19 @@ Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
 ## [2.6.0] — 2026-09-15
 
+- **Replanteo del TTS al estándar de yunta (`yunta/tts.py`, 2026-09-18)**:
+  - Reproducción Windows reescrita con **MCI vía ctypes/winmm.dll** (reproduce MP3 nativo, 0 dependencias — mismo patrón que la grabación de micrófono en voice.py). La implementación anterior usaba `System.Media.SoundPlayer`, que solo reproduce WAV y fallaba silenciosamente ante el MP3 que produce el TTS.
+  - `speak()` ahora es **no-bloqueante** (hilo daemon): el REPL sigue usable mientras habla; una respuesta nueva o un nuevo input corta la locución anterior vía `stop_speaking()` (verificado con test de corte). Antes bloqueaba el REPL con `PlaySync()` pese a documentar lo contrario.
+  - Fallback de síntesis (edge-tts) ahora **anunciado en terminal** ("💡 voz: Edge TTS"), cumpliendo la regla de transparencia de yunta (sin fallbacks ocultos): `synthesize()` retorna `(audio, proveedor)` explícito.
+  - Corregido User-Agent inconsistente ("Yunta/2.6.0" → "Yunta/2.5.1 Client") y fallback de reproducción no-Windows a ffplay/mpv.
+  - Tests: 8 (3 nuevos: transparencia del fallback, no-bloqueo + corte, texto vacío). Total suite: 243.
 - **Módulo Neutral de Síntesis de Voz Hablada TTS (`yunta/tts.py`)**:
   - `TTSProvider`: Motor agnóstico de salida de voz con fallback automático en 2 niveles: proveedor primario HTTP OpenAI-compatible (`/v1/audio/speech`, Cloudflare Worker) y respaldo secundario con Microsoft Edge TTS (`edge-tts` con voces neuronales en español de alta fidelidad `es-CL-CatalinaNeural`).
   - `chunk_text_by_sentences`: Troceo inteligente por oraciones y pausas de puntuación para iniciar la reproducción de audio en menos de 0.5s sin esperar a la finalización completa de la respuesta del LLM.
 - **Respaldo Local Offline de Transcripción `faster-whisper` (`yunta/voice.py`)**:
   - Carga bajo demanda (*lazy import*) de `faster-whisper` en `transcribe_offline_local` para permitir transcripción local en CPU con 0 MB de costo de inicio.
 - **Soporte CLI y REPL para Lectura Hablada (`yunta/cli.py`)**:
-  - Bandera CLI `--speak` / `-s` y comando interactivo REPL `/speak [on|off]` para activar y desactivar la lectura en voz alta de las respuestas del agente.
+  - Bandera CLI `--speak` / `-s` y comando interactivo REPL `/speak [on|off]` para activar y desactivar la lectura en voz alta de las respuestas del agente. Un nuevo input del usuario corta la locución en curso.
 - **Pruebas Unitarias Ampliadas (`tests/test_tts.py`)**:
   - Suite de pruebas unitarias verificando inicialización, troceo por oraciones y mecanismos de resiliencia del motor TTS.
 

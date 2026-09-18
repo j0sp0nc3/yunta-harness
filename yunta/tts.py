@@ -1,24 +1,27 @@
 """Módulo neutral de síntesis de voz (Text-to-Speech / TTS) para Yunta.
 
-Implementa un pipeline de salida de audio de bajo costo ($0 USD) con estrategia de
-resiliencia en 2 niveles:
-1. Proveedor Primario: HTTP OpenAI-compatible endpoint (/v1/audio/speech)
-   configurable vía TTS_API_BASE.
-2. Proveedor Secundario / Fallback: Microsoft Edge TTS (edge-tts) con voces
-   neuronales en español de alta fidelidad (ej. es-CL-CatalinaNeural).
+Cadena de resiliencia en 2 niveles:
+1. Proveedor Primario: HTTP OpenAI-compatible (/v1/audio/speech) configurable
+   vía TTS_API_BASE.
+2. Respaldo: Microsoft Edge TTS (edge-tts) con voces neuronales en español
+   (ej. es-CL-CatalinaNeural). El respaldo se anuncia en terminal, nunca es
+   silencioso (regla de yunta: sin fallbacks ocultos).
 
-Soporta troceo por oraciones (sentence chunking) para reducir la latencia de
-reproducción a menos de 0.5 segundos.
+Reproducción sin dependencias: en Windows usa MCI vía ctypes/winmm.dll (igual
+que la grabación de micrófono en voice.py); en otros sistemas, ffplay/mpv si
+están en PATH. La síntesis y reproducción corren en un hilo daemon: el REPL
+nunca se bloquea y una respuesta nueva corta la locución anterior.
 """
 
 import asyncio
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
 import sys
 import tempfile
-import urllib.error
+import threading
 import urllib.request
 
 
@@ -54,7 +57,7 @@ def chunk_text_by_sentences(text: str, max_words: int = 25) -> list[str]:
 
 
 class TTSProvider:
-    """Proveedor agnóstico de síntesis de voz (TTS) con fallback transparente."""
+    """Proveedor agnóstico de síntesis de voz (TTS) con fallback anunciado."""
 
     def __init__(
         self,
@@ -63,7 +66,6 @@ class TTSProvider:
         api_key: str | None = None,
         voice: str | None = None,
     ):
-        import os
         self.model = model or os.environ.get("TTS_MODEL") or "@cf/meta/mms-tts-spa"
         base = api_base or os.environ.get("TTS_API_BASE") or os.environ.get("VOICE_API_BASE") or "http://localhost:8000/v1"
         self.api_base = base.rstrip("/")
@@ -82,7 +84,7 @@ class TTSProvider:
 
         req = urllib.request.Request(endpoint, data=payload, method="POST")
         req.add_header("Content-Type", "application/json")
-        req.add_header("User-Agent", "Yunta/2.6.0 Client")
+        req.add_header("User-Agent", "Yunta/2.5.1 Client")
         if self.api_key:
             req.add_header("Authorization", f"Bearer {self.api_key}")
 
@@ -93,9 +95,8 @@ class TTSProvider:
             return None
 
     def synthesize_edge_tts(self, text: str) -> bytes | None:
-        """Sintetiza audio de alta fidelidad neuronal utilizando edge-tts (fallback)."""
+        """Sintetiza audio neuronal con edge-tts: librería Python y, si no, su CLI."""
         try:
-            # Intento 1: usar la librería edge_tts de Python si está disponible
             import edge_tts
 
             async def _gen() -> bytes:
@@ -110,7 +111,6 @@ class TTSProvider:
         except Exception:
             pass
 
-        # Intento 2: usar la herramienta de línea de comandos edge-tts si está instalada en el sistema
         try:
             with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
                 tmp_path = Path(tmp.name)
@@ -134,74 +134,125 @@ class TTSProvider:
 
         return None
 
-    def synthesize(self, text: str) -> bytes | None:
-        """Sintetiza texto a audio retornando bytes en formato MP3 o WAV con fallback."""
+    def synthesize(self, text: str) -> tuple[bytes | None, str]:
+        """Sintetiza texto a MP3. Retorna (audio, proveedor_usado) — el respaldo
+        se devuelve explícito para que el llamador lo anuncie (sin fallback oculto)."""
         if not text or not text.strip():
-            return None
+            return None, ""
 
-        # 1. Probar proveedor HTTP primario (Cloudflare Worker / OpenAI TTS API)
         audio = self.synthesize_http(text)
         if audio and len(audio) > 100:
-            return audio
+            return audio, "http"
 
-        # 2. Respaldo secundario: Microsoft Edge TTS (edge-tts neuronal gratis)
         audio = self.synthesize_edge_tts(text)
         if audio and len(audio) > 100:
-            return audio
+            return audio, "edge-tts"
 
-        return None
+        return None, ""
 
-    def play_audio(self, audio_bytes: bytes) -> bool:
-        """Reproduce un bloque de audio en el sistema local sin bloquear la ejecución."""
+    @staticmethod
+    def _play_mci_win32(path: Path, max_seconds: float = 60.0, should_stop=None) -> bool:
+        """Reproduce MP3/WAV con MCI (winmm.dll) vía ctypes — 0 dependencias, Windows."""
+        import ctypes
+        import time
+
+        winmm = ctypes.windll.winmm
+        alias = "yunta_tts"
+        ok = winmm.mciSendStringW(f'open "{path}" type mpegvideo alias {alias}', None, 0, 0)
+        if ok != 0:
+            return False
+        try:
+            winmm.mciSendStringW(f"play {alias}", None, 0, 0)
+            deadline = time.monotonic() + max_seconds
+            status = ctypes.create_unicode_buffer(32)
+            while time.monotonic() < deadline:
+                if should_stop is not None and should_stop():
+                    break
+                winmm.mciSendStringW(f"status {alias} mode", status, 32, 0)
+                if status.value != "playing":
+                    break
+                time.sleep(0.05)
+            winmm.mciSendStringW(f"stop {alias}", None, 0, 0)
+            return True
+        finally:
+            winmm.mciSendStringW(f"close {alias}", None, 0, 0)
+
+    def play_audio(self, audio_bytes: bytes, should_stop=None) -> bool:
+        """Reproduce un bloque de audio MP3 y retorna si lo logró."""
         if not audio_bytes:
             return False
 
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+            tmp.write(audio_bytes)
+            tmp_path = Path(tmp.name)
+
+        played = False
         try:
-            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-                tmp.write(audio_bytes)
-                tmp_path = Path(tmp.name)
-
-            # Intentar reproducción con reproductores comunes de sistema (ffplay, mpv, vlc, powershell)
             if sys.platform == "win32":
-                ps_script = (
-                    f"$player = New-Object System.Media.SoundPlayer; "
-                    f"$player.SoundLocation = '{tmp_path}'; $player.PlaySync()"
-                )
-                cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_script]
-                res = subprocess.run(cmd, capture_output=True, timeout=10)
-                if res.returncode == 0:
+                played = self._play_mci_win32(tmp_path, should_stop=should_stop)
+            if not played:
+                # Linux/macOS: ffplay o mpv si están en PATH
+                for player in (["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"],
+                               ["mpv", "--no-video", "--really-quiet"]):
                     try:
-                        tmp_path.unlink()
-                    except OSError:
-                        pass
-                    return True
-
-            # Fallback con ffplay si está disponible en PATH
+                        res = subprocess.run(player + [str(tmp_path)], capture_output=True, timeout=60)
+                        if res.returncode == 0:
+                            played = True
+                            break
+                    except Exception:
+                        continue
+        finally:
             try:
-                subprocess.run(
-                    ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", str(tmp_path)],
-                    capture_output=True,
-                    timeout=15,
-                )
-                try:
-                    tmp_path.unlink()
-                except OSError:
-                    pass
-                return True
-            except Exception:
+                tmp_path.unlink()
+            except OSError:
                 pass
-        except Exception:
-            pass
+        return played
 
+
+# --- Locución no-bloqueante: un solo hilo daemon, la respuesta nueva corta la anterior ---
+
+_speak_thread: threading.Thread | None = None
+_speak_stop = threading.Event()
+_playback_lock = threading.Lock()
+
+
+def speak(provider: TTSProvider, text: str) -> bool:
+    """Lee texto en voz alta en segundo plano (hilo daemon). No bloquea el REPL.
+    Retorna True si la locución inició. Una llamada nueva corta la anterior."""
+    global _speak_thread
+
+    if not text or not text.strip():
         return False
+    stop_speaking()
+    _speak_stop.clear()
 
-    def speak(self, text: str) -> None:
-        """Procesa y lee en voz alta una respuesta completa fragmentándola por oraciones."""
-        chunks = chunk_text_by_sentences(text)
-        if not chunks:
-            return
+    def _worker():
+        announced_edge = False
+        for chunk in chunk_text_by_sentences(text):
+            if _speak_stop.is_set():
+                break
+            audio, source = provider.synthesize(chunk)
+            if not audio:
+                continue
+            if source == "edge-tts" and not announced_edge:
+                print("\n💡 (voz: Edge TTS — respaldo del endpoint TTS principal)")
+                announced_edge = True
+            with _playback_lock:
+                if _speak_stop.is_set():
+                    break
+                provider.play_audio(audio, should_stop=lambda: _speak_stop.is_set())
 
-        for chunk in chunks:
-            audio = self.synthesize(chunk)
-            if audio:
-                self.play_audio(audio)
+    _speak_thread = threading.Thread(target=_worker, daemon=True, name="yunta-tts")
+    _speak_thread.start()
+    return True
+
+
+def stop_speaking() -> None:
+    """Corta la locución en curso (bloquea hasta liberar la reproducción actual)."""
+    global _speak_thread
+    _speak_stop.set()
+    with _playback_lock:
+        pass
+    if _speak_thread is not None and _speak_thread.is_alive():
+        _speak_thread.join(timeout=1.0)
+    _speak_thread = None
