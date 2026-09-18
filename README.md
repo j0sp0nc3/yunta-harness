@@ -36,7 +36,9 @@ En la metodología **Spec-Driven Development (SDD)**, el código no se genera po
 - 🔬 **Edición Quirúrgica de Código (`str_replace`)**: Edita fragmentos exactos de archivos validando unicidad de contexto al estilo de Anthropic Claude Code y SWE-bench.
 - 🔄 **Resiliencia & Tolerancia a Fallos**: Escritura atómica anti-corrupción (`.tmp`), auto-guardado de estado (`.yunta/session_state.json`), conmutación automática entre modelos ante 429/503 (`LLM_MODELS`), y recuperación con `yunta --resume`.
 - 💸 **Control de Presupuesto, ROI y Undo**: Compactación por etapas (70%/85%/99%), dashboard de ahorro en USD (`/roi`), telemetría de tokens (`/metrics`, `/tokens`) y time-travel undo (`/undo`).
-- 🎙️ **Dictado por Voz y Respuestas Rápidas (`yunta voice` / `/voice`)**: Captura desde micrófono local o archivos de audio con Whisper, puerta de ruido espectral (150ms), pre-revisión interactiva y normalizador fonético (`normalize_voice_response`) para confirmaciones rápidas sin presionar teclas.
+- 🎙️ **Voz Bidireccional Resiliente (STT + TTS)**: Dictado por micrófono o archivos (`yunta --voice`), transcripción serverless en Cloudflare Worker (`@cf/openai/whisper`) con fallback local `faster-whisper`, y lectura hablada en voz alta (`yunta --speak` / `/speak`) impulsada por Cloudflare Workers AI TTS y `edge-tts` (voces neuronales `es-CL-CatalinaNeural`).
+- 📄 **Carga Nativa de Entorno `.env`**: Carga de credenciales y modelos desde `.env` en la raíz del proyecto o `~/.yunta/.env` sin requerir herramientas externas.
+- 🔄 **Reanudación Transparente de Sesiones (`/resume` & `yunta --resume`)**: Guardado automático de estado ante agotamiento de cuota (429/503) y reanudación con un solo comando en el REPL o la terminal.
 - 🌐 **Soporte Nativo de MCP & JSON-RPC**: Servidor MCP stdio RPC (`yunta serve-mcp`), streaming NDJSON (`yunta serve-json`) y extensión gráfica nativa oficial para VS Code & Cursor (`yunta-vscode-extension`).
 
 ---
@@ -155,23 +157,27 @@ export LLM_API_KEY=dummy
 - `/permissions [clear]`: Muestra los permisos persistentes otorgados con 'siempre' en la sesión o los revoca (`/permissions clear`).
 - `/roi`: Despliega el dashboard de retorno de inversión, acierto de caché y ahorro estimado en USD.
 - `/metrics`: Despliega la telemetría detallada de herramientas ejecutadas, **startup tax**, errores y turnos.
+- `/speak`: Activa o desactiva la lectura hablada en voz alta de las respuestas (`/speak on` o `/speak off`).
+- `/resume`: Reanuda la sesión anterior guardada desde `.yunta/session_state.json`.
 - `/tokens`: Muestra el consumo acumulado de tokens y tasa de acierto de caché.
 - `/help`: Muestra la lista de comandos interactivos disponibles.
 - `/clear`: Limpia el historial de mensajes de la conversación actual.
 - `/exit`: Guarda lecciones aprendidas en `.yunta/learnings.md` y finaliza la sesión.
 - `Ctrl+C`: Interrumpe el turno en curso de forma limpia y regresa al prompt `> ` sin tumbar la sesión ni dejar `tool_use` huérfano.
 
-### Variables de Entorno Principales
-- `LLM_MODEL`: Proveedor/modelo a utilizar (ej. `openai/gpt-4o`, `anthropic/claude-3-7-sonnet`, `gemini/gemini-3.7-flash`, `ollama/llama3.3`).
+### Variables de Entorno Principales (`.env`)
+- `LLM_MODEL`: Proveedor/modelo a utilizar (ej. `openai/gpt-4o`, `anthropic/claude-3-7-sonnet`, `gemini/gemini-3.5-flash-lite`, `ollama/llama3.3`).
 - `LLM_MODELS`: Lista priorizada por comas para conmutación automática ante 429/503/cuota agotada.
 - `LLM_API_BASE`: Endpoint custom compatible con OpenAI (ej. `http://localhost:8000/v1`).
 - `LLM_API_KEY`: API Key o Bearer Token.
+- `VOICE_MODEL`: Modelo STT de entrada (`@cf/openai/whisper`).
+- `VOICE_API_BASE`: Endpoint del Worker Cloudflare STT (`https://yunta-stt-worker.../v1`).
+- `TTS_MODEL`: Modelo TTS de salida (`@cf/meta/mms-tts-spa`).
+- `TTS_VOICE`: Voz neuronal preferida para síntesis (`es-CL-CatalinaNeural`).
 - `YUNTA_SYSTEM_PROMPT`: Sobrescribe el System Prompt base del harness.
 - `YUNTA_MAX_TOKENS`: Presupuesto máximo de tokens para la compactación por etapas (default: `128000`).
 - `YUNTA_MAX_MESSAGES`: Tamaño máximo de ventana deslizante de historial (default: `40`).
 - `YUNTA_YES`: Activa el modo de auto-aprobación autónoma para todas las herramientas (equivalente a `-y` / `--yes`).
-- `YUNTA_BLOCKLIST_EXTRA`: Ruta a archivo con patrones regex adicionales para bloquear comandos en bash.
-- `YUNTA_ALLOW_FORCE`: Permite ejecutar `git push --force` en bash si se establece en `1`.
 
 
 ---
