@@ -1,0 +1,99 @@
+name: "Yunta Governance Check"
+description: >-
+  Audita el repositorio con `yunta check` — determinista, $0 en tokens de
+  LLM. Falla el job si el repo viola AGENTS.md/SPEC.md/PLAN.md o si la
+  suite de tests falla. No requiere LLM_MODEL ni ninguna credencial.
+author: "yunta-harness"
+
+inputs:
+  target-dir:
+    description: "Directorio del repositorio a auditar"
+    required: false
+    default: "."
+  run-tests:
+    description: "Ejecutar la suite de tests del repo auditado como parte de la auditoría"
+    required: false
+    default: "true"
+  fail-on-warning:
+    description: "Fallar el job también ante advertencias (WARN), no solo ante fallos (FAIL)"
+    required: false
+    default: "false"
+  source:
+    description: >-
+      "pypi" instala yunta-harness publicado (uso normal desde otro repo).
+      "local" instala este mismo checkout en modo editable (solo para
+      dogfooding dentro del propio repo de yunta-harness).
+    required: false
+    default: "pypi"
+  python-version:
+    description: "Versión de Python para ejecutar yunta"
+    required: false
+    default: "3.11"
+
+outputs:
+  healthy:
+    description: "'true' si la auditoría pasó sin fallos, 'false' en caso contrario"
+    value: ${{ steps.evaluate.outputs.healthy }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Instalar yunta-harness (pypi)
+      if: ${{ inputs.source == 'pypi' }}
+      shell: bash
+      run: pip install yunta-harness
+
+    - name: Instalar yunta-harness (local, dogfooding)
+      if: ${{ inputs.source == 'local' }}
+      shell: bash
+      run: pip install -e .
+
+    - name: Ejecutar yunta check
+      shell: bash
+      run: |
+        set +e
+        yunta check "${{ inputs.target-dir }}" --json ${{ inputs.run-tests == 'true' && '--tests' || '' }} > yunta-check-result.json
+        echo "exit_code=$?" >> "$GITHUB_ENV"
+        cat yunta-check-result.json
+        exit 0
+
+    - name: Evaluar resultado
+      id: evaluate
+      shell: python
+      run: |
+        import json
+        import os
+        import sys
+
+        with open("yunta-check-result.json", encoding="utf-8") as f:
+            data = json.load(f)
+
+        healthy = bool(data.get("healthy", False))
+        warnings = data.get("summary", {}).get("warnings", 0)
+        failures = data.get("summary", {}).get("failures", 0)
+        fail_on_warning = os.environ.get("FAIL_ON_WARNING", "false").lower() == "true"
+
+        github_output = os.environ.get("GITHUB_OUTPUT")
+        if github_output:
+            with open(github_output, "a", encoding="utf-8") as f:
+                f.write(f"healthy={'true' if healthy else 'false'}\n")
+
+        for key, check in data.get("checks", {}).items():
+            status = check.get("status", "?")
+            print(f"[{status}] {key}: {check.get('detail', '')}")
+
+        if not healthy:
+            print(f"::error::yunta check reportó {failures} fallo(s) — ver detalle arriba.")
+            sys.exit(1)
+        if fail_on_warning and warnings > 0:
+            print(f"::error::yunta check reportó {warnings} advertencia(s) y fail-on-warning=true.")
+            sys.exit(1)
+
+        print(f"yunta check: gobernanza saludable ({warnings} advertencia(s), 0 fallos).")
+      env:
+        FAIL_ON_WARNING: ${{ inputs.fail-on-warning }}

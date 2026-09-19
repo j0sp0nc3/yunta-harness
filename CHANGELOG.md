@@ -6,6 +6,22 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.14.3] — 2026-09-19
+
+- **Blindaje y resiliencia de transcripción de audio (`yunta/voice.py`)**:
+  - **Soporte nativo para endpoints con límites estrictos de payload (Cloudflare Workers AI)**: cuando `api_base` apunta a `workers.dev` (o se define `VOICE_CHUNK_MINUTES`), los audios mayores a 2 MB se dividen automáticamente en fragmentos de 2 minutos (~1.9 MB), evitando el error HTTP 413 (`"Audio payload too large for Workers AI... Split into smaller chunks (~1-2 MB)"`).
+  - **Fragmentación sin corrupción de contenedor AAC/M4A (`split_audio_by_silence`)**: `ffmpeg` ahora preserva la extensión original del archivo (`chunk_%03d{ext}` con `-c copy`) en lugar de forzar `.mp3`, permitiendo segmentar audios `.m4a`/AAC en milisegundos sin errores de muxing.
+  - **Reintento adaptativo ante `too_large`**: si el endpoint rechaza un fragmento por tamaño, el reintento fuerza granularidad de 1 minuto (`chunk_minutes=1`) garantizando progreso efectivo en lugar de reintentar el mismo tamaño en bucle.
+  - **Timeout de red extendido (`VOICE_TIMEOUT`)**: ampliado de 10s fijos a 60s configurables, evitando falsos `TimeoutError` durante inferencias en la nube. Extracción robusta de texto compatible con JSON OpenAI (`data.get("text")`) y Cloudflare REST directo (`data.get("result", {}).get("text")`).
+- **Tests: 338** (2 nuevos en `tests/test_voice.py`). 100% pasando.
+
+## [2.14.2] — 2026-09-19
+
+- **GitHub Action de `yunta check` (`.github/actions/check/`)**: empaqueta la auditoría de gobernanza determinista y $0-tokens como gate reutilizable de CI/CD, para que cualquier repo externo pueda bloquear PRs que violen `AGENTS.md`/`SPEC.md`/`PLAN.md` sin costo de inferencia. Inputs: `target-dir`, `run-tests`, `fail-on-warning`, `source` (`pypi` para consumo externo, `local` para dogfooding), `python-version`. Dogfooding inmediato: nuevo job `governance` en `.github/workflows/ci.yml` que la usa contra este mismo repo en cada push/PR.
+- **Spec pública del Handoff (`docs/schemas/yunta-session-spec-v1.{schema.json,md}`)**: el schema del bundle de `yunta handoff` (Feature 1, v2.8.0) vivía solo como constante interna (`SCHEMA_VERSION = 1`); ahora es un JSON Schema (draft 2020-12) versionado y documentado para que cualquier harness externo pueda implementar lectura/escritura compatible sin depender del código de yunta. `jsonschema` agregado como dependencia de **desarrollo** (no runtime) para validar la conformidad en tests.
+- **Fix defensivo — `make_voice_approval` con `session_permissions=None` (`yunta/voice.py`)**: con un `Agent` real esto es inalcanzable (su constructor siempre inicializa `SessionPermissions()`), pero cualquier integración que no pase por él podía provocar `AttributeError` al decir "siempre". Ahora degrada con gracia: concede la aprobación de ese turno igual, solo no la persiste.
+- **Tests: 336** (4 nuevos en `tests/test_handoff_schema.py`; `test_voice_chaos.py` actualizado, 0 nuevos ahí). 100% pasando.
+
 ## [2.14.1] — 2026-09-19
 
 - **Blindaje del subsistema de Voz/TTS — 6 defectos de runtime encontrados por testing adversarial (`tests/test_voice_chaos.py`, ahora trackeado en git)**: a diferencia de la Parte A (bugs encontrados por exploración arquitectónica), estos 6 solo eran detectables ejecutando código bajo estrés real — condiciones de carrera, inyección de fallos, fuzzing de input malformado. Ninguno fue detectado por la revisión de diseño de la sesión.

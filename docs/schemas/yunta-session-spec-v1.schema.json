@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/j0sp0nc3/yunta-harness/blob/master/docs/schemas/yunta-session-spec-v1.schema.json",
+  "title": "Yunta Session Handoff Bundle v1",
+  "description": "Formato de intercambio para portar el estado de una sesión de agente de código entre procesos, máquinas o harnesses/IDEs distintos (ej. ZCode -> Antigravity). Generado por `yunta handoff export` (yunta/handoff.py). Cualquier harness puede implementar lectura/escritura de este formato sin depender de yunta.",
+  "type": "object",
+  "required": ["schema_version", "session_id", "created_at", "messages", "usage"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "description": "Versión del formato del bundle. Un lector DEBE rechazar (no adivinar) un schema_version que no reconozca."
+    },
+    "session_id": {
+      "type": "string",
+      "description": "Identificador único de la sesión de origen (formato yunta: 'yunta_sess_<hex>', pero cualquier string opaco es válido para otros harnesses)."
+    },
+    "created_at": {
+      "type": "number",
+      "description": "Timestamp Unix (segundos, float) de cuándo se exportó el bundle."
+    },
+    "source_harness": {
+      "type": "string",
+      "description": "Nombre del harness que generó el bundle (ej. 'yunta', 'zcode', 'antigravity'). Informativo — un lector no debe rechazar bundles de otros harnesses."
+    },
+    "cwd": {
+      "type": "string",
+      "description": "Directorio de trabajo del proceso de origen al momento de exportar."
+    },
+    "git_branch": {
+      "type": ["string", "null"],
+      "description": "Rama de git activa en el repo de origen, si lo era. null si no aplica."
+    },
+    "git_commit": {
+      "type": ["string", "null"],
+      "description": "Hash del commit HEAD del repo de origen al exportar. Un importador puede usarlo para detectar 'drift' (el repo avanzó desde el export) como aviso no bloqueante, nunca como error duro."
+    },
+    "model": {
+      "type": "string",
+      "description": "Identificador del modelo LLM usado en la sesión de origen (ej. 'anthropic/claude-sonnet-4-5'). Puramente informativo: el harness que importa elige su propio modelo."
+    },
+    "messages": {
+      "type": "array",
+      "description": "Historial de la conversación, en orden cronológico.",
+      "items": { "$ref": "#/$defs/message" }
+    },
+    "usage": { "$ref": "#/$defs/usage" },
+    "session_permissions": {
+      "type": "array",
+      "description": "Permisos persistentes ('siempre') otorgados durante la sesión de origen, como pares [tool, patrón]. patrón='*' significa toda la tool. Opcional: un importador que no soporte permisos persistentes puede ignorar este campo con seguridad (degrada a pedir aprobación de nuevo).",
+      "items": {
+        "type": "array",
+        "items": { "type": "string" },
+        "minItems": 2,
+        "maxItems": 2
+      }
+    },
+    "active_sandbox": {
+      "description": "Sandbox de git worktree activo al momento de exportar, o null si no había ninguno. Un importador sin soporte de sandboxes puede ignorar este campo.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["dir", "branch"],
+          "properties": {
+            "dir": { "type": "string" },
+            "branch": { "type": "string" }
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "message": {
+      "type": "object",
+      "required": ["role", "content"],
+      "properties": {
+        "role": {
+          "type": "string",
+          "enum": ["user", "assistant"]
+        },
+        "content": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/block" }
+        }
+      }
+    },
+    "block": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["text", "tool_use", "tool_result", "image"]
+        },
+        "text": { "type": "string" },
+        "tool_use_id": { "type": "string" },
+        "tool_name": { "type": "string" },
+        "tool_input": { "type": "string" },
+        "tool_result": { "type": "string" },
+        "is_error": { "type": "boolean" }
+      }
+    },
+    "usage": {
+      "type": "object",
+      "description": "Telemetría acumulada de la sesión de origen. Puramente informativa para el importador (ej. para mostrar continuidad de costo); no afecta la corrección de la conversación importada.",
+      "properties": {
+        "input_tokens": { "type": "integer", "minimum": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0 },
+        "cached_tokens": { "type": "integer", "minimum": 0 },
+        "tool_counts": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        },
+        "tool_errors": { "type": "integer", "minimum": 0 },
+        "turns": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

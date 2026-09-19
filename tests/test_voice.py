@@ -316,3 +316,56 @@ def test_make_voice_approval():
     assert cb("bash") is False
 
 
+def test_workers_ai_uses_2mb_threshold_and_2min_chunks(tmp_path, monkeypatch):
+    """Endpoints de Workers AI (workers.dev) fragmentan a partir de 2 MB en bloques de 2 min."""
+    from unittest.mock import MagicMock
+    from yunta.voice import AudioTranscriber
+
+    audio_file = tmp_path / "lecture.m4a"
+    # Archivo de 3 MB
+    audio_file.write_bytes(b"x" * (3 * 1024 * 1024))
+
+    transcriber = AudioTranscriber(
+        model="@cf/openai/whisper",
+        api_base="https://my-worker.beroiza.workers.dev/v1",
+        api_key="fake-key"
+    )
+
+    mock_chunker_instance = MagicMock()
+    mock_chunker_instance.transcribe_large_audio.return_value = "transcripcion fragmentada"
+    mock_chunker_cls = MagicMock(return_value=mock_chunker_instance)
+    monkeypatch.setattr("yunta.voice.AudioChunker", mock_chunker_cls)
+
+    res = transcriber.transcribe(str(audio_file))
+    assert res == "transcripcion fragmentada"
+    # Verificamos que se instanció con chunk_minutes=2
+    mock_chunker_cls.assert_called_once_with(transcriber, chunk_minutes=2)
+    mock_chunker_instance.transcribe_large_audio.assert_called_once_with(str(audio_file))
+
+
+def test_too_large_error_retries_with_smaller_chunks(tmp_path, monkeypatch):
+    """Si el endpoint arroja HTTP 413 o too_large, reintenta con fragmentos de 1 minuto."""
+    from unittest.mock import MagicMock
+    from yunta.voice import AudioTranscriber, _TranscribeError
+
+    audio_file = tmp_path / "chunk.mp3"
+    audio_file.write_bytes(b"x" * (1 * 1024 * 1024))
+
+    transcriber = AudioTranscriber(api_base="http://localhost:8000/v1")
+    # Simular que _post_transcription falla con error 413
+    monkeypatch.setattr(
+        transcriber,
+        "_post_transcription",
+        MagicMock(side_effect=_TranscribeError("HTTP 413: payload too large", 413, "too large"))
+    )
+
+    mock_chunker_instance = MagicMock()
+    mock_chunker_instance.transcribe_large_audio.return_value = "rescate con fragmentos menores"
+    mock_chunker_cls = MagicMock(return_value=mock_chunker_instance)
+    monkeypatch.setattr("yunta.voice.AudioChunker", mock_chunker_cls)
+
+    res = transcriber.transcribe(str(audio_file))
+    assert res == "rescate con fragmentos menores"
+    mock_chunker_instance.transcribe_large_audio.assert_called_once_with(str(audio_file), chunk_minutes=1)
+
+

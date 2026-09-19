@@ -8,6 +8,8 @@ No fuerza que otro harness lo lea: publica el schema (schema_version) para
 que cualquiera pueda hacerlo. Reutiliza al 100% la serialización de
 mensajes/usage de session.py — este módulo solo añade el resto del contexto
 de sesión que hoy vive en memoria y se pierde al morir el proceso.
+
+Spec pública versionada: docs/schemas/yunta-session-spec-v1.{md,schema.json}
 """
 import json
 import time

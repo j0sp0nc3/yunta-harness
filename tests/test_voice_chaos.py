@@ -111,9 +111,12 @@ class TestVoiceApprovalChaos:
             f"El callback toleró {listener.count} entradas inválidas sin abortar tempranamente."
         )
 
-    def test_voice_approval_crashes_if_agent_permissions_is_none(self):
-        """ERROR POTENCIAL: Si el agente tiene session_permissions=None y el usuario
-        dice 'siempre', ocurre AttributeError."""
+    def test_voice_approval_degrades_gracefully_if_agent_permissions_is_none(self):
+        """FIX 2026-09-19: si el agente tiene session_permissions=None (nunca
+        ocurre con un Agent real -- su constructor siempre inicializa
+        SessionPermissions() -- pero sí con integraciones que no pasen por
+        él), decir 'siempre' ya no lanza AttributeError: la aprobación de
+        ese turno se concede igual, solo no queda persistida."""
         class MockListener:
             def resume(self): pass
             def pause(self): pass
@@ -125,8 +128,7 @@ class TestVoiceApprovalChaos:
         agent = NakedAgent()
         cb = make_voice_approval(agent, MockListener())
 
-        with pytest.raises(AttributeError, match="grant_tool"):
-            cb("write_file", "detalles")
+        assert cb("write_file", "detalles") is True
 
     def test_voice_approval_handles_listener_exceptions(self):
         """ESTRÉS: Si listener.get() lanza una excepción inesperada (ej. desconexión hardware),

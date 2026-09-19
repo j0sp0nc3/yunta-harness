@@ -25,3 +25,15 @@ jobs:
         env:
           # La suite no requiere credenciales: litellm se intercepta en tests.
           LLM_MODEL: ci-placeholder
+
+  governance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Yunta Governance Check (dogfooding)
+        uses: ./.github/actions/check
+        with:
+          source: local
+          run-tests: "false"  # el job `tests` de arriba ya cubre la suite completa
+        env:
+          LLM_MODEL: ci-placeholder

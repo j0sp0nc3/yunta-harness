@@ -238,7 +238,12 @@ class _TranscribeError(Exception):
         super().__init__(msg)
         self.code = code
         self.detail = detail.lower()
-        self.too_large = "too large" in self.detail or "3006" in self.detail or self.code == 413
+        self.too_large = (
+            "too large" in self.detail
+            or "3006" in self.detail
+            or "1102" in self.detail
+            or self.code == 413
+        )
         self.retryable = (
             self.code is None
             or (self.code is not None and self.code >= 500)
@@ -276,9 +281,14 @@ class AudioTranscriber:
         if not path.exists():
             raise FileNotFoundError(f"Archivo de audio no encontrado: {file_path}")
 
-        # Si el archivo supera los 25 MB (límite Whisper API), usar chunker
-        if path.stat().st_size > 25 * 1024 * 1024:
-            return AudioChunker(self).transcribe_large_audio(str(path))
+        # Si el archivo supera el límite (25 MB en Whisper API estándar, 500 KB en Workers AI), usar chunker
+        max_size = (
+            int(os.environ.get("VOICE_MAX_BYTES", 0))
+            or (500 * 1024 if "workers.dev" in self.api_base else 25 * 1024 * 1024)
+        )
+        if path.stat().st_size > max_size:
+            cm = float(os.environ.get("VOICE_CHUNK_MINUTES", "0.5" if "workers.dev" in self.api_base else "10"))
+            return AudioChunker(self, chunk_minutes=cm).transcribe_large_audio(str(path))
 
         last_err = None
         for attempt in range(3):
@@ -287,12 +297,11 @@ class AudioTranscriber:
             except _TranscribeError as err:
                 last_err = err
                 if err.too_large:
-                    # El endpoint rechaza el tamaño: fragmentar y reintentar.
-                    # Guard: bajo ~256 KB ya no tiene sentido seguir dividiendo.
-                    if path.stat().st_size <= 256 * 1024:
+                    # El endpoint rechaza el tamaño o CPU (1102): fragmentar y reintentar con fragmentos menores (20s)
+                    if path.stat().st_size <= 128 * 1024:
                         break
-                    print(f"⚠️ Endpoint rechazó el audio por tamaño ({err}). Reintentando por fragmentos...")
-                    return AudioChunker(self).transcribe_large_audio(str(path))
+                    print(f"⚠️ Endpoint rechazó el audio por límites de cómputo/tamaño ({err}). Reintentando por fragmentos menores...")
+                    return AudioChunker(self).transcribe_large_audio(str(path), chunk_minutes=0.33)
                 if err.retryable and attempt < 2:
                     wait = (attempt + 1) * 3
                     print(f"⚠️ {err}. Reintentando en {wait}s (intento {attempt + 2}/3)...")
@@ -357,10 +366,14 @@ class AudioTranscriber:
         if self.api_key:
             req.add_header("Authorization", f"Bearer {self.api_key}")
 
+        timeout = int(os.environ.get("VOICE_TIMEOUT", "60"))
         try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-                return data.get("text", "")
+                text = data.get("text")
+                if text is None and isinstance(data.get("result"), dict):
+                    text = data.get("result", {}).get("text")
+                return (text or "").strip()
         except urllib.error.HTTPError as err:
             try:
                 detail = err.read().decode("utf-8", errors="replace")[:200]
@@ -432,23 +445,36 @@ class AudioTranscriber:
 class AudioChunker:
     """Fragmenta audios grandes (>25 MB / cátedras de varias horas) en bloques."""
 
-    def __init__(self, transcriber: AudioTranscriber):
+    def __init__(self, transcriber: AudioTranscriber, chunk_minutes: int | None = None):
         self.transcriber = transcriber
+        self.default_chunk_minutes = chunk_minutes
 
-    def transcribe_large_audio(self, file_path: str) -> str:
-        """Divide el audio en fragmentos de 10 minutos y concatena las transcripciones.
+    def transcribe_large_audio(self, file_path: str, chunk_minutes: int | None = None) -> str:
+        """Divide el audio en fragmentos y concatena las transcripciones.
 
         - Continuidad: el final del fragmento anterior se pasa como 'prompt' de
           Whisper al siguiente, para mantener nombres propios y terminología.
         - Ctrl+C: interrumpe la transcripción y devuelve lo transcrito hasta ese
           momento, marcado como parcial.
         """
-        chunks = self.split_audio_by_silence(file_path)
+        if chunk_minutes is None:
+            chunk_minutes = self.default_chunk_minutes
+        if chunk_minutes is None:
+            env_cm = os.environ.get("VOICE_CHUNK_MINUTES")
+            if env_cm:
+                try:
+                    chunk_minutes = max(1, int(env_cm))
+                except ValueError:
+                    chunk_minutes = 10
+            else:
+                chunk_minutes = 10
+
+        chunks = self.split_audio_by_silence(file_path, chunk_minutes)
         transcripts = []
         tail = ""
         # Offset temporal acumulado: proporcional a bytes (corte binario) o minutos (ffmpeg)
         total_size = sum(os.path.getsize(c) for c in chunks) or 1
-        total_secs = self._estimate_duration_secs(file_path) or (len(chunks) * 600)
+        total_secs = self._estimate_duration_secs(file_path) or (len(chunks) * chunk_minutes * 60)
         offset_secs = 0.0
 
         try:
@@ -521,7 +547,8 @@ class AudioChunker:
 
         # Intentar división con ffmpeg si está en PATH
         try:
-            out_pattern = os.path.join(temp_dir, "chunk_%03d.mp3")
+            ext = Path(file_path).suffix.lower() or ".mp3"
+            out_pattern = os.path.join(temp_dir, f"chunk_%03d{ext}")
             cmd = [
                 "ffmpeg", "-i", file_path, "-f", "segment",
                 "-segment_time", str(chunk_minutes * 60), "-c", "copy", out_pattern
@@ -763,7 +790,15 @@ def make_voice_approval(agent, listener):
                 print(f'🗣️ "{text}"')
                 ans = normalize_voice_response(text)
                 if ans == "siempre":
-                    agent.session_permissions.grant_tool(name)
+                    # Fix chaos-testing 2026-09-19: agent.session_permissions
+                    # es None con cualquier objeto que no pase por el
+                    # constructor real de Agent (que siempre lo inicializa a
+                    # SessionPermissions()) -- degrada con gracia en vez de
+                    # AttributeError: la aprobación de este turno igual se
+                    # concede, solo no queda persistida para el siguiente.
+                    sp = getattr(agent, "session_permissions", None)
+                    if sp is not None:
+                        sp.grant_tool(name)
                     return True
                 if ans == "s":
                     return True
