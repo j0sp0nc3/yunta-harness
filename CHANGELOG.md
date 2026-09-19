@@ -6,6 +6,16 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.10.0] — 2026-09-19
+
+- **Feature 3 — Tests de Caracterización / Golden-Master (`yunta/tools/characterize.py`)**: nueva tool `characterize_function` (`requires_approval=True`) que captura el comportamiento ACTUAL de una función Python top-level antes de refactorizarla, para detectar regresiones en código legacy sin tests.
+  - Filtro heurístico best-effort de efectos secundarios (por AST: llamadas a `open`/`subprocess`/`requests`/`socket`/`input`/`urlopen`; por nombre: prefijos `write_/save_/delete_/send_/remove_/post_/put_`) — rechaza en vez de arriesgar caracterizar código con I/O real.
+  - **Ejecución en subproceso aislado con timeout** (nunca in-process): un crash o cuelgue en la función objetivo no tumba el proceso de yunta.
+  - Genera `tests/test_characterize_<módulo>_<función>.py` con cabecera de advertencia explícita ("captura comportamiento ACTUAL, no necesariamente correcto"), cargando el módulo objetivo por ruta de archivo (`importlib.util`) para evitar problemas de resolución de paquetes/imports en repos arbitrarios.
+  - Verificado end-to-end: los tests generados se ejecutan de verdad como subproceso pytest (test "meta") y pasan, tanto para el caso de resultado exitoso como para el caso de excepción capturada.
+  - Alcance MVP documentado: solo funciones Python top-level (no anidadas, no métodos de clase).
+- **Tests: 302** (8 nuevos en `tests/test_characterize.py`). 100% pasando.
+
 ## [2.9.0] — 2026-09-19
 
 - **Feature 2 — Reverse-SDD (`yunta/reverse_sdd.py`)**: genera `SPEC.md`/`AGENTS.md` candidatos a partir de código existente sin especificaciones, abriendo adopción brownfield a la metodología SDD de yunta.

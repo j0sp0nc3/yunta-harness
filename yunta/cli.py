@@ -20,7 +20,7 @@ from .session import clear_session, load_session, save_session
 from .json_server import serve_json_stdin
 from .mcp import load_mcp_servers
 from .provider import LiteLLMProvider
-from .tools import bash, delegate, files, memory, search, subtask, symbols, vision  # noqa: F401 — registro vía decoradores
+from .tools import bash, characterize, delegate, files, memory, search, subtask, symbols, vision  # noqa: F401 — registro vía decoradores
 
 SYSTEM_PROMPT = """Eres un asistente autónomo e inteligente y compañero de trabajo a través del harness Yunta.
 Trabajas iterando: analizas información, lees y editas archivos, ejecutas herramientas y redactas soluciones.
