@@ -139,6 +139,7 @@ Comandos Interactivos del REPL (dentro de Yunta):
   /voice, /listen [audio.mp3]  Graba micrófono o transcribe audio en la sesión activa
   /init [idea]                 Inicializa o andamia el proyecto con metodología SDD
   /sandbox [merge|discard]     Crea o gestiona un entorno aislado en git worktree
+  /bestof <n> <tarea>          Genera n enfoques alternativos en sandboxes y elige el mejor por diff
   /undo                        Deshace la última edición de archivos y restaura el estado previo
   /permissions [clear]         Muestra o revoca los permisos persistentes otorgados en la sesión
   /handoff export|import       Exporta/importa la sesión activa como bundle portable entre harnesses
@@ -834,6 +835,7 @@ def main():
                 print("  /stop                - Detiene la locución TTS en curso (por voz: \"parar\", \"basta\")")
                 print("  /think [high|med|off] - Configura o muestra el modo de Razonamiento Profundo (Thinking)")
                 print("  /sandbox [merge|discard] - Crea o gestiona un entorno aislado en git worktree (V3-9)")
+                print("  /bestof <n> <tarea>  - Genera n enfoques alternativos en sandboxes y elige el mejor por diff")
                 print("  /undo                - Deshace la última edición de archivos y restaura su estado anterior")
                 print("  /permissions [clear] - Muestra o revoca los permisos persistentes otorgados en la sesión")
                 print("  /handoff export|import - Exporta/importa la sesión activa como bundle portable")
@@ -956,6 +958,50 @@ def main():
                         active_sandbox = None
                 else:
                     print("Subcomando sandbox desconocido. Usa /sandbox, /sandbox merge o /sandbox discard.\n")
+                continue
+
+            if prompt.startswith("/bestof"):
+                rest = prompt[7:].strip()
+                parts = rest.split(maxsplit=1)
+                if len(parts) < 2 or not parts[0].isdigit():
+                    print("Uso: /bestof <n> <instrucción>  (ej. /bestof 3 implementa el endpoint X)\n")
+                    continue
+                n = int(parts[0])
+                task = parts[1]
+                if n < 2 or n > 5:
+                    print("n debe estar entre 2 y 5 (best-of-N compara enfoques alternativos).\n")
+                    continue
+                from .bestof import choose_and_finalize, discard_all, run_best_of_n
+                print(f"🌳 Generando {n} enfoques alternativos en sandboxes aislados (secuencial, puede tardar)...\n")
+                try:
+                    candidates = run_best_of_n(task, n, provider, system, confirm=lambda nm, d: True)
+                except Exception as err:
+                    print(f"Error al generar los enfoques: {err}\n")
+                    continue
+                for i, c in enumerate(candidates, 1):
+                    print(f"── Enfoque {i} (rama {c['branch']}) ──")
+                    print((c["summary"] or "")[:500])
+                    if c["diff"].strip():
+                        print(f"\nDiff:\n{c['diff'][:2000]}")
+                    else:
+                        print("(sin cambios en el árbol de trabajo)")
+                    print()
+                try:
+                    choice = input(f"¿Cuál enfoque integrar? [1-{n} / c para cancelar]: ").strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    choice = "c"
+                if choice in ("c", "cancelar", ""):
+                    print(discard_all(candidates))
+                    print("Cancelado. Los enfoques generados se descartaron.\n")
+                else:
+                    try:
+                        idx = int(choice) - 1
+                        if not (0 <= idx < n):
+                            raise ValueError
+                        print("\n" + choose_and_finalize(candidates, idx) + "\n")
+                    except ValueError:
+                        print("Opción inválida; se descartan todos los enfoques.")
+                        print(discard_all(candidates) + "\n")
                 continue
 
             if prompt == "/context":

@@ -208,4 +208,6 @@ encima.
 ✅ Feature 4 (Memoria de Equipo) — `CHANGELOG.md` [2.11.0], suite verde (313/313).
 ✅ Feature 5 (Agent Health Score) — `CHANGELOG.md` [2.12.0], suite verde (319/319).
 ✅ Feature 6 (Enrutamiento Económico) — `CHANGELOG.md` [2.13.0], suite verde (327/327).
-⬜ Feature 7 — pendiente.
+✅ Feature 7 (Best-of-N) — `CHANGELOG.md` [2.14.0], suite verde (332/332).
+
+**Plan completo: Parte A (blindaje) + las 7 features de la Parte B implementadas, testeadas y commiteadas.**

@@ -6,6 +6,18 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.14.0] — 2026-09-19
+
+- **Feature 7 — Undo como Árbol / Best-of-N (`yunta/bestof.py`)**: el agente prueba N enfoques alternativos para la misma tarea en sandboxes de worktree aislados y el humano elige el mejor por diff, en vez de aceptar el único intento del agente o deshacer linealmente con `/undo`.
+  - **Decisión de alcance explícita: ejecución SECUENCIAL, no paralela real** — `os.chdir()` es global al proceso; N hilos pisándose entre sandboxes distintos sería una condición de carrera real, no hipotética. Paralelismo real (subprocesos con cwd propio) queda fuera de este roadmap.
+  - `run_best_of_n()`: crea N sandboxes (reutiliza `sandbox.create_sandbox`/`cleanup_sandbox` sin tocar su contrato), ejecuta un sub-agente de contexto limpio por rama (mismo patrón que `decompose.run_chunks`), compromete los cambios de cada rama (`git commit --allow-empty`, necesario para que el merge posterior no pierda archivos sin commitear al hacer `git worktree remove --force`) y calcula el diff de cada candidato contra el commit del que partió.
+  - `choose_and_finalize()` / `discard_all()`: integran la rama elegida (`merge=True`) y descartan el resto, reutilizando `cleanup_sandbox` sin lógica de merge nueva.
+  - Comando REPL `/bestof <n> <tarea>` (2-5 enfoques), separado de `/sandbox` para no arriesgar código ya estable.
+  - Fix relacionado ya aplicado en la Parte A (B3): la colisión de timestamp de `create_sandbox` con N≥2 llamadas rápidas, prerequisito real de esta feature.
+- **Tests: 332** (5 nuevos en `tests/test_bestof.py`). 100% pasando.
+
+**Con esta entrada se completan las 7 features propuestas en `docs/propuestas/2026-09-19-plan-7-features.md` (Parte B), sobre la Parte A de blindaje previo.**
+
 ## [2.13.0] — 2026-09-19
 
 - **Feature 6 — Enrutamiento Económico Dinámico**: usa automáticamente un modelo barato (`LLM_CHEAP_MODEL`) para pasos triviales de solo lectura, reservando el modelo principal para decisiones y ediciones.
