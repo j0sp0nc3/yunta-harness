@@ -155,6 +155,7 @@ Variables de Entorno Principales:
   LLM_FALLBACK_MODEL           Proveedor secundario con endpoint propio (ej. openai/glm-5.3)
   LLM_FALLBACK_API_BASE        URL base del proveedor secundario
   LLM_FALLBACK_API_KEY         Credencial del proveedor secundario
+  LLM_CHEAP_MODEL              Modelo económico para pasos triviales de solo lectura (enrutamiento dinámico)
   LLM_API_BASE                 URL base para endpoints OpenAI-compatibles (ej. http://localhost:8000/v1)
   LLM_API_KEY                  API Key o token Bearer para el endpoint
   VOICE_MODEL                  Modelo STT de voz Whisper (default: whisper-1)

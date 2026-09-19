@@ -6,6 +6,15 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.13.0] — 2026-09-19
+
+- **Feature 6 — Enrutamiento Económico Dinámico**: usa automáticamente un modelo barato (`LLM_CHEAP_MODEL`) para pasos triviales de solo lectura, reservando el modelo principal para decisiones y ediciones.
+  - `LiteLLMProvider.set_model_override()` (`yunta/provider.py`): fuerza el modelo del próximo `send()` sin tocar la posición de la cascada de fallback (`_model_idx`). Si el modelo económico falla, se descarta el override y se reintenta con la cascada normal **sin avanzar** `_model_idx` (no es un fallo del modelo principal).
+  - `IntentClassifier.evaluate_triviality()` (`yunta/intent.py`): reutiliza `Agent._recent_tool_calls` (el mismo estado que ya trackea doom-loops, cero instrumentación duplicada). **Regla dura, no heurística blanda**: si `write_file`/`str_replace`/`bash` aparece en la ventana reciente, nunca es trivial — se prefiere gastar de más en el modelo caro a arriesgar una edición mal razonada con el barato. Sin historial de tools (primer turno), tampoco es trivial por defecto.
+  - `yunta/agent.py`: se evalúa en cada turno del bucle (no solo al inicio de `send()`), para que el override se desactive de inmediato en cuanto el agente decide escribir algo.
+  - Nueva env var `LLM_CHEAP_MODEL`.
+- **Tests: 327** (8 nuevos: 2 en `tests/test_provider.py`, 5 en `tests/test_intent.py`, 1 de integración en `tests/test_agent.py`). 100% pasando.
+
 ## [2.12.0] — 2026-09-19
 
 - **Feature 5 — Agent Health Score (`yunta/health.py`)**: persiste métricas agregadas por repo entre sesiones (`.yunta/health.jsonl`, misma convención JSONL append-only de la Feature 4), en vez de perderlas al morir el proceso (`Usage`/`Budget` eran 100% en memoria).

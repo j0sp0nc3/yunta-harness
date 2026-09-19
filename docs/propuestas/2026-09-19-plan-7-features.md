@@ -207,4 +207,5 @@ encima.
 ✅ Feature 3 (Caracterización/Golden-Master) — `CHANGELOG.md` [2.10.0], suite verde (302/302).
 ✅ Feature 4 (Memoria de Equipo) — `CHANGELOG.md` [2.11.0], suite verde (313/313).
 ✅ Feature 5 (Agent Health Score) — `CHANGELOG.md` [2.12.0], suite verde (319/319).
-⬜ Features 6-7 — pendientes.
+✅ Feature 6 (Enrutamiento Económico) — `CHANGELOG.md` [2.13.0], suite verde (327/327).
+⬜ Feature 7 — pendiente.

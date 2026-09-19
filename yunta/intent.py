@@ -52,6 +52,19 @@ FAST_KEYWORDS = [
     r"solo crea", r"crea un archivo", r"dime la hora", r"hola", r"gracias"
 ]
 
+# Feature 6 (2026-09-19): enrutamiento económico dinámico. Tools que jamás
+# mutan el repositorio ni ejecutan código arbitrario -- seguras para
+# resolverse con un modelo barato (LLM_CHEAP_MODEL).
+CHEAP_SAFE_TOOLS = {
+    "read_file", "grep", "glob", "list_dir", "find_symbol", "get_ast_outline",
+    "web_search", "recall", "read_image", "delegate_research", "delegate_batch",
+}
+
+# Regla DURA (no heurística): si cualquiera de estas apareció en la ventana
+# reciente, NUNCA se considera trivial -- se prefiere gastar de más en el
+# modelo caro a arriesgar una decisión de edición mal razonada.
+MUTATING_TOOLS = {"write_file", "str_replace", "bash"}
+
 
 class IntentClassifier:
     """Clasifica la intención de un prompt para enrutar el flujo de ejecución."""
@@ -119,6 +132,28 @@ class IntentClassifier:
             return ReasoningLevel.MEDIUM
 
         return ReasoningLevel.OFF
+
+    @staticmethod
+    def evaluate_triviality(recent_tool_calls: list[tuple[str, str]], last_prompt: str) -> bool:
+        """Feature 6: True si el próximo turno puede resolverse con un modelo
+        barato (LLM_CHEAP_MODEL) sin arriesgar calidad.
+
+        Regla DURA, no heurística blanda: si CUALQUIER tool mutante
+        (`write_file`/`str_replace`/`bash`) apareció en la ventana reciente,
+        nunca es trivial. Sin historial de tools todavía (primer turno) se
+        asume NO trivial por defecto — la primera decisión de una tarea la
+        toma siempre el modelo caro."""
+        if not recent_tool_calls:
+            return False
+        for name, _ in recent_tool_calls:
+            if name in MUTATING_TOOLS or name not in CHEAP_SAFE_TOOLS:
+                return False
+        if last_prompt:
+            prompt_lower = last_prompt.lower()
+            for kw in DEEP_REASONING_KEYWORDS:
+                if re.search(kw, prompt_lower):
+                    return False
+        return True
 
     @staticmethod
     def should_enforce_sdd(intent: TaskIntent) -> bool:

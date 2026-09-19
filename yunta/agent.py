@@ -142,6 +142,7 @@ class Agent:
         self.usage.turns += 1
         reasoning_level = IntentClassifier.evaluate_reasoning(prompt, self.think_override)
         self.current_reasoning_effort = reasoning_level.value
+        self._last_user_prompt = prompt  # Feature 6: insumo de evaluate_triviality
         self.messages.append(
             Message(role=Role.USER, content=[Block(type=BlockType.TEXT, text=prompt)])
         )
@@ -162,6 +163,17 @@ class Agent:
                 current_tool_results = []
                 if self.compactor:
                     self.messages = self.compactor.compact(self.messages)
+
+                # Feature 6: enrutamiento económico dinámico — usa un modelo
+                # barato para pasos triviales (solo lectura reciente), nunca
+                # para decisiones de edición (regla dura, no heurística blanda).
+                cheap_model = os.environ.get("LLM_CHEAP_MODEL")
+                if cheap_model and hasattr(self.provider, "set_model_override"):
+                    from .intent import IntentClassifier
+                    trivial = IntentClassifier.evaluate_triviality(
+                        self._recent_tool_calls, getattr(self, "_last_user_prompt", "")
+                    )
+                    self.provider.set_model_override(cheap_model if trivial else None)
 
                 try:
                     sig_params = inspect.signature(self.provider.send).parameters

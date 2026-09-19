@@ -95,6 +95,44 @@ def test_model_param_overrides_env_lookup():
     assert captured["model"] == "anthropic/claude-sonnet-4-5"
 
 
+def test_set_model_override_used_for_next_call():
+    """Feature 6: set_model_override fuerza el modelo del próximo send()
+    sin tocar la posición de la cascada normal (.model())."""
+    os.environ["LLM_MODEL"] = "openai/gpt-4o"
+    p = LiteLLMProvider(system="sys")
+    p.set_model_override("openai/gpt-4o-mini")
+    p.send(MSGS[:1], tools=[])
+    assert captured["model"] == "openai/gpt-4o-mini"
+    assert p.model() == "openai/gpt-4o"  # la cascada no se movió
+
+    p.set_model_override(None)
+    p.send(MSGS[:1], tools=[])
+    assert captured["model"] == "openai/gpt-4o"
+
+
+def test_override_failure_falls_back_to_cascade_without_advancing_idx():
+    """Feature 6: si el modelo económico falla, se descarta el override y
+    se reintenta con la cascada normal SIN avanzar _model_idx (no es un
+    fallo del modelo principal)."""
+    os.environ.update(LLM_MODEL="openai/gpt-4o", LLM_MODELS="")
+    calls = []
+
+    def flaky_completion(**kwargs):
+        calls.append(kwargs["model"])
+        if kwargs["model"] == "openai/gpt-4o-mini":
+            raise Exception("RateLimitError: 429 too many requests")
+        return fake_completion(**kwargs)
+
+    litellm.completion = flaky_completion
+    p = LiteLLMProvider(system="sys")
+    p.set_model_override("openai/gpt-4o-mini")
+    p.send(MSGS[:1], tools=[])
+
+    assert calls == ["openai/gpt-4o-mini", "openai/gpt-4o"]
+    assert p._override_model is None
+    assert p.model() == "openai/gpt-4o"
+
+
 def test_missing_model_fails_clearly():
     env = dict(os.environ)
     env["LLM_MODEL"] = ""

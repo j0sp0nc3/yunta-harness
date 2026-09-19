@@ -571,6 +571,38 @@ def test_doom_loop_detection_pause(tmp_path, monkeypatch):
     assert "user denied this tool call (doom-loop pause: 5 repeats)" in results[4].tool_result
 
 
+def test_llm_cheap_model_override_only_for_trivial_steps(tmp_path, monkeypatch):
+    """Feature 6: con LLM_CHEAP_MODEL seteado, el override se activa solo
+    cuando la ventana reciente es 100% de lectura, y se desactiva de
+    inmediato en cuanto aparece una tool mutante (regla dura, no heurística
+    blanda)."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LLM_CHEAP_MODEL", "openai/gpt-4o-mini")
+    (tmp_path / "a.txt").write_text("hola", encoding="utf-8")
+
+    class FakeProviderWithOverride(FakeProvider):
+        def __init__(self, responses):
+            super().__init__(responses)
+            self.override_calls = []
+
+        def set_model_override(self, model):
+            self.override_calls.append(model)
+
+    responses = [
+        Response(content=[tool_use("1", "read_file", '{"path":"a.txt"}')], stop_reason=StopReason.TOOL_USE),
+        Response(content=[tool_use("2", "write_file", '{"path":"a.txt","content":"x"}')], stop_reason=StopReason.TOOL_USE),
+        Response(content=[Block(type=BlockType.TEXT, text="listo")], stop_reason=StopReason.END_TURN),
+    ]
+    p = FakeProviderWithOverride(responses)
+    a = Agent(provider=p, system="s", auto_save=False, confirm=lambda n, d: True)
+    a.send("lee y luego escribe")
+
+    # Turno 1: sin historial todavía -> no trivial -> override None.
+    # Turno 2: tras read_file (solo lectura) -> trivial -> override al barato.
+    # Turno 3: tras write_file (mutante) -> nunca trivial -> override None.
+    assert p.override_calls == [None, "openai/gpt-4o-mini", None]
+
+
 def test_doom_loop_trigger_increments_counter_for_health_score(tmp_path, monkeypatch):
     """Feature 5: cada disparo de force_prompt debe incrementar
     _doom_loop_triggers, que luego persiste yunta/health.py entre sesiones."""

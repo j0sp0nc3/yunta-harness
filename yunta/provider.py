@@ -35,6 +35,7 @@ class LiteLLMProvider(Provider):
         self._model_idx = 0
         self._system = system
         self.total_usage = Usage()
+        self._override_model: str | None = None  # Feature 6: enrutamiento económico dinámico
         # Proveedor secundario opcional (endpoint + credencial propios):
         # se activa solo si todos los modelos primarios fallan.
         self._n_primary = len(self._models)
@@ -53,6 +54,12 @@ class LiteLLMProvider(Provider):
 
     def model(self) -> str:
         return self._models[self._model_idx]
+
+    def set_model_override(self, model: str | None) -> None:
+        """Feature 6: fuerza un modelo distinto para el próximo `send()` (ej.
+        un modelo barato para pasos triviales) sin tocar la posición de la
+        cascada de fallback (`_model_idx`). `None` desactiva el override."""
+        self._override_model = model
 
     def estimate_startup_tax(self, tools: list[ToolDef] | None = None) -> int:
         """Calcula los tokens aproximados del payload inicial (system prompt + schemas de herramientas)."""
@@ -75,7 +82,7 @@ class LiteLLMProvider(Provider):
 
     def send(self, messages: list[Message], tools: list[ToolDef], on_text=None, reasoning_effort: str | None = None) -> Response:
         while True:
-            current_model = self.model()
+            current_model = self._override_model or self.model()
             kwargs = {
                 "model": current_model,
                 "messages": self._to_litellm(messages),
@@ -186,6 +193,12 @@ class LiteLLMProvider(Provider):
                     x in err_str or x in err_name.lower()
                     for x in ["429", "503", "401", "400", "unauthorized", "authentication", "badrequest", "unknown model", "unavailable", "exhausted", "ratelimit", "quota", "serviceunavailable", "midstreamfallback"]
                 )
+                if is_fallback_candidate and self._override_model and current_model == self._override_model:
+                    # Feature 6: el override económico falló — vuelve a la cascada
+                    # normal sin avanzar _model_idx (no es un fallo del modelo principal).
+                    print(f"\n[Model Override: error en {current_model} ({err_name}), volviendo al modelo de cascada normal]")
+                    self._override_model = None
+                    continue
                 if is_fallback_candidate and (self._model_idx + 1 < len(self._models)):
                     old_m = self.model()
                     self._model_idx += 1

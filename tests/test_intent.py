@@ -20,6 +20,39 @@ def test_should_enforce_sdd():
     assert IntentClassifier.should_enforce_sdd(TaskIntent.RESEARCH_AND_CONSULTING) is False
 
 
+def test_evaluate_triviality_true_when_only_readonly_tools_recent():
+    calls = [("read_file", '{"path":"a.py"}'), ("grep", '{"pattern":"x"}')]
+    assert IntentClassifier.evaluate_triviality(calls, "sigue investigando") is True
+
+
+def test_evaluate_triviality_false_with_no_history():
+    assert IntentClassifier.evaluate_triviality([], "lo que sea") is False
+
+
+def test_evaluate_triviality_false_when_mutating_tool_present():
+    calls = [("read_file", "x"), ("write_file", '{"path":"a.py","content":"x"}')]
+    assert IntentClassifier.evaluate_triviality(calls, "listo") is False
+
+    calls2 = [("str_replace", "x")]
+    assert IntentClassifier.evaluate_triviality(calls2, "listo") is False
+
+    calls3 = [("bash", "ls")]
+    assert IntentClassifier.evaluate_triviality(calls3, "listo") is False
+
+
+def test_evaluate_triviality_false_when_unknown_tool_present():
+    """Tools fuera del allowlist explícito (ni de lectura confirmada ni
+    mutante conocida) tampoco se consideran triviales -- por defecto
+    conservador."""
+    calls = [("read_file", "x"), ("delegate_subtask", "x")]
+    assert IntentClassifier.evaluate_triviality(calls, "listo") is False
+
+
+def test_evaluate_triviality_false_when_deep_reasoning_keyword_in_prompt():
+    calls = [("read_file", "x")]
+    assert IntentClassifier.evaluate_triviality(calls, "dame la causa raíz de este bug") is False
+
+
 def test_evaluate_reasoning():
     from yunta.intent import ReasoningLevel
 
