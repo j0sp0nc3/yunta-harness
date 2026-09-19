@@ -654,6 +654,19 @@ DEFAULT_VOICE_KEYWORDS: dict[str, str] = {
     "desactivar voz": "/speak off",
     "callate": "/speak off",
     "cállate": "/speak off",
+    "inicializar": "/init",
+    "iniciar proyecto": "/init",
+    "crear proyecto": "/init",
+}
+
+# Intenciones paramétricas por prefijo hablado: mapean a comandos con argumentos (0 consultas LLM)
+DEFAULT_PREFIX_VOICE_KEYWORDS: dict[str, str] = {
+    "inicializa": "/init",
+    "inicializar": "/init",
+    "inicia proyecto": "/init",
+    "iniciar proyecto": "/init",
+    "crea proyecto": "/init",
+    "crear proyecto": "/init",
 }
 
 
@@ -686,6 +699,15 @@ def route_keyword(text: str, keywords: dict[str, str] | None = None) -> str | No
         return None
     if cleaned in keywords:
         return keywords[cleaned]
+    # Intenciones paramétricas con prefijo (ej: "inicializa mi idea" → "/init mi idea")
+    for prefix, cmd in DEFAULT_PREFIX_VOICE_KEYWORDS.items():
+        if cleaned == prefix:
+            return cmd
+        if cleaned.startswith(prefix + " "):
+            prefix_words = len(prefix.split())
+            parts = text.strip().split(maxsplit=prefix_words)
+            arg = parts[-1].strip() if len(parts) > prefix_words else ""
+            return f"{cmd} {arg}" if arg else cmd
     # Fuzzy de una sola palabra ("métricas" → "metricas" ya lo maneja el clean;
     # toleramos errores de Whisper también aquí)
     if " " not in cleaned:
@@ -693,6 +715,42 @@ def route_keyword(text: str, keywords: dict[str, str] | None = None) -> str | No
             if " " not in kw and _fuzzy_in(cleaned, {kw}):
                 return cmd
     return None
+
+
+def make_voice_approval(agent, listener):
+    """Construye el callback de aprobación de tools por voz para un Agent
+    (REPL interactivo, single-shot nacido de voz o sub-agentes de --chunks).
+    Reactiva el micrófono (pausado durante la generación), espera
+    'sí'/'siempre'/'no' y vuelve a pausarlo; sin respuesta en 180s rechaza."""
+
+    def _voice_approval(name: str, detail: str = "") -> bool:
+        if detail:
+            print(detail)
+        print(f'🗣️ Di "sí", "siempre" o "no" para {name}...')
+        listener.resume()
+        try:
+            while True:
+                text = listener.get(timeout=180)
+                if text is None:
+                    print("⚠️ Sin respuesta de voz: se rechaza por seguridad.")
+                    return False
+                print(f'🗣️ "{text}"')
+                ans = normalize_voice_response(text)
+                if ans == "siempre":
+                    agent.session_permissions.grant_tool(name)
+                    return True
+                if ans == "s":
+                    return True
+                if ans == "c":
+                    return False
+                if ans == "e":
+                    print("✏️ Edición no soportada por voz en aprobaciones: se rechaza.")
+                    return False
+                print('(no entendido — di "sí", "siempre" o "no")')
+        finally:
+            listener.pause()
+
+    return _voice_approval
 
 
 class VoiceListener:

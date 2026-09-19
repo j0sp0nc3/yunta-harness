@@ -6,6 +6,15 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.7.5] — 2026-09-19
+
+- **Integración de Voz (STT/TTS) con Modo SDD y Experiencia Hands-Free (`yunta/voice.py`, `yunta/cli.py`, `yunta/decompose.py`)**:
+  - **Aprobación por voz unificada (`make_voice_approval`)**: Compartida entre el REPL interactivo, despachos single-shot nacidos de voz (`yunta voice archivo.mp3 "tarea"`) y sub-agentes en lotes `--chunks`. Mantiene el flujo 100% manos libres en el ciclo SDD sin volver al teclado para aprobar herramientas.
+  - **Soporte de voz en sub-agentes `--chunks` (`run_chunks`)**: `run_chunks` propaga el listener de voz a cada sub-agente por lote, preservando compatibilidad retroactiva completa con mocks/callers existentes.
+  - **Lectura hablada en Single-shot y Chunks (`--speak`)**: Al concluir ejecuciones directas o descomposiciones por lotes con `--speak` activo, el agente lee el resultado final o el resumen de lotes en voz alta.
+  - **Router con intenciones paramétricas locales (0 tokens LLM)**: `DEFAULT_PREFIX_VOICE_KEYWORDS` mapea frases como `"inicializa <idea>"`, `"inicia proyecto <idea>"` o `"crear proyecto <idea>"` directamente a `/init <idea>`, preservando tildes y mayúsculas de la especificación sin consultar al modelo.
+- **Tests: 264** (3 nuevos tests: ruteo de prefijos hablados, máquina de estados de aprobación por voz y propagación de voz en `run_chunks`). 100% pasando.
+
 ## [2.7.4] — 2026-09-19
 
 - **Pipeline de Prefetch en TTS (`yunta/tts.py`)**:

@@ -258,3 +258,61 @@ def test_stop_keywords_routed():
     for word in ("callate", "cállate", "silencio"):
         assert route_keyword(word) == "/speak off"
 
+
+def test_prefix_keywords_routed():
+    assert route_keyword("inicializa un clon de snake") == "/init un clon de snake"
+    assert route_keyword("inicia proyecto api con fastapi") == "/init api con fastapi"
+    assert route_keyword("crear proyecto app móvil") == "/init app móvil"
+    assert route_keyword("inicializar") == "/init"
+
+
+def test_make_voice_approval():
+    from yunta.voice import make_voice_approval
+
+    class FakePermissions:
+        def __init__(self):
+            self.granted = []
+        def grant_tool(self, name):
+            self.granted.append(name)
+
+    class FakeAgent:
+        def __init__(self):
+            self.session_permissions = FakePermissions()
+
+    class FakeListener:
+        def __init__(self, responses):
+            self.responses = list(responses)
+            self.resumed = 0
+            self.paused = 0
+
+        def resume(self):
+            self.resumed += 1
+
+        def pause(self):
+            self.paused += 1
+
+        def get(self, timeout=180):
+            if self.responses:
+                return self.responses.pop(0)
+            return None
+
+    agent = FakeAgent()
+
+    # 1. 'si' -> True
+    cb = make_voice_approval(agent, FakeListener(["sí"]))
+    assert cb("bash") is True
+
+    # 2. 'siempre' -> True + persistencia en session_permissions
+    cb = make_voice_approval(agent, FakeListener(["siempre"]))
+    assert cb("write_file") is True
+    assert "write_file" in agent.session_permissions.granted
+
+    # 3. 'no' -> False
+    cb = make_voice_approval(agent, FakeListener(["no"]))
+    assert cb("bash") is False
+
+    # 4. Timeout (None) -> False
+    cb = make_voice_approval(agent, FakeListener([None]))
+    assert cb("bash") is False
+
+

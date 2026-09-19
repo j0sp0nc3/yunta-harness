@@ -229,6 +229,35 @@ def run_context():
     print("└────────────────────────────────────────────────────────┘\n")
 
 
+def _open_voice_listener():
+    """Abre y calibra el micrófono en escucha continua; None si no hay soporte."""
+    from .voice import VoiceListener
+
+    try:
+        listener = VoiceListener()
+        listener.start()
+        return listener
+    except NotImplementedError as err:
+        print(f"⚠️ {err}\n   Continuando con entrada por teclado.\n")
+        return None
+
+
+def _start_voice_approval(agent):
+    """Activa la escucha continua y la aprobación de tools por voz sobre un Agent.
+
+    Retorna el VoiceListener activo, o None si no hay hardware/dependencias
+    (en cuyo caso se continúa con teclado y nada se rompe). Compartido por el
+    REPL interactivo y el modo single-shot nacido de voz (yunta voice archivo.mp3)."""
+    from .voice import load_voice_keywords, make_voice_approval
+
+    listener = _open_voice_listener()
+    if listener is None:
+        return None
+    agent.voice_keywords = load_voice_keywords()
+    agent.voice_approval = make_voice_approval(agent, listener)
+    return listener
+
+
 def _load_dotenv():
     """Carga automáticamente variables de entorno desde un archivo .env si existe."""
     if os.environ.get("YUNTA_NO_DOTENV"):
@@ -450,8 +479,21 @@ def main():
             print(f"[P9] spec descompuesta en {len(subtasks)} lotes:")
             for i, t in enumerate(subtasks, 1):
                 print(f"  {i}. {t.goal} — archivos: {', '.join(t.files)}")
-            summaries = run_chunks(provider, subtasks, system, confirm=confirm_cb)
+            # SDD por voz: aprobación hablada en cada lote si la tarea nació de voz
+            chunks_listener = _open_voice_listener() if (is_voice_mode and not auto_confirm) else None
+            if chunks_listener is not None:
+                summaries = run_chunks(provider, subtasks, system, confirm=confirm_cb, voice_listener=chunks_listener)
+                chunks_listener.stop()
+            else:
+                summaries = run_chunks(provider, subtasks, system, confirm=confirm_cb)
             print("\n[P9] " + str(len(summaries)) + " lotes completados.")
+            if speak_mode:
+                try:
+                    from .tts import TTSProvider, speak, wait_until_done
+                    speak(TTSProvider(), f"{len(summaries)} lotes completados.")
+                    wait_until_done()
+                except Exception:
+                    pass
             # M-A: auto-feedback también en el comentario del despacho --chunks.
             try:
                 transcript = [
@@ -481,26 +523,41 @@ def main():
             initial_usage=initial_usage,
             confirm=confirm_cb,
         )
+        ss_listener = _start_voice_approval(agent) if (is_voice_mode and not auto_confirm) else None
         try:
-            prev_u = agent.total_usage
-            agent.send(prompt)
-            curr_u = agent.total_usage
-            print_roi_footer(curr_u, curr_u.delta(prev_u))
-        except KeyboardInterrupt:
-            print()
-        except QuotaExhausted as e:
-            print(f"\n⚠️ {e}\n(puedes reanudar en cualquier momento con `yunta --resume` cuando se restablezca la cuota del proveedor)\n")
-        
-        # Persistencia de memoria conversacional de sesión
-        if agent.messages:
             try:
-                save_session(agent.messages, agent.total_usage, model=provider.model())
-            except Exception:
-                pass
-            try:
-                feedback.summarize(provider, agent.messages)
-            except Exception:
-                pass
+                prev_u = agent.total_usage
+                res_text = agent.send(prompt)
+                curr_u = agent.total_usage
+                print_roi_footer(curr_u, curr_u.delta(prev_u))
+            except KeyboardInterrupt:
+                print()
+                res_text = None
+            except QuotaExhausted as e:
+                print(f"\n⚠️ {e}\n(puedes reanudar en cualquier momento con `yunta --resume` cuando se restablezca la cuota del proveedor)\n")
+                res_text = None
+
+            # Persistencia de memoria conversacional de sesión
+            if agent.messages:
+                try:
+                    save_session(agent.messages, agent.total_usage, model=provider.model())
+                except Exception:
+                    pass
+                try:
+                    feedback.summarize(provider, agent.messages)
+                except Exception:
+                    pass
+            # --speak también en single-shot: leer el resultado final en voz alta
+            if speak_mode and res_text:
+                try:
+                    from .tts import TTSProvider, speak, wait_until_done
+                    speak(TTSProvider(), res_text)
+                    wait_until_done()
+                except Exception:
+                    pass
+        finally:
+            if ss_listener is not None:
+                ss_listener.stop()
         return
 
 
@@ -520,45 +577,7 @@ def main():
     # V5-1: escucha continua si se pidió `yunta --voice` (sin archivo) en el REPL
     voice_listener = None
     if is_voice_mode and not voice_input_file and not auto_confirm:
-        from .voice import VoiceListener, load_voice_keywords, normalize_voice_response, route_keyword
-
-        try:
-            voice_listener = VoiceListener()
-            voice_listener.start()
-            agent.voice_keywords = load_voice_keywords()
-
-            def _voice_approval(name: str, detail: str = "") -> bool:
-                """Aprobación de tools 100% por voz: reactiva el micrófono (pausado
-                durante la generación), espera 'sí'/'siempre'/'no' y vuelve a pausar."""
-                if detail:
-                    print(detail)
-                print(f'🗣️ Di "sí", "siempre" o "no" para {name}...')
-                voice_listener.resume()
-                try:
-                    while True:
-                        text = voice_listener.get(timeout=180)
-                        if text is None:
-                            print("⚠️ Sin respuesta de voz: se rechaza por seguridad.")
-                            return False
-                        print(f'🗣️ "{text}"')
-                        ans = normalize_voice_response(text)
-                        if ans == "siempre":
-                            agent.session_permissions.grant_tool(name)
-                            return True
-                        if ans == "s":
-                            return True
-                        if ans == "c":
-                            return False
-                        if ans == "e":
-                            print("✏️ Edición no soportada por voz en aprobaciones: se rechaza.")
-                            return False
-                        print('(no entendido — di "sí", "siempre" o "no")')
-                finally:
-                    voice_listener.pause()
-
-            agent.voice_approval = _voice_approval
-        except NotImplementedError as err:
-            print(f"⚠️ {err}\n   Continuando con entrada por teclado.\n")
+        voice_listener = _start_voice_approval(agent)
 
     print(f"yunta — modelo: {provider.model()}")
     if agent.think_override:
