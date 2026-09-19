@@ -203,4 +203,5 @@ encima.
 
 ✅ Parte A (Blindaje: B1-B4) — commit `bc2e1d8`, `CHANGELOG.md` [2.7.6].
 ✅ Feature 1 (Handoff) — `CHANGELOG.md` [2.8.0], suite verde (271/271).
-⬜ Features 2-7 — pendientes.
+✅ Feature 2 (Reverse-SDD) — `CHANGELOG.md` [2.9.0], suite verde (294/294).
+⬜ Features 3-7 — pendientes.

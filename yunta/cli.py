@@ -122,6 +122,7 @@ Comandos de Terminal (CLI):
   yunta serve-json, json       Inicia el servidor NDJSON en stdio para extensiones IDE
   yunta --resume, -r           Reanuda la sesión previa guardada en .yunta/session_state.json
   yunta check [ruta] [--json]  Auditoría local de gobernanza SDD ($0 en tokens, instantáneo)
+  yunta reverse-sdd [ruta] [--apply]  Genera SPEC.md/AGENTS.md candidatos desde código sin specs
   yunta handoff export [ruta]  Empaqueta la sesión guardada en un bundle portable (handoff)
   yunta handoff import <ruta>  Reanuda una sesión desde un bundle de handoff exportado
   yunta "tu instrucción"       Ejecución directa single-shot (ej. yunta "revisa los tests")
@@ -374,6 +375,26 @@ def main():
                 break
         code = run_check(target_dir=target_dir, as_json=as_json, run_tests=run_tests)
         sys.exit(code)
+
+    # Despacho de comando `yunta reverse-sdd [ruta] [--apply]`
+    if len(sys.argv) > 1 and sys.argv[1].lower() == "reverse-sdd":
+        from .reverse_sdd import run_reverse_sdd
+        apply_flag = "--apply" in sys.argv
+        target_dir = "."
+        for arg in sys.argv[2:]:
+            if not arg.startswith("-"):
+                target_dir = arg
+                break
+        result = run_reverse_sdd(target_dir=target_dir, apply=apply_flag)
+        if result["files_scanned"] == 0:
+            print("No se encontraron archivos de código soportados para analizar.")
+        else:
+            print(f"📄 Reverse-SDD: {result['files_scanned']} archivo(s) analizado(s).")
+            for w in result["written"]:
+                print(f"  → {w}")
+            if not apply_flag:
+                print("Usa --apply para escribir SPEC.md/AGENTS.md reales (solo si no existen ya).")
+        return
 
     # Despacho de comando `yunta ide-init`
     if len(sys.argv) > 1 and sys.argv[1].lower() == "ide-init":

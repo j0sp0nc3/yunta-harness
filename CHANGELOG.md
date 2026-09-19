@@ -6,6 +6,16 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.9.0] — 2026-09-19
+
+- **Feature 2 — Reverse-SDD (`yunta/reverse_sdd.py`)**: genera `SPEC.md`/`AGENTS.md` candidatos a partir de código existente sin especificaciones, abriendo adopción brownfield a la metodología SDD de yunta.
+  - `scan_repository()`: reutiliza al 100% `adapter_registry.get_adapter().get_outline()/.find_symbols()` (los mismos adaptadores AST que ya usa `tools/symbols.py`) para construir un inventario condensado del repo sin volcar contenido completo de archivos (control de tokens).
+  - `generate_spec_candidate()`/`generate_agents_candidate()`: condensan el inventario en un prompt y generan el Markdown vía un `Agent` sin tools (generación de texto puro, sin llamadas a herramientas).
+  - `run_reverse_sdd()`: por defecto escribe `SPEC.md.candidate`/`AGENTS.md.candidate`; con `--apply` escribe el archivo real **solo si no existe ya** — nunca sobreescribe specs existentes (regla 6 de AGENTS.md).
+  - `yunta/governance.py`: las regex de validación de estructura (`SPEC_HEADER_RE`, `PLAN_PHASE_RE`, `AGENTS_YUNTA_MARKER`) se extrajeron a constantes de módulo, compartidas con `reverse_sdd.py`, para que lo generado pase `yunta check` de inmediato (verificado con test de integración cruzada).
+  - Comando: `yunta reverse-sdd [ruta] [--apply]`.
+- **Tests: 294** (9 nuevos en `tests/test_reverse_sdd.py`, incluye integración con `governance.audit_repository`). 100% pasando (1 warning preexistente no relacionado en `test_voice_chaos.py`, de un hilo de chaos-testing simulando fallo de endpoint TTS).
+
 ## [2.8.0] — 2026-09-19
 
 - **Feature 1 — Protocolo de Portabilidad de Sesión / Handoff (`yunta/handoff.py`)**:
