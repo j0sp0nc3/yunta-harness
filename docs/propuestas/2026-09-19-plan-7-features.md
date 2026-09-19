@@ -201,6 +201,6 @@ encima.
 
 ## Estado
 
-✅ Parte A (Blindaje: B1-B4) — implementada 2026-09-19, suite verde (264/264),
-registrada en `CHANGELOG.md` [2.7.6]. Pendiente de commit (a decisión humana).
-⬜ Parte B (7 features) — pendiente, empieza tras confirmar Parte A.
+✅ Parte A (Blindaje: B1-B4) — commit `bc2e1d8`, `CHANGELOG.md` [2.7.6].
+✅ Feature 1 (Handoff) — `CHANGELOG.md` [2.8.0], suite verde (271/271).
+⬜ Features 2-7 — pendientes.

@@ -6,6 +6,16 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.8.0] — 2026-09-19
+
+- **Feature 1 — Protocolo de Portabilidad de Sesión / Handoff (`yunta/handoff.py`)**:
+  - `export_handoff()`/`import_handoff()`: empaquetan el estado de una sesión (mensajes, usage, permisos persistentes, sandbox activo, `cwd`, rama/commit de git) en un bundle JSON versionado (`schema_version`) que puede reanudarse en otro proceso, máquina o harness/IDE compatible (ej. entre ZCode y Antigravity). Reutiliza al 100% `serialize_messages`/`serialize_usage` de `yunta/session.py` — no reinventa el formato de mensajes.
+  - Detección de "drift": si el commit de git guardado en el bundle difiere del commit actual al importar, se reporta como aviso no bloqueante (`drift_warning`), no como error.
+  - `SessionPermissions.to_list()`/`.from_list()` (`yunta/agent.py`): serialización explícita y opt-in de los permisos persistentes de sesión — el objeto en sí sigue sin persistirse solo (invariante sin cambios).
+  - Comandos: `yunta handoff export [ruta]` / `yunta handoff import <ruta>` (CLI single-shot, opera sobre la última sesión guardada en disco) y `/handoff export|import` en el REPL (con fidelidad completa: permisos y sandbox activo incluidos).
+  - Límite de alcance documentado: yunta solo puede publicar y leer el schema — no puede forzar que otro harness lo adopte.
+- **Tests: 271** (7 nuevos en `tests/test_handoff.py`). 100% pasando.
+
 ## [2.7.6] — 2026-09-19
 
 - **Blindaje (Parte A de `docs/propuestas/2026-09-19-plan-7-features.md`)**: antes de construir features nuevas, se cerraron grietas confirmadas en el código existente.

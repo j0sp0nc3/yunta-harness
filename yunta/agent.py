@@ -86,6 +86,18 @@ class SessionPermissions:
     def items(self) -> list[tuple[str, str]]:
         return sorted(self._granted)
 
+    def to_list(self) -> list[list[str]]:
+        """Serialización explícita para handoff.py — nunca se persiste sola."""
+        return [list(pair) for pair in self.items()]
+
+    @classmethod
+    def from_list(cls, data: list[list[str]] | None) -> "SessionPermissions":
+        sp = cls()
+        for pair in data or []:
+            if len(pair) == 2:
+                sp._granted.add((pair[0], pair[1]))
+        return sp
+
 
 class Agent:
     def __init__(

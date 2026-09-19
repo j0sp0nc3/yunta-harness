@@ -122,6 +122,8 @@ Comandos de Terminal (CLI):
   yunta serve-json, json       Inicia el servidor NDJSON en stdio para extensiones IDE
   yunta --resume, -r           Reanuda la sesión previa guardada en .yunta/session_state.json
   yunta check [ruta] [--json]  Auditoría local de gobernanza SDD ($0 en tokens, instantáneo)
+  yunta handoff export [ruta]  Empaqueta la sesión guardada en un bundle portable (handoff)
+  yunta handoff import <ruta>  Reanuda una sesión desde un bundle de handoff exportado
   yunta "tu instrucción"       Ejecución directa single-shot (ej. yunta "revisa los tests")
   yunta init [idea]            Inicializa el proyecto con SPEC.md, PLAN.md y AGENTS.md (SDD)
   yunta --version, -v          Muestra la versión instalada de Yunta
@@ -134,6 +136,7 @@ Comandos Interactivos del REPL (dentro de Yunta):
   /sandbox [merge|discard]     Crea o gestiona un entorno aislado en git worktree
   /undo                        Deshace la última edición de archivos y restaura el estado previo
   /permissions [clear]         Muestra o revoca los permisos persistentes otorgados en la sesión
+  /handoff export|import       Exporta/importa la sesión activa como bundle portable entre harnesses
   /context                     Muestra el estado del historial y porcentaje del presupuesto de tokens
   /roi                         Muestra el dashboard de eficiencia económica y tokens evitados
   /metrics                     Muestra la telemetría detallada de herramientas, startup tax y turnos
@@ -227,6 +230,47 @@ def run_context():
     print(f"│ 🎯 Presupuesto Máximo de Tokens:       {max_tok:>10,} tokens  │")
     print(f"│ 📊 Uso del Presupuesto (Token Budget): {ratio:>6.1%}              │")
     print("└────────────────────────────────────────────────────────┘\n")
+
+
+def run_handoff_export(path_arg: str | None = None) -> None:
+    """CLI single-shot: solo tiene acceso a la última sesión guardada en
+    disco (sin permisos/sandbox vivos de un proceso en curso)."""
+    from .api import Usage
+    from .handoff import export_handoff
+
+    session_data = load_session()
+    if not session_data:
+        print("No hay sesión guardada (.yunta/session_state.json) para exportar.")
+        return
+    out_path = export_handoff(
+        session_data.get("messages", []),
+        session_data.get("usage") or Usage(),
+        model=session_data.get("model", ""),
+        path=path_arg,
+    )
+    print(f"✅ Handoff exportado: {out_path}")
+
+
+def run_handoff_import(path_arg: str | None) -> None:
+    from .handoff import import_handoff
+
+    if not path_arg:
+        print("Uso: yunta handoff import <ruta-al-bundle.json>")
+        return
+    try:
+        result = import_handoff(path_arg)
+    except ValueError as err:
+        print(f"⚠️ {err}")
+        return
+    if result is None:
+        print(f"No se pudo leer el bundle de handoff: {path_arg}")
+        return
+    save_session(result["messages"], result["usage"], model=result.get("model", ""))
+    print(f"✅ Handoff importado desde {path_arg} (session_id={result['session_id']}).")
+    print(f"   Modelo original: {result.get('model') or '(no especificado)'}")
+    if result.get("drift_warning"):
+        print(f"   ⚠️ {result['drift_warning']}")
+    print("   Ejecuta `yunta --resume` para continuar la sesión.")
 
 
 def _open_voice_listener():
@@ -363,6 +407,18 @@ def main():
     # Despacho de comando `yunta context` / `yunta --context`
     if len(sys.argv) > 1 and sys.argv[1].lower() in ("context", "--context"):
         run_context()
+        return
+
+    # Despacho de comando `yunta handoff export|import [ruta]`
+    if len(sys.argv) > 1 and sys.argv[1].lower() == "handoff":
+        sub = sys.argv[2].lower() if len(sys.argv) > 2 else ""
+        arg_path = sys.argv[3] if len(sys.argv) > 3 else None
+        if sub == "export":
+            run_handoff_export(arg_path)
+        elif sub == "import":
+            run_handoff_import(arg_path)
+        else:
+            print("Uso: yunta handoff export [ruta] | yunta handoff import <ruta>")
         return
 
     # Despacho de comando `yunta voice` / `yunta --voice` / `yunta -v`
@@ -649,6 +705,7 @@ def main():
                 print("  /sandbox [merge|discard] - Crea o gestiona un entorno aislado en git worktree (V3-9)")
                 print("  /undo                - Deshace la última edición de archivos y restaura su estado anterior")
                 print("  /permissions [clear] - Muestra o revoca los permisos persistentes otorgados en la sesión")
+                print("  /handoff export|import - Exporta/importa la sesión activa como bundle portable")
                 print("  /context             - Muestra el estado del historial y porcentaje del presupuesto de tokens")
                 print("  /roi                 - Muestra el dashboard de valor y ahorro económico de API")
                 print("  /tokens              - Muestra el consumo de tokens y tasa de acierto de caché")
@@ -850,6 +907,46 @@ def main():
                     print(f"✨ Sesión reanudada ({len(agent.messages)} mensajes cargados en contexto).\n")
                 else:
                     print("(no hay ninguna sesión previa guardada para reanudar)\n")
+                continue
+
+            if prompt.startswith("/handoff"):
+                parts = prompt.split(maxsplit=2)
+                sub = parts[1].lower() if len(parts) > 1 else ""
+                if sub == "export":
+                    from .handoff import export_handoff
+                    out_path = parts[2] if len(parts) > 2 else None
+                    path = export_handoff(
+                        agent.messages,
+                        agent.total_usage,
+                        session_permissions=agent.session_permissions,
+                        active_sandbox=active_sandbox,
+                        model=provider.model(),
+                        path=out_path,
+                    )
+                    print(f"✅ Handoff exportado: {path}")
+                    print(f"   Reanúdalo en otro harness con: yunta handoff import {path}\n")
+                elif sub == "import":
+                    if len(parts) < 3:
+                        print("Uso: /handoff import <ruta-al-bundle.json>\n")
+                    else:
+                        from .handoff import import_handoff
+                        try:
+                            result = import_handoff(parts[2])
+                        except ValueError as err:
+                            print(f"⚠️ {err}\n")
+                            result = None
+                        if result is None:
+                            print(f"No se pudo leer el bundle: {parts[2]}\n")
+                        else:
+                            agent.messages = result["messages"]
+                            agent.total_usage = result["usage"]
+                            agent.session_permissions = result["session_permissions"]
+                            print(f"✨ Handoff importado ({len(agent.messages)} mensajes). Modelo original: {result.get('model') or '(no especificado)'}")
+                            if result.get("drift_warning"):
+                                print(f"   ⚠️ {result['drift_warning']}")
+                            print()
+                else:
+                    print("Uso: /handoff export [ruta] | /handoff import <ruta>\n")
                 continue
 
             if prompt in ("/speak", "--speak", "-s") or prompt.startswith("/speak "):
