@@ -122,3 +122,39 @@ def test_clean_markdown_for_speech_table():
     assert "|" not in cleaned
     assert "Herramienta, Acción" in cleaned
     assert "bash, ejecutar" in cleaned
+
+
+def test_speak_pipelines_synthesis_with_playback():
+    """La síntesis de la oración N+1 ocurre mientras la N se reproduce:
+    tiempo total ≈ primera_síntesis + n*reproducción (no n*(síntesis+reproducción))."""
+    import time
+    import threading
+
+    from yunta.tts import speak, wait_until_done
+
+    # Realista: la síntesis Edge (~4.7s) es más RÁPIDA que hablar la oración
+    # (~8s de habla), así que el prefetch siempre alcanza a estar listo.
+    SYNTH_S, PLAY_S = 0.10, 0.30
+
+    class SlowFake(TTSProvider):
+        def synthesize(self, text):
+            time.sleep(SYNTH_S)
+            return b"x" * 500, "http"
+
+        def play_audio(self, audio_bytes, should_stop=None):
+            time.sleep(PLAY_S)
+            return True
+
+    p = SlowFake()
+    text = ". ".join(f"Frase corta numero {i}" for i in range(5)) + "."
+    n = 5
+    t0 = time.perf_counter()
+    assert speak(p, text) is True
+    wait_until_done(timeout=30)
+    elapsed = time.perf_counter() - t0
+    sequential_bound = n * (SYNTH_S + PLAY_S)          # 2.0s
+    pipelined_bound = SYNTH_S + n * PLAY_S + 0.4       # 1.2s + margen
+    assert elapsed < pipelined_bound, (
+        f"pipeline no aplicado: {elapsed:.2f}s >= {pipelined_bound:.2f}s "
+        f"(secuencial sería {sequential_bound:.2f}s)"
+    )

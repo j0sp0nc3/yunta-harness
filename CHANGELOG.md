@@ -6,6 +6,12 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.7.4] — 2026-09-19
+
+- **Pipeline de Prefetch en TTS (`yunta/tts.py`)**:
+  - `speak()` sintetiza la oración N+1 en un hilo corto mientras la N se reproduce: la latencia de síntesis de Edge (~4.7s/oración) queda oculta tras el tiempo de habla (~6s), encadenando oraciones sin pausas. La única espera perceptible es la primera síntesis. Medido end-to-end: 5 oraciones en 29.9s (tiempo de habla puro) vs ~53s secuencial (**~44% menos**; en configuraciones con síntesis más lenta que el habla, el ahorro tiende a ~100% de la síntesis).
+  - Test de regresión con FakeProvider temporizado: el total debe acercarse a `primera_síntesis + n×reproducción`, no a `n×(síntesis+reproducción)`.
+
 ## [2.7.3] — 2026-09-19
 
 - **Banco de Pruebas y Métricas del Pipeline de Voz (`scripts/bench_voice.py` + `tests/test_voice_quality.py`)**:

@@ -278,15 +278,31 @@ def speak(provider: TTSProvider, text: str) -> bool:
 
     def _worker():
         announced_edge = False
-        for chunk in chunk_text_by_sentences(clean_text):
+        chunks = chunk_text_by_sentences(clean_text)
+        prefetched: dict[int, tuple[bytes | None, str]] = {}
+
+        def _prefetch(idx: int) -> None:
+            try:
+                prefetched[idx] = provider.synthesize(chunks[idx])
+            except Exception:
+                prefetched[idx] = (None, "")
+
+        for i, chunk in enumerate(chunks):
             if _speak_stop.is_set():
                 break
-            audio, source = provider.synthesize(chunk)
+            if i in prefetched:
+                audio, source = prefetched.pop(i)
+            else:
+                audio, source = provider.synthesize(chunk)
             if not audio:
                 continue
             if source == "edge-tts" and not announced_edge:
                 print("\n💡 (voz: Edge TTS — respaldo del endpoint TTS principal)")
                 announced_edge = True
+            # Pipeline: sintetizar la oración siguiente mientras esta se reproduce
+            # (la síntesis Edge ~4.7s queda oculta tras la reproducción en curso).
+            if i + 1 < len(chunks) and not _speak_stop.is_set():
+                threading.Thread(target=_prefetch, args=(i + 1,), daemon=True).start()
             with _playback_lock:
                 if _speak_stop.is_set():
                     break
