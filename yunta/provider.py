@@ -22,9 +22,12 @@ class Provider:
 
 
 class LiteLLMProvider(Provider):
-    def __init__(self, system: str = ""):
-        models_str = os.environ.get("LLM_MODELS") or os.environ.get("LLM_MODEL", "")
-        self._models = [m.strip() for m in models_str.split(",") if m.strip()]
+    def __init__(self, system: str = "", model: str | None = None):
+        if model:
+            self._models = [model]
+        else:
+            models_str = os.environ.get("LLM_MODELS") or os.environ.get("LLM_MODEL", "")
+            self._models = [m.strip() for m in models_str.split(",") if m.strip()]
         if not self._models:
             raise SystemExit(
                 "LLM_MODEL no está definido. Define la variable LLM_MODEL con el modelo elegido (ej. LLM_MODEL=gemini/gemini-3.6-flash, LLM_MODEL=openai/gpt-4o, etc.)."

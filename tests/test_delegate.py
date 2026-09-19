@@ -110,6 +110,30 @@ def test_delegate_research_runs_subagent_and_returns_final_text():
     assert first_user == "¿dónde está el bucle?"
 
 
+def test_delegate_research_uses_fast_model_when_set(monkeypatch):
+    """B1: regresión del bug donde LLM_FAST_MODEL nunca se usaba porque
+    LiteLLMProvider no aceptaba `model=` (TypeError silenciado -> siempre
+    caía al provider compartido). Ahora debe construir un provider propio
+    para el modelo rápido."""
+    monkeypatch.setenv("LLM_FAST_MODEL", "openai/gpt-4o-mini")
+    main_provider = FakeProvider(read_file_then("NO debería usarse esta respuesta"))
+    created = {}
+
+    class SpyFastProvider(FakeProvider):
+        def __init__(self, model=None, system=""):
+            super().__init__(read_file_then("hallazgo con modelo rápido"))
+            created["model"] = model
+
+    monkeypatch.setattr(delegate, "LiteLLMProvider", SpyFastProvider)
+    delegate.set_provider(main_provider)
+
+    out = registry.get("delegate_research").fn('{"task":"algo"}')
+
+    assert created["model"] == "openai/gpt-4o-mini"
+    assert out == "hallazgo con modelo rápido"
+    assert main_provider.received == []  # el provider compartido NUNCA se usó
+
+
 def test_delegate_research_without_provider_raises():
     with pytest.raises(RuntimeError, match="delegate no configurado"):
         registry.get("delegate_research").fn('{"task":"x"}')

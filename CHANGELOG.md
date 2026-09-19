@@ -6,6 +6,15 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.7.6] — 2026-09-19
+
+- **Blindaje (Parte A de `docs/propuestas/2026-09-19-plan-7-features.md`)**: antes de construir features nuevas, se cerraron grietas confirmadas en el código existente.
+  - **B1 — Fix de `LLM_FAST_MODEL` (bug de producción)**: `LiteLLMProvider.__init__` (`yunta/provider.py`) no aceptaba el parámetro `model=` que `yunta/tools/delegate.py::delegate_research` le pasaba para usar un modelo económico en subagentes de investigación. La llamada siempre lanzaba `TypeError`, capturado por un `except` silencioso que hacía caer la ejecución al provider compartido — `LLM_FAST_MODEL` nunca funcionó desde que se documentó como feature en v2.0. Se agregó el parámetro `model: str | None = None` (si viene, ignora `LLM_MODELS`/`LLM_MODEL` de entorno; retrocompatible al 100%) y se reemplazó el `except` mudo por un aviso explícito en consola ante fallo de construcción del provider rápido.
+  - **B2 — Eliminado código huérfano (`yunta/budget.py`, `tests/test_session_budget.py`)**: `SessionBudget`/`check_budget` no tenían ningún import fuera de su propio test; la funcionalidad real de aviso por umbrales (P8) se implementó y quedó en producción vía `compact.py::TokenBudgetCompactor` (4 umbrales: 70/80/85/99%), dejando este módulo como prototipo abandonado sin borrar. Mantenerlo hubiera duplicado lógica de umbrales ya cubierta, violando la regla de minimalismo de `AGENTS.md`.
+  - **B3 — Fix de colisión de nombres en `create_sandbox` (`yunta/sandbox.py`)**: el sufijo `int(time.time())` (resolución de 1 segundo) podía colisionar si `create_sandbox()` se llamaba más de una vez dentro del mismo segundo (ej. `/sandbox` tras un `discard` rápido), generando el mismo nombre de carpeta/rama. Se agregó un sufijo `uuid.uuid4().hex[:6]`.
+  - **B4 — Tests de "wiring" (`tests/test_wiring_smoke.py`, nuevo)**: cubre las firmas reales con las que producción construye `LiteLLMProvider` (`model=` de `delegate.py`, `system=` de `cli.py`/scripts, sin argumentos de `json_server.py`) para que un desalineamiento de firma como el de B1 se detecte de inmediato en vez de quedar 6 versiones inadvertido tras un `except` mudo.
+- **Tests: 267** (264 previos − 2 de `test_session_budget.py` eliminado + 6 nuevos: 1 en `test_provider.py`, 1 en `test_delegate.py`, 1 en `test_sandbox.py`, 3 en `test_wiring_smoke.py`). 100% pasando.
+
 ## [2.7.5] — 2026-09-19
 
 - **Integración de Voz (STT/TTS) con Modo SDD y Experiencia Hands-Free (`yunta/voice.py`, `yunta/cli.py`, `yunta/decompose.py`)**:

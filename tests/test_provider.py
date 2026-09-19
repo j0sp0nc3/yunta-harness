@@ -84,6 +84,17 @@ def test_custom_base_url():
     assert captured["api_base"] == "http://localhost:11434/v1"
 
 
+def test_model_param_overrides_env_lookup():
+    """B1: LiteLLMProvider(model=...) debe ganarle a LLM_MODEL/LLM_MODELS de
+    entorno en vez de lanzar TypeError (regresión del bug que dejaba
+    LLM_FAST_MODEL completamente inoperante en delegate.py)."""
+    os.environ["LLM_MODEL"] = "openai/gpt-4o"
+    p = LiteLLMProvider(system="sys", model="anthropic/claude-sonnet-4-5")
+    assert p.model() == "anthropic/claude-sonnet-4-5"
+    p.send(MSGS[:1], tools=[])
+    assert captured["model"] == "anthropic/claude-sonnet-4-5"
+
+
 def test_missing_model_fails_clearly():
     env = dict(os.environ)
     env["LLM_MODEL"] = ""

@@ -3,6 +3,7 @@
 import os
 import subprocess
 import time
+import uuid
 from pathlib import Path
 
 
@@ -15,7 +16,7 @@ def _clean_git_env() -> dict:
 
 def create_sandbox(prefix: str = "yunta-sandbox") -> tuple[Path, str]:
     """Crea un git worktree aislado bajo .yunta/sandboxes/ y retorna (path, branch_name)."""
-    ts = int(time.time())
+    ts = f"{int(time.time())}-{uuid.uuid4().hex[:6]}"
     branch_name = f"sandbox-{ts}"
     sandbox_dir = Path(".yunta") / "sandboxes" / f"{prefix}-{ts}"
     sandbox_dir.parent.mkdir(parents=True, exist_ok=True)

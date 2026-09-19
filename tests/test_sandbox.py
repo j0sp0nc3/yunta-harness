@@ -48,6 +48,31 @@ def test_create_and_cleanup_sandbox(tmp_path, monkeypatch):
     assert (repo / "sandbox_file.txt").read_text(encoding="utf-8") == "created in sandbox"
 
 
+def test_create_sandbox_names_are_unique_in_rapid_succession(tmp_path, monkeypatch):
+    """B3: ts en segundos (int(time.time())) colisionaba si create_sandbox se
+    llamaba varias veces dentro del mismo segundo, generando la misma rama/
+    carpeta. Ahora debe incluir un sufijo único adicional."""
+    repo = tmp_path / "repo3"
+    repo.mkdir()
+    monkeypatch.chdir(repo)
+    _git("init")
+    _git("config", "user.name", "T")
+    _git("config", "user.email", "t@t")
+    (repo / "f.txt").write_text("x", encoding="utf-8")
+    _git("add", "f.txt")
+    _git("commit", "-m", "c")
+
+    created = [create_sandbox("burst") for _ in range(5)]
+    dirs = [str(d) for d, _ in created]
+    branches = [b for _, b in created]
+
+    assert len(set(dirs)) == 5
+    assert len(set(branches)) == 5
+
+    for d, b in created:
+        cleanup_sandbox(d, b)
+
+
 def test_sandbox_funciona_bajo_entorno_de_hook(tmp_path, monkeypatch):
     """Regresión P-W: GIT_INDEX_FILE/GIT_DIR (como los exporta un pre-commit)
     no deben romper la creación del sandbox."""
