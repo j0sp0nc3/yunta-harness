@@ -571,6 +571,25 @@ def test_doom_loop_detection_pause(tmp_path, monkeypatch):
     assert "user denied this tool call (doom-loop pause: 5 repeats)" in results[4].tool_result
 
 
+def test_doom_loop_trigger_increments_counter_for_health_score(tmp_path, monkeypatch):
+    """Feature 5: cada disparo de force_prompt debe incrementar
+    _doom_loop_triggers, que luego persiste yunta/health.py entre sesiones."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "test.txt").write_text("hola", encoding="utf-8")
+
+    responses = [
+        Response(content=[tool_use(str(i), "read_file", '{"path":"test.txt"}')], stop_reason=StopReason.TOOL_USE)
+        for i in range(1, 6)
+    ]
+    responses.append(Response(content=[Block(type=BlockType.TEXT, text="listo")], stop_reason=StopReason.END_TURN))
+
+    p = FakeProvider(responses)
+    a = Agent(provider=p, system="s", auto_save=False, confirm=lambda n, d: True)
+    a.send("loop test")
+
+    assert a._doom_loop_triggers == 1
+
+
 def test_decision_point_reminder_injected_after_15_calls(tmp_path, monkeypatch):
     """Tras 15 ejecuciones de herramientas se inyecta un bloque TEXT de recordatorio en los mensajes del usuario (V3-5)."""
     monkeypatch.chdir(tmp_path)

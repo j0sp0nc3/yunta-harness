@@ -129,6 +129,7 @@ class Agent:
         self.snapshots: list[dict[str, str | None]] = []
         self._recent_tool_calls: list[tuple[str, str]] = []
         self._tool_calls_since_reminder: int = 0
+        self._doom_loop_triggers: int = 0  # Feature 5: health score persistente
         self.think_override: str | None = None
         self.current_reasoning_effort: str = "off"
         # V5-1: callback opcional de aprobación por voz (inyectado por el REPL
@@ -354,6 +355,7 @@ class Agent:
 
         detail = self._tool_detail(name, raw_input)
         if force_prompt:
+            self._doom_loop_triggers += 1
             detail = f"[PAUSA DOOM-LOOP: repetición x{repeat_count} de {name}] {detail}".strip()
 
         print(f"[tool] {name} {raw_input}")

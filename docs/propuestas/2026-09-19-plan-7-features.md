@@ -206,4 +206,5 @@ encima.
 ✅ Feature 2 (Reverse-SDD) — `CHANGELOG.md` [2.9.0], suite verde (294/294).
 ✅ Feature 3 (Caracterización/Golden-Master) — `CHANGELOG.md` [2.10.0], suite verde (302/302).
 ✅ Feature 4 (Memoria de Equipo) — `CHANGELOG.md` [2.11.0], suite verde (313/313).
-⬜ Features 5-7 — pendientes.
+✅ Feature 5 (Agent Health Score) — `CHANGELOG.md` [2.12.0], suite verde (319/319).
+⬜ Features 6-7 — pendientes.

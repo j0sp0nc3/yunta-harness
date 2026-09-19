@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -125,6 +126,7 @@ Comandos de Terminal (CLI):
   yunta reverse-sdd [ruta] [--apply]  Genera SPEC.md/AGENTS.md candidatos desde código sin specs
   yunta memory sync [--fix]    Reporta y deduplica la memoria de equipo (learnings.md/memory.json)
   yunta memory init-sync       Habilita versionar la memoria de equipo en git (pide confirmación)
+  yunta health [--json]        Muestra el Health Score histórico del repo (doom-loops, errores, ROI)
   yunta handoff export [ruta]  Empaqueta la sesión guardada en un bundle portable (handoff)
   yunta handoff import <ruta>  Reanuda una sesión desde un bundle de handoff exportado
   yunta "tu instrucción"       Ejecución directa single-shot (ej. yunta "revisa los tests")
@@ -333,6 +335,28 @@ def run_memory_sync(fix: bool = False) -> None:
         print(f"🧹 Deduplicado: {removed_l} lección(es) repetida(s), {removed_m} entrada(s) repetida(s).")
 
 
+def run_health(as_json: bool = False) -> None:
+    from .health import DEFAULT_HEALTH_PATH, aggregate
+
+    stats = aggregate(DEFAULT_HEALTH_PATH)
+    if as_json:
+        print(json.dumps(stats, indent=2, ensure_ascii=False))
+        return
+    if stats.get("sessions", 0) == 0:
+        print("No hay snapshots de salud registrados todavía (se guardan al salir de una sesión).")
+        return
+    print("┌────────────────────────────────────────────────────────┐")
+    print("│ YUNTA — AGENT HEALTH SCORE (histórico del repo)        │")
+    print("├────────────────────────────────────────────────────────┤")
+    print(f"│ 🩺 Health Score (heurística v1):       {stats['health_score']:>6.1f}/100        │")
+    print(f"│ 📅 Sesiones registradas:                {stats['sessions']:>6}               │")
+    print(f"│ 🔧 Tools ejecutadas (acumulado):       {stats['total_tool_calls']:>10,}          │")
+    print(f"│ ⚠️  Tasa de error de tools:              {stats['error_rate']:>6.1%}              │")
+    print(f"│ 🔁 Disparos de doom-loop (acumulado):   {stats['total_doom_loop_triggers']:>6}               │")
+    print(f"│ ⚡ Acierto de caché promedio:           {stats['avg_cache_rate']:>6.1f}%          │")
+    print("└────────────────────────────────────────────────────────┘\n")
+
+
 def _open_voice_listener():
     """Abre y calibra el micrófono en escucha continua; None si no hay soporte."""
     from .voice import VoiceListener
@@ -453,6 +477,11 @@ def main():
                 print(f"  → {w}")
             if not apply_flag:
                 print("Usa --apply para escribir SPEC.md/AGENTS.md reales (solo si no existen ya).")
+        return
+
+    # Despacho de comando `yunta health [--json]`
+    if len(sys.argv) > 1 and sys.argv[1].lower() == "health":
+        run_health(as_json="--json" in sys.argv)
         return
 
     # Despacho de comando `yunta memory sync [--fix]` / `yunta memory init-sync`
@@ -694,6 +723,11 @@ def main():
                     feedback.summarize(provider, agent.messages)
                 except Exception:
                     pass
+                try:
+                    from .health import record_snapshot
+                    record_snapshot(agent.total_usage, agent._doom_loop_triggers, model=provider.model())
+                except Exception:
+                    pass
             # --speak también en single-shot: leer el resultado final en voz alta
             if speak_mode and res_text:
                 try:
@@ -784,6 +818,11 @@ def main():
                         feedback.summarize(provider, agent.messages)
                 except (KeyboardInterrupt, SystemExit):
                     break
+                except Exception:
+                    pass
+                try:
+                    from .health import record_snapshot
+                    record_snapshot(agent.total_usage, agent._doom_loop_triggers, model=provider.model())
                 except Exception:
                     pass
                 break

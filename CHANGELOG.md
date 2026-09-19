@@ -6,6 +6,14 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.12.0] — 2026-09-19
+
+- **Feature 5 — Agent Health Score (`yunta/health.py`)**: persiste métricas agregadas por repo entre sesiones (`.yunta/health.jsonl`, misma convención JSONL append-only de la Feature 4), en vez de perderlas al morir el proceso (`Usage`/`Budget` eran 100% en memoria).
+  - `record_snapshot()`: una snapshot por sesión (turnos, tool_errors, total_tool_calls, disparos de doom-loop, cache_rate, modelo). Cero instrumentación nueva salvo `Agent._doom_loop_triggers` (`yunta/agent.py`), incrementado en el mismo punto donde ya se calculaba `force_prompt`.
+  - `aggregate()`: agrega snapshots en un `health_score` heurístico v1 (documentado explícitamente como punto de partida, no como métrica científica) — penaliza tasa de error de tools y frecuencia de doom-loops.
+  - Grabado automáticamente al `/exit` del REPL y al finalizar single-shot (mismo lifecycle hook que ya dispara `feedback.summarize`). Comando: `yunta health [--json]`.
+- **Tests: 319** (6 nuevos: 5 en `tests/test_health.py`, 1 de integración en `tests/test_agent.py` verificando el contador de doom-loops). 100% pasando.
+
 ## [2.11.0] — 2026-09-19
 
 - **Feature 4 — Memoria de Equipo (`yunta/tools/memory.py`, `yunta/team_memory.py`)**: hace que la memoria explícita (`remember`/`recall`) sea sincronizable entre miembros de equipo, en dos partes.
