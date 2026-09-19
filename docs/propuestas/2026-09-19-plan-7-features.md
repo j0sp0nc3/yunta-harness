@@ -205,4 +205,5 @@ encima.
 ✅ Feature 1 (Handoff) — `CHANGELOG.md` [2.8.0], suite verde (271/271).
 ✅ Feature 2 (Reverse-SDD) — `CHANGELOG.md` [2.9.0], suite verde (294/294).
 ✅ Feature 3 (Caracterización/Golden-Master) — `CHANGELOG.md` [2.10.0], suite verde (302/302).
-⬜ Features 4-7 — pendientes.
+✅ Feature 4 (Memoria de Equipo) — `CHANGELOG.md` [2.11.0], suite verde (313/313).
+⬜ Features 5-7 — pendientes.

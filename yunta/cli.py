@@ -123,6 +123,8 @@ Comandos de Terminal (CLI):
   yunta --resume, -r           Reanuda la sesión previa guardada en .yunta/session_state.json
   yunta check [ruta] [--json]  Auditoría local de gobernanza SDD ($0 en tokens, instantáneo)
   yunta reverse-sdd [ruta] [--apply]  Genera SPEC.md/AGENTS.md candidatos desde código sin specs
+  yunta memory sync [--fix]    Reporta y deduplica la memoria de equipo (learnings.md/memory.json)
+  yunta memory init-sync       Habilita versionar la memoria de equipo en git (pide confirmación)
   yunta handoff export [ruta]  Empaqueta la sesión guardada en un bundle portable (handoff)
   yunta handoff import <ruta>  Reanuda una sesión desde un bundle de handoff exportado
   yunta "tu instrucción"       Ejecución directa single-shot (ej. yunta "revisa los tests")
@@ -274,6 +276,63 @@ def run_handoff_import(path_arg: str | None) -> None:
     print("   Ejecuta `yunta --resume` para continuar la sesión.")
 
 
+def run_memory_init_sync() -> None:
+    """Permite versionar .yunta/learnings.md y .yunta/memory.json en git,
+    agregando excepciones al .gitignore. Pide confirmación explícita: es
+    una config persistente del repo, no una acción de solo lectura."""
+    gitignore = Path(".gitignore")
+    exceptions = ["!.yunta/learnings.md", "!.yunta/memory.json"]
+    current = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+    missing = [e for e in exceptions if e not in current]
+
+    if not missing:
+        print("El .gitignore ya permite versionar los archivos de memoria de equipo.")
+        return
+
+    print("Esto modificará .gitignore para permitir versionar en git:")
+    print("  .yunta/learnings.md  (lecciones auto-aprendidas, texto append-only)")
+    print("  .yunta/memory.json   (memoria explícita remember/recall, formato JSONL)")
+    print("Hoy toda la carpeta .yunta/ está ignorada por completo.")
+    try:
+        answer = input("¿Confirmas agregar estas excepciones al .gitignore? [s/N]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        answer = "n"
+    if answer not in ("s", "si", "sí", "y", "yes"):
+        print("Cancelado. No se modificó .gitignore.")
+        return
+
+    new_content = current
+    if new_content and not new_content.endswith("\n"):
+        new_content += "\n"
+    new_content += "\n# yunta memory init-sync: permite versionar memoria de equipo\n"
+    new_content += "\n".join(missing) + "\n"
+    gitignore.write_text(new_content, encoding="utf-8")
+    print(f"✅ .gitignore actualizado con {len(missing)} excepción(es).")
+    print("Ejecuta `yunta memory sync` periódicamente para deduplicar tras merges de equipo.")
+
+
+def run_memory_sync(fix: bool = False) -> None:
+    from .team_memory import dedup_learnings, dedup_memory, sync_report
+
+    report = sync_report(".")
+    print("┌────────────────────────────────────────────────────────┐")
+    print("│ YUNTA — SINCRONIZACIÓN DE MEMORIA DE EQUIPO            │")
+    print("├────────────────────────────────────────────────────────┤")
+    if report["learnings"]:
+        print(f"│ 📚 learnings.md: {report['learnings']['count']} lecciones")
+    else:
+        print("│ 📚 learnings.md: no existe todavía")
+    if report["memory"]:
+        print(f"│ 🧠 memory.json:  {report['memory']['count']} entradas")
+    else:
+        print("│ 🧠 memory.json:  no existe todavía")
+    print("└────────────────────────────────────────────────────────┘")
+    if fix:
+        removed_l = dedup_learnings()
+        removed_m = dedup_memory()
+        print(f"🧹 Deduplicado: {removed_l} lección(es) repetida(s), {removed_m} entrada(s) repetida(s).")
+
+
 def _open_voice_listener():
     """Abre y calibra el micrófono en escucha continua; None si no hay soporte."""
     from .voice import VoiceListener
@@ -394,6 +453,17 @@ def main():
                 print(f"  → {w}")
             if not apply_flag:
                 print("Usa --apply para escribir SPEC.md/AGENTS.md reales (solo si no existen ya).")
+        return
+
+    # Despacho de comando `yunta memory sync [--fix]` / `yunta memory init-sync`
+    if len(sys.argv) > 1 and sys.argv[1].lower() == "memory":
+        sub = sys.argv[2].lower() if len(sys.argv) > 2 else ""
+        if sub == "init-sync":
+            run_memory_init_sync()
+        elif sub == "sync":
+            run_memory_sync(fix="--fix" in sys.argv)
+        else:
+            print("Uso: yunta memory sync [--fix] | yunta memory init-sync")
         return
 
     # Despacho de comando `yunta ide-init`

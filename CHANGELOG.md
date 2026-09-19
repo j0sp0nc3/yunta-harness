@@ -6,6 +6,14 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.11.0] — 2026-09-19
+
+- **Feature 4 — Memoria de Equipo (`yunta/tools/memory.py`, `yunta/team_memory.py`)**: hace que la memoria explícita (`remember`/`recall`) sea sincronizable entre miembros de equipo, en dos partes.
+  - **Formato (`yunta/tools/memory.py`)**: migrado de "array JSON reescrito completo en cada `remember`" a **JSONL append-only** (una entrada por línea) — mucho más amigable con merges de git. Migración automática y transparente del formato viejo la primera vez que se lee o escribe (`_load` detecta un array `[...]` y lo reescribe como JSONL antes de continuar). Retrocompatible: `recall`/`remember` se comportan igual desde fuera.
+  - **Transporte (`yunta/team_memory.py`, nuevo)**: `dedup_learnings()`/`dedup_memory()` (deduplican tras un merge mal resuelto, conservando la primera aparición) y `sync_report()` (solo lectura, cuenta entradas). Comando `yunta memory sync [--fix]`.
+  - **`.gitignore`**: hoy `.yunta/` está 100% ignorado, por lo que "memoria compartible por git" no tenía transporte. Comando `yunta memory init-sync` agrega las excepciones necesarias (`!.yunta/learnings.md`, `!.yunta/memory.json`) **solo con confirmación explícita del usuario** en terminal — nunca se toca `.gitignore` automáticamente.
+- **Tests: 313** (11 nuevos: 4 en `tests/test_memory.py` incluyendo migración legacy→JSONL, 7 en `tests/test_team_memory.py`). 100% pasando.
+
 ## [2.10.0] — 2026-09-19
 
 - **Feature 3 — Tests de Caracterización / Golden-Master (`yunta/tools/characterize.py`)**: nueva tool `characterize_function` (`requires_approval=True`) que captura el comportamiento ACTUAL de una función Python top-level antes de refactorizarla, para detectar regresiones en código legacy sin tests.
