@@ -508,6 +508,14 @@ class AudioChunker:
         porque sus frames son autocontenidos y decodifican desde casi cualquier
         offset; para otros formatos se falla con mensaje claro.
         """
+        # Fix chaos-testing 2026-09-19: un archivo de 0 bytes hacía fallar el
+        # intento con ffmpeg Y el fallback por bytes (read() de un archivo
+        # vacío no genera chunks), cayendo en el RuntimeError genérico de
+        # "ffmpeg no está disponible" aunque ffmpeg sí esté instalado — el
+        # problema real es que no hay nada que fragmentar.
+        if os.path.getsize(file_path) == 0:
+            raise RuntimeError(f"el archivo de audio '{file_path}' está vacío (0 bytes) — no hay nada que transcribir.")
+
         temp_dir = tempfile.mkdtemp(prefix="yunta_audio_")
         chunk_files = []
 
@@ -704,9 +712,27 @@ def route_keyword(text: str, keywords: dict[str, str] | None = None) -> str | No
         if cleaned == prefix:
             return cmd
         if cleaned.startswith(prefix + " "):
-            prefix_words = len(prefix.split())
-            parts = text.strip().split(maxsplit=prefix_words)
-            arg = parts[-1].strip() if len(parts) > prefix_words else ""
+            # Fix chaos-testing 2026-09-19: antes se usaba text.split(maxsplit=
+            # prefix_words) sobre el texto CRUDO, contando por posición de
+            # palabra. Si el texto tenía un emoji u otro token que _clean_
+            # response_text elimina POR COMPLETO (no solo despuntúa), el
+            # conteo de palabras entre `cleaned` y `text` se desalineaba y
+            # el prefijo terminaba duplicado dentro del argumento (ej. "🚀
+            # inicializa X" -> "/init inicializa X" en vez de "/init X").
+            # Ahora se consumen palabras crudas una a una, limpiándolas
+            # individualmente, hasta reconstruir exactamente `prefix` —
+            # preservando mayúsculas/puntuación del resto como argumento.
+            raw_words = text.strip().split()
+            consumed = 0
+            acc_clean = ""
+            for w in raw_words:
+                consumed += 1
+                cw = _clean_response_text(w)
+                if cw:
+                    acc_clean = (acc_clean + " " + cw).strip()
+                if acc_clean == prefix:
+                    break
+            arg = " ".join(raw_words[consumed:]).strip()
             return f"{cmd} {arg}" if arg else cmd
     # Fuzzy de una sola palabra ("métricas" → "metricas" ya lo maneja el clean;
     # toleramos errores de Whisper también aquí)

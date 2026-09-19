@@ -63,8 +63,13 @@ def clean_markdown_for_speech(text: str) -> str:
         return ""
 
     s = text
-    # 1. Bloques de código multilínea (```lang ... ```): resumir a breve aviso
+    # 1. Bloques de código multilínea CERRADOS (```lang ... ```): resumir a breve aviso
     s = re.sub(r"```[a-zA-Z0-9_-]*\n?(.*?)```", r" código en pantalla. ", s, flags=re.DOTALL)
+    # 1b. Fix chaos-testing 2026-09-19: bloque SIN CERRAR (respuesta cortada a
+    # mitad de un ```): sin esto, la regex anterior no matchea (exige cierre) y
+    # el código crudo se filtra intacto al lector de voz. Todo desde el marcador
+    # de apertura restante hasta el final del texto se trata como código.
+    s = re.sub(r"```[a-zA-Z0-9_-]*\n?.*$", " código en pantalla. ", s, flags=re.DOTALL)
     # 2. Imágenes: ![alt](url) -> eliminar
     s = re.sub(r"!\[.*?\]\(.*?\)", "", s)
     # 3. Enlaces: [texto](url) -> texto
@@ -280,6 +285,7 @@ def speak(provider: TTSProvider, text: str) -> bool:
         announced_edge = False
         chunks = chunk_text_by_sentences(clean_text)
         prefetched: dict[int, tuple[bytes | None, str]] = {}
+        prefetch_threads: dict[int, threading.Thread] = {}
 
         def _prefetch(idx: int) -> None:
             try:
@@ -290,10 +296,23 @@ def speak(provider: TTSProvider, text: str) -> bool:
         for i, chunk in enumerate(chunks):
             if _speak_stop.is_set():
                 break
+            # Fix chaos-testing 2026-09-19: si la oración anterior se reprodujo
+            # más rápido que el prefetch de esta (frases cortas como "Sí."), antes
+            # se lanzaba una SEGUNDA síntesis concurrente en vez de esperar la que
+            # ya estaba en curso. Ahora se espera (join) el hilo de prefetch si
+            # existe, en vez de duplicar la llamada.
+            if i in prefetch_threads:
+                prefetch_threads.pop(i).join(timeout=30)
             if i in prefetched:
                 audio, source = prefetched.pop(i)
             else:
-                audio, source = provider.synthesize(chunk)
+                # Fix chaos-testing 2026-09-19: esta llamada no tenía try/except
+                # (a diferencia de _prefetch); una falla de red aquí mataba el
+                # hilo de habla en silencio y el resto de la respuesta no se leía.
+                try:
+                    audio, source = provider.synthesize(chunk)
+                except Exception:
+                    audio, source = None, ""
             if not audio:
                 continue
             if source == "edge-tts" and not announced_edge:
@@ -302,7 +321,9 @@ def speak(provider: TTSProvider, text: str) -> bool:
             # Pipeline: sintetizar la oración siguiente mientras esta se reproduce
             # (la síntesis Edge ~4.7s queda oculta tras la reproducción en curso).
             if i + 1 < len(chunks) and not _speak_stop.is_set():
-                threading.Thread(target=_prefetch, args=(i + 1,), daemon=True).start()
+                t = threading.Thread(target=_prefetch, args=(i + 1,), daemon=True)
+                prefetch_threads[i + 1] = t
+                t.start()
             with _playback_lock:
                 if _speak_stop.is_set():
                     break

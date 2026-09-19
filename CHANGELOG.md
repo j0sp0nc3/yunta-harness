@@ -6,6 +6,18 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.14.1] — 2026-09-19
+
+- **Blindaje del subsistema de Voz/TTS — 6 defectos de runtime encontrados por testing adversarial (`tests/test_voice_chaos.py`, ahora trackeado en git)**: a diferencia de la Parte A (bugs encontrados por exploración arquitectónica), estos 6 solo eran detectables ejecutando código bajo estrés real — condiciones de carrera, inyección de fallos, fuzzing de input malformado. Ninguno fue detectado por la revisión de diseño de la sesión.
+  - **Permisos "siempre" ignorados en modo voz (`yunta/agent.py`, `_approve`)**: `voice_approval` se consultaba incondicionalmente ANTES de revisar `session_permissions`, así que decir "siempre" no evitaba que se volviera a preguntar por voz en el siguiente comando de la misma tool. Ahora `session_permissions.allowed()` se consulta primero (salvo en `force_prompt`, que sigue forzando confirmación explícita por diseño — doom-loop).
+  - **Condición de carrera en prefetch de TTS (`yunta/tts.py`, `_worker`)**: si una oración se reproducía más rápido de lo que tardaba el prefetch de la siguiente (frases cortas como "Sí."), el bucle principal lanzaba una SEGUNDA síntesis concurrente en vez de esperar la que ya estaba en curso. Ahora se hace `join()` (con timeout de 30s) sobre el hilo de prefetch antes de decidir si sintetizar de nuevo.
+  - **Excepción no capturada mataba el hilo de habla (`yunta/tts.py`, `_worker`)**: la llamada síncrona a `provider.synthesize(chunk)` no tenía `try/except` (a diferencia de `_prefetch`, que sí lo tenía) — una falla de red mataba el hilo daemon en silencio y el resto de la respuesta no se leía. Ahora está protegida igual que `_prefetch`.
+  - **Emoji duplicaba el argumento del router de voz (`yunta/voice.py`, `route_keyword`)**: la extracción del argumento usaba `text.split(maxsplit=prefix_words)` sobre el texto crudo, pero `prefix_words` se calculaba sobre `cleaned` (sin emojis). Un emoji al inicio desalineaba el conteo y "inicializa" terminaba duplicado dentro del argumento (ej. "🚀 inicializa X" → "/init inicializa X"). Ahora se consumen palabras crudas una a una, limpiándolas individualmente, hasta reconstruir el prefijo exacto.
+  - **Bloques de código Markdown sin cerrar se filtraban a voz (`yunta/tts.py`, `clean_markdown_for_speech`)**: la regex de resumen de código exigía el cierre ` ``` `; si la respuesta del modelo se cortaba a mitad de un bloque, el código crudo pasaba intacto al lector de voz. Se agregó una segunda pasada que trata cualquier ` ``` ` remanente (sin cierre) como código hasta el final del texto.
+  - **Mensaje de error engañoso en audio de 0 bytes (`yunta/voice.py`, `AudioChunker.split_audio_by_silence`)**: un archivo vacío hacía fallar tanto el intento con ffmpeg como el fallback por bytes, cayendo en el `RuntimeError` genérico de "ffmpeg no está disponible" incluso con ffmpeg instalado. Ahora se detecta el archivo vacío explícitamente al inicio con un mensaje que señala la causa real.
+- `tests/test_voice_chaos.py`: incorporado formalmente al repo (estaba sin trackear); sus 14 pruebas pasan de documentar los defectos a ser regresión permanente sobre el comportamiento corregido.
+- **Tests: 332** (mismos 14 de `test_voice_chaos.py`, ahora trackeados; 0 nuevos, assertions invertidas de "defecto confirmado" a "comportamiento correcto"). 100% pasando, sin `PytestUnhandledThreadExceptionWarning`.
+
 ## [2.14.0] — 2026-09-19
 
 - **Feature 7 — Undo como Árbol / Best-of-N (`yunta/bestof.py`)**: el agente prueba N enfoques alternativos para la misma tarea en sandboxes de worktree aislados y el humano elige el mejor por diff, en vez de aceptar el único intento del agente o deshacer linealmente con `/undo`.

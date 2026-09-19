@@ -211,3 +211,16 @@ encima.
 ✅ Feature 7 (Best-of-N) — `CHANGELOG.md` [2.14.0], suite verde (332/332).
 
 **Plan completo: Parte A (blindaje) + las 7 features de la Parte B implementadas, testeadas y commiteadas.**
+
+## Adenda — Blindaje del subsistema de Voz/TTS (post-plan, 2026-09-19)
+
+El usuario ejecutó testing adversarial/de caos (`tests/test_voice_chaos.py`) sobre
+`agent.py`/`tts.py`/`voice.py` y encontró 6 defectos de runtime que la
+exploración arquitectónica de este plan no detectó (categoría distinta:
+condiciones de carrera, inyección de fallos, fuzzing — requiere ejecutar
+código bajo estrés, no solo leerlo/rastrear su cableado). Los 6 se
+corrigieron con el mismo rigor (fix + regresión + CHANGELOG + commit):
+permisos "siempre" ignorados en modo voz, condición de carrera en prefetch
+TTS, excepción no capturada en el hilo de habla, emoji duplicando argumento
+del router, código Markdown sin cerrar filtrado a voz, y mensaje de error
+engañoso en audio de 0 bytes. Ver `CHANGELOG.md` [2.14.1].

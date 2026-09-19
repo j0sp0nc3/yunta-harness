@@ -471,14 +471,20 @@ class Agent:
     def _approve(
         self, name: str, detail: str = "", raw_input: str = "", force_prompt: bool = False
     ) -> bool:
+        # Fix chaos-testing 2026-09-19: los permisos persistentes ("siempre")
+        # deben ganarle a CUALQUIER canal de aprobación (voz, confirm callback
+        # o prompt de terminal), no solo al de terminal. Antes, voice_approval
+        # se consultaba incondicionalmente antes de mirar session_permissions,
+        # así que decir "siempre" en modo voz no evitaba que se volviera a
+        # preguntar en el siguiente comando de la misma tool.
+        if not force_prompt and raw_input and self.session_permissions.allowed(name, raw_input):
+            return True
         # V5-1: en modo voz continua la aprobación es 100% hablada
         if self.voice_approval is not None:
             return self.voice_approval(name, detail)
         if not force_prompt:
             if self.confirm is not None:
                 return self.confirm(name, detail)
-            if raw_input and self.session_permissions.allowed(name, raw_input):
-                return True
         else:
             if self.confirm is not None:
                 return self.confirm(name, detail)
