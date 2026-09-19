@@ -296,7 +296,26 @@ Yunta supports any HTTP endpoint compatible with OpenAI's Whisper API (`/v1/audi
 
 ---
 
-## Step 7: REPL Commands & Session Control
+### 4. Spoken Response (Text-to-Speech / TTS)
+
+Yunta includes high-performance $0-cost spoken audio output:
+
+- **Direct CLI Mode (`yunta --speak` or `yunta -s`)**:
+  Starting Yunta with `--speak` synthesizes and speaks each response out loud (`es-CL-CatalinaNeural`).
+- **Interactive REPL Mode (`/speak [on|off]`)**:
+  In the `> ` prompt, type `/speak on` to enable spoken responses or `/speak off` to disable.
+- **Full Hands-Free Experience**:
+  Combine input dictation and spoken output:
+  ```bash
+  python main.py -v "my_audio.mp3" --speak
+  ```
+- **2-Tier Resiliency**:
+  1. *Primary:* OpenAI HTTP `/v1/audio/speech` endpoint (Cloudflare Worker).
+  2. *Fallback:* Microsoft Edge TTS (`edge-tts`) neural voice.
+
+---
+
+## Step 7: Session Commands and REPL Controls
 
 At any point during your session, use these control commands:
 
@@ -305,6 +324,8 @@ At any point during your session, use these control commands:
 | **`/init [idea]`** | SDD Scaffolding | Initializes or scaffolds the project generating `SPEC.md`, `PLAN.md`, and `AGENTS.md`. |
 | **`/sandbox [merge|discard]`** | Git Worktree Sandbox | Creates or manages an isolated Git Worktree environment for risky operations. |
 | **`/context`** | Token Context State | Displays message count, estimated context tokens, and budget usage % (`YUNTA_MAX_TOKENS`). |
+| **`/speak [on|off]`** | Spoken TTS Output | Enables or disables spoken text-to-speech reading of responses. |
+| **`/resume`** | Resume Session | Resumes previous session state loaded from `.yunta/session_state.json`. |
 | **`/undo`** | Time-Travel Undo | Instantly restores modified or created files to their state prior to the last edit. |
 | **`/permissions [clear]`** | Session Permissions | Lists persistent permissions granted via 'always' or revokes them (`/permissions clear`). |
 | **`/roi`** | Value Dashboard | Displays cache hit percentage, avoided tokens, and estimated USD savings. |

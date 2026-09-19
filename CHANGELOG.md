@@ -6,6 +6,31 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.7.2] — 2026-09-18
+
+- **Limpieza Fonética de Markdown para Síntesis de Voz TTS (`yunta/tts.py`)**:
+  - Nueva función `clean_markdown_for_speech(text: str) -> str`: Normaliza y remueve sintaxis de Markdown antes de la síntesis de voz (`speak()`). Elimina asteriscos de negrita/cursiva, comillas invertidas de código inline, encabezados `#`, URLs largas y viñetas; formatea tablas a lenguaje pausado natural; y sustituye bloques de código extensos por `"código en pantalla"`. La salida visual en el terminal permanece 100% enriquecida con Markdown intacto.
+- **Interrupción Inmediata y Salida Forzada Segura (`yunta/cli.py`, `yunta/tts.py`, `yunta/feedback.py`, `yunta/voice.py`)**:
+  - **Doble Ctrl+C para Cierre Forzado**: Si el usuario presiona Ctrl+C dos veces en < 1.5s, la aplicación se cierra de forma inmediata e incondicional (`sys.exit(0)`), deteniendo cualquier hilo de audio o proceso en segundo plano.
+  - **Cancelación Limpia de Turno**: Un solo Ctrl+C durante la generación o la locución corta el habla en curso (`stop_speaking()`), detiene el turno activo y devuelve el control al REPL.
+  - **`wait_until_done()` Interrumpible (`yunta/tts.py`)**: Espera con bucles no bloqueantes de 0.1s para permitir que las señales del sistema operativo en Windows (`SIGINT`/Ctrl+C) se procesen al instante en lugar de quedar retenidas durante timeouts largos.
+  - **Prevención de Bloqueos en Salida (`yunta/feedback.py`, `yunta/cli.py`)**: Reemplazado `except BaseException` por `except Exception` en `feedback.summarize` para evitar que `KeyboardInterrupt` sea tragado silenciosamente si el LLM demora o falla en el cierre de sesión.
+  - **Nuevas Palabras Clave de Detención por Voz (`yunta/voice.py`)**: Soporte directo en `DEFAULT_VOICE_KEYWORDS` para "para", "parar", "stop", "detener", "cancela", "cancelar", "basta" (rutean a `/stop`), y "cállate", "callate" (rutean a `/speak off`).
+- **Tests: 254** (3 nuevos tests: limpieza de Markdown básico, limpieza de tablas, ruteo de keywords de parada). 100% de la suite pasando.
+
+## [2.7.1] — 2026-09-18
+
+- **Corrección de Métrica ROI y Telemetría Per-Request (`yunta/provider.py`, `yunta/api.py`, `yunta/cli.py`)**:
+  - **Extracción robusta de uso de tokens (`_extract_usage`)**: Soporte completo para respuestas de proveedores donde `usage` retorna como `dict`, objeto o `Usage`, con estimación fallback (`litellm.token_counter` / estimador de caracteres) cuando los endpoints custom o streaming omiten la clave `usage`. Resuelve el problema donde los tokens marcaban 0 y el ROI no se calculaba.
+  - **Telemetría ROI automática tras cada solicitud (`print_roi_footer`)**: Imprime un resumen de telemetría y retorno económico (`Turno: +in / +out | Sesión: total tokens | ⚡ % caché | 💰 Ahorro API`) inmediatamente después de procesar cada prompt del usuario, tanto en ejecuciones CLI single-shot como en el REPL interactivo.
+  - **Método `Usage.delta` (`yunta/api.py`)**: Cálculo de diferencia de consumo por turno para reporte exacto por solicitud.
+- **Robustez y Calibración en Modo Voz Continua (`yunta/voice.py`, `yunta/cli.py`)**:
+  - **Calibración VAD más sensible**: Umbral dinámico con piso ajustado a 90 (antes forzado a 350, lo que volvía sordo al micrófono en computadores portátiles) y soporte de anulación manual mediante la variable de entorno `YUNTA_VAD_THRESHOLD`.
+  - **Ampliación de sinónimos de salida local**: Añadidos "terminar", "cerrar", "adios", "chao", "exit", "quit" a `DEFAULT_VOICE_KEYWORDS` para cerrar la sesión con 0 tokens de LLM.
+  - **Limpieza de recursos**: Parada garantizada de `InputStream` en bloques `finally` tanto en `VoiceListener._loop` como al salir del REPL en `cli.py`.
+  - **Manejo de Ctrl+C**: Captura limpia de `KeyboardInterrupt` en `voice_listener.get()` sin volcar trazas de error de Python.
+- **Tests: 251** (100% de la suite pasando).
+
 ## [2.7.0] — 2026-09-18
 
 - **Escucha Continua Manos Libres V5-1 (`yunta/voice.py` + `yunta/cli.py`)**:

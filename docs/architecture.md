@@ -159,12 +159,19 @@ Arquitectura estricta en 2 Etapas:
 ### 4.4. Arquitectura Agnóstica de Voz STT, Dictado Libre y Fallback Híbrido (`yunta/voice.py`)
 - **Agnosticismo Total a Servicios STT (Requisito de Diseño)**: Yunta es estrictamente agnóstico al modelo y proveedor de voz STT basado exclusivamente en la arquitectura neural **Whisper**. Soporta cualquier servicio en línea o contenedor local compatible con el estándar HTTP OpenAI `/v1/audio/transcriptions` mediante variables de entorno (`VOICE_API_BASE`, `VOICE_API_KEY`, `VOICE_MODEL`):
   - **Modo Cloud Serverless**: Cloudflare Workers AI (`@cf/openai/whisper`), Groq Cloud (`whisper-large-v3`), OpenAI Whisper (`whisper-1`) u Ollama local.
-  - **Modo Docker Local (0 Cloud / Offline)**: Despliegue del contenedor `fedirz/faster-whisper-server` en `http://localhost:8000/v1` para transcripción local ultrarrápida sin depender del SO ni enviar datos fuera del equipo. (*System.Speech ha sido desestimado definitivamente por ineficiencia ante ruido*).
+  - **Modo Respaldo Local (`faster-whisper`)**: Carga perezosa (*lazy import*) de `faster-whisper` en `transcribe_offline_local` para transcripción offline en CPU sin impacto de memoria en el arranque de Yunta.
 - **Dictado Dinámico y Filtro Anti-Ruido Espectral (`trim_initial_noise_and_silence`)**:
   - Grabación del micrófono en vivo de duración libre (`duration=None`) finalizable con la tecla `[ENTER]`.
   - Recorte de puerta de ruido (*noise gate = 150ms*) y supresión de silencios pre-voz para descartar picos de teclado o ruidos iniciales.
 - **Normalización y Comparación Fonética de Respuestas Rápidas (`normalize_voice_response`)**:
   - Comparador determinista de respuestas frecuentes por voz o texto que machea variaciones fonéticas y coloquialismos de aprobación (`"sí"`, `"aprobado"`, `"avanzar"`, `"abanzau"`, `"ok"`, `"dale"`, `"listo"` ➔ `s`), rechazo/cancelación (`"no"`, `"rechazado"`, `"cancelar"`, `"alto"`, `"stop"` ➔ `c`), edición (`"editar"`, `"modificar"`, `"cambiar"` ➔ `e`) y aprobación permanente (`"siempre"`, `"para siempre"` ➔ `siempre`), acelerando la interacción sin requerir coincidencia exacta de caracteres.
+
+### 4.5. Arquitectura de Síntesis de Voz Hablada (TTS) y Resiliencia (`yunta/tts.py`)
+- **Motor Agnóstico TTS (`TTSProvider`)**: Implementa salida hablada con estrategia de resiliencia de costo $0 USD en dos niveles:
+  1. **Proveedor Primario HTTP**: Consulta al endpoint OpenAI-compatible `/v1/audio/speech` expuesto en el worker serverless de Cloudflare Workers AI (`@cf/meta/mms-tts-spa`).
+  2. **Respaldo Neuronal en Español (`edge-tts`)**: Síntesis de voz humana de alta calidad (`es-CL-CatalinaNeural`) vía WebSockets sin costo ni claves de API.
+- **Troceo por Oraciones (*Sentence Chunking*)**: `chunk_text_by_sentences()` fragmenta la respuesta del LLM por signos de puntuación (`.`, `!`, `?`), permitiendo enviar el primer fragmento de audio a los altavoces en `< 0.5s` sin esperar a que finalice la respuesta completa.
+- **Control en CLI y REPL**: Bandera `--speak` / `-s` y comando interactivo `/speak [on|off]` para activar y desactivar la lectura en voz alta en tiempo de ejecución.
 
 ---
 

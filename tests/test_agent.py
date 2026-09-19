@@ -603,6 +603,58 @@ def test_read_file_scratch_not_recursively_offloaded(tmp_path, monkeypatch):
     assert res == largo, "no debió offloadear de nuevo el archivo scratch"
 
 
+def test_usage_delta():
+    from yunta.api import Usage
+    u1 = Usage(input_tokens=100, output_tokens=50, cached_tokens=20, tool_counts={"read_file": 2}, tool_errors=1, turns=1)
+    u2 = Usage(input_tokens=300, output_tokens=120, cached_tokens=50, tool_counts={"read_file": 5, "write_file": 1}, tool_errors=2, turns=3)
+
+    diff = u2.delta(u1)
+    assert diff.input_tokens == 200
+    assert diff.output_tokens == 70
+    assert diff.cached_tokens == 30
+    assert diff.tool_counts == {"read_file": 3, "write_file": 1}
+    assert diff.tool_errors == 1
+    assert diff.turns == 2
+
+
+def test_extract_usage_fallback_and_dict(monkeypatch):
+    from yunta.provider import LiteLLMProvider
+    from yunta.api import Message, Role, Block, BlockType, Usage
+    monkeypatch.setenv("LLM_MODEL", "openai/test")
+    provider = LiteLLMProvider(system="sys")
+
+    # Dict input
+    dict_u = {"prompt_tokens": 150, "completion_tokens": 40, "prompt_tokens_details": {"cached_tokens": 20}}
+    u_extracted = provider._extract_usage(dict_u)
+    assert u_extracted.input_tokens == 150
+    assert u_extracted.output_tokens == 40
+    assert u_extracted.cached_tokens == 20
+
+    # Fallback estimation when u is None or 0
+    msgs = [Message(role=Role.USER, content=[Block(type=BlockType.TEXT, text="Hola Yunta")])]
+    resp_blocks = [Block(type=BlockType.TEXT, text="Hola usuario")]
+    u_estimated = provider._extract_usage(None, messages=msgs, response_content=resp_blocks)
+    assert u_estimated.input_tokens > 0
+    assert u_estimated.output_tokens > 0
+
+
+def test_print_roi_footer(capsys):
+    from yunta.cli import print_roi_footer
+    from yunta.api import Usage
+
+    u_total = Usage(input_tokens=1000, output_tokens=200, cached_tokens=500, tool_counts={"read_file": 2}, turns=2)
+    u_turn = Usage(input_tokens=500, output_tokens=100, tool_counts={"read_file": 1}, turns=1)
+
+    print_roi_footer(u_total, turn_usage=u_turn)
+    out = capsys.readouterr().out
+
+    assert "ROI & Telemetría" in out
+    assert "Turno: +500 in, +100 out, 1 tools" in out
+    assert "Sesión: 1,500 tokens" in out
+    assert "Ahorro API" in out
+
+
+
 
 
 

@@ -56,6 +56,52 @@ def chunk_text_by_sentences(text: str, max_words: int = 25) -> list[str]:
     return chunks
 
 
+def clean_markdown_for_speech(text: str) -> str:
+    """Limpia la sintaxis Markdown para que el TTS pronuncie texto fluido y natural,
+    sin leer símbolos como asteriscos, almohadillas, comillas invertidas, tablas ni URLs."""
+    if not text:
+        return ""
+
+    s = text
+    # 1. Bloques de código multilínea (```lang ... ```): resumir a breve aviso
+    s = re.sub(r"```[a-zA-Z0-9_-]*\n?(.*?)```", r" código en pantalla. ", s, flags=re.DOTALL)
+    # 2. Imágenes: ![alt](url) -> eliminar
+    s = re.sub(r"!\[.*?\]\(.*?\)", "", s)
+    # 3. Enlaces: [texto](url) -> texto
+    s = re.sub(r"\[(.*?)\]\(.*?\)", r"\1", s)
+    # 4. URLs sueltas: https?://\S+ -> 'enlace'
+    s = re.sub(r"https?://\S+", "enlace", s)
+    # 5. Código en línea: `codigo` -> codigo
+    s = re.sub(r"`([^`]+)`", r"\1", s)
+    # 6. Encabezados (# Título) -> Título
+    s = re.sub(r"^\s*#{1,6}\s*", "", s, flags=re.MULTILINE)
+    # 7. Separadores horizontales (---, ***, ___)
+    s = re.sub(r"^\s*[-*_]{3,}\s*$", "", s, flags=re.MULTILINE)
+    # 8. Citas (> texto)
+    s = re.sub(r"^\s*>\s*", "", s, flags=re.MULTILINE)
+    # 9. Filas de tablas Markdown:
+    s = re.sub(r"^\s*\|?\s*[-:]+[-| :]*\|?\s*$", "", s, flags=re.MULTILINE)
+    def _clean_table_row(m: re.Match) -> str:
+        row = m.group(0).strip("| \t")
+        parts = [p.strip() for p in row.split("|") if p.strip()]
+        return ", ".join(parts) + "."
+    s = re.sub(r"^\s*\|.+?\|\s*$", _clean_table_row, s, flags=re.MULTILINE)
+    # 10. Listas desordenadas (* item, - item, + item)
+    s = re.sub(r"^\s*[-*+]\s+", "", s, flags=re.MULTILINE)
+    # 11. Negrita, cursiva, tachado (**texto**, *texto*, __texto__, _texto_, ~~texto~~)
+    s = re.sub(r"\*\*(.*?)\*\*", r"\1", s)
+    s = re.sub(r"\*(.*?)\*", r"\1", s)
+    s = re.sub(r"__(.*?)__", r"\1", s)
+    s = re.sub(r"_(.*?)_", r"\1", s)
+    s = re.sub(r"~~(.*?)~~", r"\1", s)
+    # 12. Tags HTML (<br>, <div...>, etc.)
+    s = re.sub(r"<[^>]+>", "", s)
+    # 13. Normalizar espacios
+    lines = [line.strip() for line in s.splitlines()]
+    clean_text = " ".join(line for line in lines if line)
+    return re.sub(r"\s+", " ", clean_text).strip()
+
+
 class TTSProvider:
     """Proveedor agnóstico de síntesis de voz (TTS) con fallback anunciado."""
 
@@ -218,17 +264,21 @@ _playback_lock = threading.Lock()
 
 def speak(provider: TTSProvider, text: str) -> bool:
     """Lee texto en voz alta en segundo plano (hilo daemon). No bloquea el REPL.
+    Limpia la sintaxis Markdown antes de sintetizar para que la dicción sea natural.
     Retorna True si la locución inició. Una llamada nueva corta la anterior."""
     global _speak_thread
 
     if not text or not text.strip():
+        return False
+    clean_text = clean_markdown_for_speech(text)
+    if not clean_text:
         return False
     stop_speaking()
     _speak_stop.clear()
 
     def _worker():
         announced_edge = False
-        for chunk in chunk_text_by_sentences(text):
+        for chunk in chunk_text_by_sentences(clean_text):
             if _speak_stop.is_set():
                 break
             audio, source = provider.synthesize(chunk)
@@ -259,8 +309,15 @@ def stop_speaking() -> None:
 
 
 def wait_until_done(timeout: float = 300.0) -> None:
-    """Espera (bloqueante) a que termine la locución en curso — usado por el
-    gate de eco para no reabrir el micrófono mientras el TTS habla."""
+    """Espera a que termine la locución en curso de forma interrumpible por Ctrl+C."""
     t = _speak_thread
-    if t is not None and t.is_alive():
-        t.join(timeout=timeout)
+    if t is None or not t.is_alive():
+        return
+    import time
+    deadline = time.monotonic() + timeout
+    try:
+        while t.is_alive() and time.monotonic() < deadline:
+            t.join(timeout=0.1)
+    except (KeyboardInterrupt, SystemExit):
+        stop_speaking()
+        raise

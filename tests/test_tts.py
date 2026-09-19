@@ -78,3 +78,47 @@ def test_speak_empty_text_is_noop():
 
     assert speak(FakeProvider(), "") is False
     assert speak(FakeProvider(), "   ") is False
+
+
+def test_clean_markdown_for_speech_basic():
+    from yunta.tts import clean_markdown_for_speech
+
+    raw = """
+    ### Estado del Proceso
+    El archivo **app.py** fue actualizado correctamente.
+    Revisa la variable `MAX_RETRIES` en [la documentación](https://yunta.dev/docs).
+    
+    ```python
+    def run():
+        pass
+    ```
+    
+    * Paso 1 completado
+    * Paso 2 pendiente
+    """
+    cleaned = clean_markdown_for_speech(raw)
+    assert "###" not in cleaned
+    assert "**" not in cleaned
+    assert "`" not in cleaned
+    assert "https://" not in cleaned
+    assert "def run" not in cleaned
+    assert "código en pantalla" in cleaned
+    assert "Estado del Proceso" in cleaned
+    assert "app.py fue actualizado" in cleaned
+    assert "la documentación" in cleaned
+    assert "Paso 1 completado" in cleaned
+
+
+def test_clean_markdown_for_speech_table():
+    from yunta.tts import clean_markdown_for_speech
+
+    raw = """
+    | Herramienta | Acción |
+    |---|---|
+    | bash | ejecutar |
+    | str_replace | editar |
+    """
+    cleaned = clean_markdown_for_speech(raw)
+    assert "|" not in cleaned
+    assert "Herramienta, Acción" in cleaned
+    assert "bash, ejecutar" in cleaned

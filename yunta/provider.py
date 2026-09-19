@@ -94,6 +94,8 @@ class LiteLLMProvider(Provider):
             api_key = self._fallback_key if self._is_fallback_active() else os.environ.get("LLM_API_KEY")
             if api_key:
                 kwargs["api_key"] = api_key
+            else:
+                kwargs.pop("api_key", None)
             session_id = os.environ.get("YUNTA_SESSION_ID")
             if session_id:
                 kwargs["user"] = session_id
@@ -127,7 +129,7 @@ class LiteLLMProvider(Provider):
                     import time
                     for attempt in range(5):
                         try:
-                            return self._consume_stream(litellm.completion(**kwargs), on_text)
+                            return self._consume_stream(litellm.completion(**kwargs), on_text, messages=messages)
                         except Exception as e:
                             err_str = str(e).lower()
                             err_name = type(e).__name__
@@ -135,7 +137,7 @@ class LiteLLMProvider(Provider):
                             if "stream_options" in err_str or "stream_options" in str(e):
                                 kwargs.pop("stream_options", None)
                                 try:
-                                    return self._consume_stream(litellm.completion(**kwargs), on_text)
+                                    return self._consume_stream(litellm.completion(**kwargs), on_text, messages=messages)
                                 except Exception as inner_e:
                                     err_str = str(inner_e).lower()
                                     err_name = type(inner_e).__name__
@@ -143,7 +145,10 @@ class LiteLLMProvider(Provider):
                                 x in err_str or x in err_name.lower()
                                 for x in ["429", "503", "unavailable", "exhausted", "ratelimit", "quota", "serviceunavailable", "midstreamfallback"]
                             )
-                            if is_retryable and (self._model_idx + 1 < len(self._models)):
+                            is_hard_quota = any(
+                                q in err_str for q in ["usage limit", "quota exceeded", "exceeded your current quota", "insufficient_quota", "1308"]
+                            )
+                            if is_retryable and (self._model_idx + 1 < len(self._models) or is_hard_quota):
                                 raise
                             if is_retryable and attempt < 4:
                                 print(f"\n[Retrying API in {(attempt+1)*5}s due to: {err_name}]")
@@ -167,20 +172,8 @@ class LiteLLMProvider(Provider):
                         )
                     )
 
-                u = resp.usage
-                if u is not None:
-                    cached = (
-                        getattr(getattr(u, "prompt_tokens_details", None), "cached_tokens", 0)
-                        or getattr(u, "cache_read_input_tokens", 0)
-                        or getattr(u, "prompt_cache_hit_tokens", 0)
-                        or 0
-                    )
-                    out.usage = Usage(
-                        input_tokens=getattr(u, "prompt_tokens", 0) or 0,
-                        output_tokens=getattr(u, "completion_tokens", 0) or 0,
-                        cached_tokens=cached or 0,
-                    )
-                    self.total_usage = self.total_usage.add(out.usage)
+                out.usage = self._extract_usage(getattr(resp, "usage", None), messages, out.content)
+                self.total_usage = self.total_usage.add(out.usage)
                 return out
 
             except Exception as e:
@@ -198,25 +191,101 @@ class LiteLLMProvider(Provider):
                     continue
                 raise
 
-    def _consume_stream(self, stream, on_text) -> Response:
+    def _extract_usage(
+        self,
+        u,
+        messages: list[Message] | None = None,
+        response_content: list[Block] | None = None,
+    ) -> Usage:
+        in_tok = 0
+        out_tok = 0
+        cached_tok = 0
+
+        if u is not None:
+            if isinstance(u, dict):
+                in_tok = u.get("prompt_tokens") or u.get("input_tokens") or 0
+                out_tok = u.get("completion_tokens") or u.get("output_tokens") or 0
+                details = u.get("prompt_tokens_details")
+                if details:
+                    if isinstance(details, dict):
+                        cached_tok = (
+                            details.get("cached_tokens") or details.get("cache_read_input_tokens") or 0
+                        )
+                    else:
+                        cached_tok = (
+                            getattr(details, "cached_tokens", 0)
+                            or getattr(details, "cache_read_input_tokens", 0)
+                            or 0
+                        )
+                if not cached_tok:
+                    cached_tok = (
+                        u.get("cache_read_input_tokens") or u.get("prompt_cache_hit_tokens") or 0
+                    )
+            elif isinstance(u, Usage):
+                return u
+            else:
+                in_tok = getattr(u, "prompt_tokens", 0) or getattr(u, "input_tokens", 0) or 0
+                out_tok = getattr(u, "completion_tokens", 0) or getattr(u, "output_tokens", 0) or 0
+                details = getattr(u, "prompt_tokens_details", None)
+                if details:
+                    if isinstance(details, dict):
+                        cached_tok = (
+                            details.get("cached_tokens") or details.get("cache_read_input_tokens") or 0
+                        )
+                    else:
+                        cached_tok = (
+                            getattr(details, "cached_tokens", 0)
+                            or getattr(details, "cache_read_input_tokens", 0)
+                            or 0
+                        )
+                if not cached_tok:
+                    cached_tok = (
+                        getattr(u, "cache_read_input_tokens", 0)
+                        or getattr(u, "prompt_cache_hit_tokens", 0)
+                        or 0
+                    )
+
+        if in_tok == 0 and messages:
+            try:
+                raw_text = "\n".join(
+                    " ".join(b.text or b.tool_input or b.tool_result for b in m.content)
+                    for m in messages
+                )
+                in_tok = litellm.token_counter(model=self.model(), text=raw_text)
+            except Exception:
+                in_tok = max(
+                    10,
+                    sum(
+                        len(b.text or b.tool_input or b.tool_result)
+                        for m in messages
+                        for b in m.content
+                    )
+                    // 4,
+                )
+
+        if out_tok == 0 and response_content:
+            try:
+                out_text = "\n".join(b.text or b.tool_input for b in response_content)
+                out_tok = litellm.token_counter(model=self.model(), text=out_text)
+            except Exception:
+                out_tok = max(
+                    1, sum(len(b.text or b.tool_input) for b in response_content) // 4
+                )
+
+        return Usage(
+            input_tokens=int(in_tok),
+            output_tokens=int(out_tok),
+            cached_tokens=int(cached_tok),
+        )
+
+    def _consume_stream(self, stream, on_text, messages: list[Message] | None = None) -> Response:
         text: list[str] = []
         calls: dict = {}
         finish_reason = None
         usage = None
         for chunk in stream:
             if getattr(chunk, "usage", None) is not None:
-                u = chunk.usage
-                cached = (
-                    getattr(getattr(u, "prompt_tokens_details", None), "cached_tokens", 0)
-                    or getattr(u, "cache_read_input_tokens", 0)
-                    or getattr(u, "prompt_cache_hit_tokens", 0)
-                    or 0
-                )
-                usage = Usage(
-                    input_tokens=getattr(u, "prompt_tokens", 0) or 0,
-                    output_tokens=getattr(u, "completion_tokens", 0) or 0,
-                    cached_tokens=cached or 0,
-                )
+                usage = chunk.usage
             for choice in chunk.choices or []:
                 if choice.finish_reason:
                     finish_reason = choice.finish_reason
@@ -258,9 +327,8 @@ class LiteLLMProvider(Provider):
                     tool_input="".join(c["args"]),
                 )
             )
-        if usage is not None:
-            out.usage = usage
-            self.total_usage = self.total_usage.add(out.usage)
+        out.usage = self._extract_usage(usage, messages, out.content)
+        self.total_usage = self.total_usage.add(out.usage)
         return out
 
     def _to_litellm(self, messages: list[Message]) -> list[dict]:

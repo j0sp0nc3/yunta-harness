@@ -250,3 +250,11 @@ def test_voice_listener_pause_discards_audio():
     assert vl._paused.is_set()
     vl.resume()
     assert not vl._paused.is_set()
+
+
+def test_stop_keywords_routed():
+    for word in ("para", "parar", "stop", "detener", "cancela", "cancelar", "basta"):
+        assert route_keyword(word) == "/stop"
+    for word in ("callate", "cállate", "silencio"):
+        assert route_keyword(word) == "/speak off"
+

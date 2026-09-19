@@ -617,8 +617,21 @@ def record_microphone(duration: int | None = None, output_path: str = None) -> s
 # Ampliable por el usuario en .yunta/voice_keywords.json sin tocar código.
 DEFAULT_VOICE_KEYWORDS: dict[str, str] = {
     "salir": "/exit",
+    "terminar": "/exit",
     "terminar sesion": "/exit",
+    "cerrar": "/exit",
     "cerrar sesion": "/exit",
+    "adios": "/exit",
+    "chao": "/exit",
+    "exit": "/exit",
+    "quit": "/exit",
+    "para": "/stop",
+    "parar": "/stop",
+    "stop": "/stop",
+    "detener": "/stop",
+    "cancela": "/stop",
+    "cancelar": "/stop",
+    "basta": "/stop",
     "limpiar": "/clear",
     "borrar conversacion": "/clear",
     "metricas": "/metrics",
@@ -631,6 +644,8 @@ DEFAULT_VOICE_KEYWORDS: dict[str, str] = {
     "activar voz": "/speak on",
     "silencio": "/speak off",
     "desactivar voz": "/speak off",
+    "callate": "/speak off",
+    "cállate": "/speak off",
 }
 
 
@@ -736,7 +751,14 @@ class VoiceListener:
 
     # --- internos ---
     def _calibrate(self) -> None:
-        """Mide 1s de ruido ambiental y fija el umbral de voz (3x el RMS ambiente)."""
+        """Mide 1s de ruido ambiental y fija el umbral de voz de forma sensible."""
+        env_threshold = os.environ.get("YUNTA_VAD_THRESHOLD")
+        if env_threshold:
+            try:
+                self.threshold = int(env_threshold)
+                return
+            except ValueError:
+                pass
         if self.threshold is not None:
             return
         import numpy as np
@@ -748,18 +770,24 @@ class VoiceListener:
         def cb(indata, nframes, time_info, status):
             blocks.append(indata.copy())
 
-        with sd.InputStream(samplerate=self.SAMPLE_RATE, channels=1, dtype="int16",
-                            blocksize=int(self.SAMPLE_RATE * self.BLOCK_MS / 1000), callback=cb):
-            import time
+        try:
+            with sd.InputStream(samplerate=self.SAMPLE_RATE, channels=1, dtype="int16",
+                                blocksize=int(self.SAMPLE_RATE * self.BLOCK_MS / 1000), callback=cb):
+                import time
 
-            t0 = time.monotonic()
-            while sum(len(b) for b in blocks) < frames and time.monotonic() - t0 < 2.0:
-                time.sleep(0.05)
+                t0 = time.monotonic()
+                while sum(len(b) for b in blocks) < frames and time.monotonic() - t0 < 2.0:
+                    time.sleep(0.05)
+        except Exception:
+            pass
+
         if not blocks:
-            self.threshold = 600
+            self.threshold = 120
             return
         ambient = np.concatenate(blocks)
-        self.threshold = max(int(np.sqrt(np.mean(ambient.astype(float) ** 2)) * 3), 350)
+        ambient_rms = int(np.sqrt(np.mean(ambient.astype(float) ** 2)))
+        # Umbral dinámico y sensible: 1.8x el ruido ambiente con piso bajo (90) y techo (450)
+        self.threshold = min(max(int(ambient_rms * 1.8), 90), 450)
 
     def _loop(self) -> None:
         import numpy as np
@@ -772,6 +800,8 @@ class VoiceListener:
         utterance = bytearray()
         silence_ms_acc = 0
         block_samples = int(self.SAMPLE_RATE * self.BLOCK_MS / 1000)
+        vad_debug = bool(os.environ.get("YUNTA_VAD_DEBUG"))
+        dbg_count = 0
 
         try:
             self._stream = sd.InputStream(samplerate=self.SAMPLE_RATE, channels=1,
@@ -790,6 +820,10 @@ class VoiceListener:
                     continue
                 samples = np.frombuffer(raw, dtype="<i2")
                 rms = int(np.sqrt(np.mean(samples.astype(float) ** 2)))
+                if vad_debug:
+                    dbg_count += 1
+                    if dbg_count % 4 == 0:  # ~ cada 2s
+                        print(f"\r[VAD] rms={rms} umbral={self.threshold} {'🔴 VOZ' if rms >= self.threshold else '🟢 silencio'}   ", flush=True)
                 if rms >= self.threshold:
                     if not utterance:
                         print("\n🔴 escuchando... (habla; cierra con 1.5s de silencio)", flush=True)
@@ -808,6 +842,13 @@ class VoiceListener:
         except Exception as err:
             if not self._stopped.is_set():
                 print(f"\n⚠️ Escucha continua detenida: {err}")
+        finally:
+            if self._stream is not None:
+                try:
+                    self._stream.stop()
+                    self._stream.close()
+                except Exception:
+                    pass
 
     def _finish_utterance(self, audio: bytes) -> None:
         if len(audio) < self.SAMPLE_RATE * 2 * 0.3:  # < 0.3s: ruido espurio
@@ -831,8 +872,11 @@ class VoiceListener:
                     os.remove(wav_path)
                 except OSError:
                     pass
-            # "you" es la alucinación típica de Whisper sobre ruido espurio
-            if text and text.lower() != "you":
+            # Filtrar alucinaciones típicas de Whisper sobre silencio o ruido residual
+            ignored = {"you", "you.", "thank you", "thank you.", "subtítulos por la comunidad de amara.org"}
+            if text and text.lower().strip() not in ignored:
                 self._queue.put(text)
+            else:
+                print("\r🟢 en espera de tu voz...                       ", flush=True)
         except Exception:
-            pass
+            print("\r🟢 en espera de tu voz...                       ", flush=True)

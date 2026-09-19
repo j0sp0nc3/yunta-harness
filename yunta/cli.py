@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from .agent import Agent
@@ -498,7 +499,7 @@ def main():
                 pass
             try:
                 feedback.summarize(provider, agent.messages)
-            except BaseException:
+            except Exception:
                 pass
         return
 
@@ -567,14 +568,20 @@ def main():
         print("   🟢 en espera  →  🔴 escuchando (al detectar tu voz)")
         print("   →  🟠 transcribiendo (tras 1.5s de silencio)  →  🤖 el agente responde")
         print("   (micrófono en silencio mientras el agente trabaja o el TTS habla)")
-        print('   Di "salir" para terminar. Frases cortas ("métricas", "sí") se resuelven local.\n')
+        print(f"   Umbral VAD: {voice_listener.threshold} — habla fuerte y claro; di \"salir\" para terminar")
+        print("   (Ctrl+C también sale. Si no detecta tu voz: YUNTA_VAD_DEBUG=1 para diagnosticar)\n")
     else:
         print("Escribe tu consulta, /help para ver comandos, o /exit para salir.\n")
 
+    last_interrupt_time = 0.0
     try:
         while True:
             if voice_listener is not None:
-                prompt = (voice_listener.get(timeout=0.5) or "").strip()
+                try:
+                    prompt = (voice_listener.get(timeout=0.5) or "").strip()
+                except (KeyboardInterrupt, EOFError):
+                    print("\n⏹️ Saliendo del modo voz (Ctrl+C).")
+                    break
                 if not prompt:
                     continue
                 # Router local: palabras clave → comando REPL sin consultar al LLM (0 tokens)
@@ -588,7 +595,7 @@ def main():
                 try:
                     prompt = input("> ").strip()
                 except (EOFError, KeyboardInterrupt):
-                    print()
+                    print("\n⏹️ Salida por usuario.")
                     break
 
             # Un input nuevo corta la locución TTS en curso (no encimar audio)
@@ -600,16 +607,25 @@ def main():
 
             if not prompt:
                 continue
+            if prompt in ("/stop", "stop"):
+                print("⏹️ Detenido.\n")
+                continue
             if prompt == "/exit":
                 if active_sandbox:
                     cleanup_sandbox(active_sandbox["dir"], active_sandbox["branch"], merge=False)
-                if agent.messages:
-                    feedback.summarize(provider, agent.messages)
+                try:
+                    if agent.messages:
+                        feedback.summarize(provider, agent.messages)
+                except (KeyboardInterrupt, SystemExit):
+                    break
+                except Exception:
+                    pass
                 break
             if prompt == "/help":
                 print("Comandos disponibles:")
                 print("  /init [idea]         - Inicializa el proyecto con SPEC.md, PLAN.md y AGENTS.md (SDD)")
                 print("  /voice [archivo.mp3] - Activa el micrófono o transcribe un archivo de audio (manos libres)")
+                print("  /stop                - Detiene la locución TTS en curso (por voz: \"parar\", \"basta\")")
                 print("  /think [high|med|off] - Configura o muestra el modo de Razonamiento Profundo (Thinking)")
                 print("  /sandbox [merge|discard] - Crea o gestiona un entorno aislado en git worktree (V3-9)")
                 print("  /undo                - Deshace la última edición de archivos y restaura su estado anterior")
@@ -827,6 +843,16 @@ def main():
                     print("🔊 Modo de lectura hablada (TTS) activado.\n")
                 continue
 
+            if prompt == "/stop":
+                # Corta la locución TTS en curso (palabra clave de voz: "parar"/"stop"/"basta")
+                try:
+                    from .tts import stop_speaking
+                    stop_speaking()
+                    print("⏹️ Locución detenida. (Para un turno en generación usa Ctrl+C)\n")
+                except Exception:
+                    pass
+                continue
+
             if prompt.startswith("/") and not prompt.startswith("//"):
                 print(f"Comando desconocido: '{prompt}'. Escribe /help para ver los comandos disponibles.\n")
                 continue
@@ -857,13 +883,27 @@ def main():
                             speak(TTSProvider(), res_text)
                             if voice_listener is not None:
                                 wait_until_done()  # no reabrir el micrófono mientras habla
+                        except (KeyboardInterrupt, SystemExit):
+                            from .tts import stop_speaking
+                            stop_speaking()
+                            raise
                         except Exception:
                             pass
                 finally:
                     if voice_listener is not None:
                         voice_listener.resume()
             except KeyboardInterrupt:
-                print()
+                try:
+                    from .tts import stop_speaking
+                    stop_speaking()
+                except Exception:
+                    pass
+                now = time.monotonic()
+                if now - last_interrupt_time < 1.5:
+                    print("\n⏹️ Cierre forzado por el usuario (Ctrl+C).")
+                    break
+                last_interrupt_time = now
+                print("\n⏹️ Acción detenida (Ctrl+C). Presiona Ctrl+C otra vez para salir.")
             except QuotaExhausted as e:
                 print(f"\n⚠️ {e}\n(puedes reanudar en cualquier momento con `yunta --resume` cuando se restablezca la cuota del proveedor)\n")
             except SystemExit:
@@ -872,8 +912,21 @@ def main():
                 print(f"error: {e}", file=sys.stderr)
             print()
     finally:
+        try:
+            from .tts import stop_speaking
+            stop_speaking()
+        except Exception:
+            pass
+        if voice_listener is not None:
+            try:
+                voice_listener.stop()
+            except Exception:
+                pass
         for c in mcp_clients:
-            c.close()
+            try:
+                c.close()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

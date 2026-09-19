@@ -159,11 +159,18 @@ Strict 2-Stage Architecture:
 ### 4.4. Model-Agnostic STT Voice Architecture, Free Dictation, and Hybrid Fallback (`yunta/voice.py`)
 - **Model-Agnostic STT Design Requirement**: Yunta is strictly model and provider agnostic for voice STT. It seamlessly connects to any online HTTP API supporting the OpenAI `/v1/audio/transcriptions` standard via environment variables (`VOICE_API_BASE`, `VOICE_API_KEY`, `VOICE_MODEL`):
   - **Online Mode (Serverless Cloud)**: Cloudflare Workers AI (`@cf/openai/whisper`), Groq Cloud (`whisper-large-v3`), OpenAI Whisper (`whisper-1`), or local Ollama.
-  - **Offline Mode (Zero-Cloud / 0 Credentials)**: Transparent automatic fallback to local OS speech recognizers (`System.Speech.Recognition` on Windows) or packaged `whisper.cpp` binaries.
+  - **Offline Mode (Local Resilient Fallback)**: Lazy loading import of `faster-whisper` in `transcribe_offline_local` for 0-cost local CPU transcription.
 - **Dynamic Dictation & Spectral Noise Gate Filter (`trim_initial_noise_and_silence`)**:
   - Free-form live microphone recording (`duration=None`) stopped anytime by pressing `[ENTER]`.
   - Initial noise gate trimming (*150ms*) and pre-speech silence suppression to eliminate keyboard click transients.
   - Dynamic STT culture/language selection via `VOICE_LANGUAGE` / `VOICE_LANG` (e.g. `es-ES`, `es-MX`, `es-CL`).
+
+### 4.5. Spoken Text-to-Speech (TTS) Architecture and Resiliency (`yunta/tts.py`)
+- **Agnostic TTS Engine (`TTSProvider`)**: Implements $0 USD cost resilient audio output in two tiers:
+  1. **Primary HTTP Provider**: Queries OpenAI-compatible `/v1/audio/speech` endpoint exposed on Cloudflare Workers AI (`@cf/meta/mms-tts-spa`).
+  2. **Secondary Neural Fallback (`edge-tts`)**: High-fidelity neural spanish human voice synthesis (`es-CL-CatalinaNeural`) via WebSockets without API keys or costs.
+- **Sentence Chunking**: `chunk_text_by_sentences()` splits the LLM response by punctuation marks (`.`, `!`, `?`), allowing audio playback to start in `< 0.5s` without waiting for the full response to finish generating.
+- **CLI & REPL Controls**: `--speak` / `-s` flag and `/speak [on|off]` interactive command for runtime toggle.
 
 ---
 

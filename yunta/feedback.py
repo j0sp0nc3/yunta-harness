@@ -70,5 +70,5 @@ class FeedbackStore:
             lesson = parts.get("LECCION", "")
             if lesson:
                 self.append(task, outcome, lesson)
-        except BaseException:
+        except Exception:
             pass

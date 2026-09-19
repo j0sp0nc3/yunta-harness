@@ -308,6 +308,25 @@ Yunta soporta cualquier servicio o contenedor compatible con la API HTTP de Whis
 
 ---
 
+### 4. Respuesta Hablada en Voz Alta (Text-to-Speech / TTS)
+
+Yunta incluye salida hablada de respuestas en voz alta de alto rendimiento y $0 costo:
+
+- **Modo CLI Directo (`yunta --speak` o `yunta -s`)**:
+  Al iniciar Yunta con `--speak`, cada respuesta redactada por el LLM se sintetizará y leerá en voz alta en español (`es-CL-CatalinaNeural`).
+- **Modo REPL Interactivo (`/speak [on|off]`)**:
+  En el prompt `> `, escribe `/speak on` para activar la lectura en voz alta o `/speak off` para desactivarla.
+- **Experiencia Manos Libres Completa**:
+  Combina dictado de entrada y respuesta hablada:
+  ```bash
+  python main.py -v "mi_audio.mp3" --speak
+  ```
+- **Resiliencia de 2 Niveles**:
+  1. *Primario:* Endpoint HTTP OpenAI `/v1/audio/speech` (Worker Cloudflare).
+  2. *Respaldo:* Microsoft Edge TTS (`edge-tts`) neuronal en español.
+
+---
+
 ## Paso 7: Comandos de Sesión y Control en el REPL
 
 Durante cualquier momento de tu sesión puedes utilizar los comandos de control:
@@ -317,6 +336,8 @@ Durante cualquier momento de tu sesión puedes utilizar los comandos de control:
 | **`/init [idea]`** | Scaffolding SDD | Inicializa o andamia el proyecto generando `SPEC.md`, `PLAN.md` y `AGENTS.md`. |
 | **`/sandbox [merge|discard]`** | Git Worktree Sandbox | Crea o gestiona un entorno aislado en Git Worktree para operaciones experimentales. |
 | **`/context`** | Estado de tokens | Muestra los mensajes, tokens estimados en contexto y el uso % del presupuesto (`YUNTA_MAX_TOKENS`). |
+| **`/speak [on|off]`** | Lectura hablada TTS | Activa o desactiva la lectura en voz alta de las respuestas del agente. |
+| **`/resume`** | Reanudar sesión | Reanuda la sesión anterior guardada desde `.yunta/session_state.json`. |
 | **`/undo`** | Time-Travel Undo | Restaura instantáneamente los archivos a su estado anterior a la última edición. |
 | **`/permissions [clear]`** | Permisos de sesión | Muestra los patrones autorizados con 'siempre' o los revoca (`/permissions clear`). |
 | **`/roi`** | Dashboard de valor | Muestra porcentaje de caché, tokens evitados y estimación de ahorro en USD. |
