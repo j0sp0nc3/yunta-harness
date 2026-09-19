@@ -6,6 +6,15 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.7.3] — 2026-09-19
+
+- **Banco de Pruebas y Métricas del Pipeline de Voz (`scripts/bench_voice.py` + `tests/test_voice_quality.py`)**:
+  - `scripts/bench_voice.py`: benchmark por componente con reporte JSON (`.yunta/voice_bench_*.json`): fuzzy (precisión sobre mutaciones fonéticas sintéticas + falsos positivos), router (cobertura/latencia), STT (tiempo worker vs faster-whisper local + WER de desacuerdo entre motores), TTS (latencia de síntesis) y VAD en vivo (umbral calibrado y frase capturada). Flags modulares: `--fuzzy --router --stt --audio <ruta> --tts --vad --all`.
+  - `tests/test_voice_quality.py`: gate de regresión en CI — precisión del fuzzy ≥90% sobre 370+ mutaciones, 0 falsos positivos con vocabulario técnico, cobertura 100% del router sin falsos positivos en frases largas.
+  - **Línea base medida (2026-09-19, SDD.mp3 ~30s)**: fuzzy 93.6% precisión / 0 FP; router 100% cobertura / 0.008 ms; STT worker 9.4s vs local 63.3s (incluye carga de modelo), WER de desacuerdo 10.2%; TTS Edge 4.7s por oración (mejorable: streaming/paralelismo).
+- **Fix de falsos positivos del fuzzy (encontrado por el propio benchmark)**:
+  - `_FUZZY_EXEMPT`: sinónimos cuya forma colisiona con palabras comunes quedan fuera del matching difuso (exacto sigue OK): "reescribir"≈"escribir" y "apruebo"≈"prueba" mapeaban incorrectamente a acción editar/aprobar.
+
 ## [2.7.2] — 2026-09-18
 
 - **Limpieza Fonética de Markdown para Síntesis de Voz TTS (`yunta/tts.py`)**:

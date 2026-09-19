@@ -77,10 +77,18 @@ def _levenshtein(a: str, b: str) -> int:
     return prev[-1]
 
 
+# Sinónimos que NO participan del matching difuso: su forma es tan cercana a una
+# palabra común ("reescribir" ≈ "escribir", "apruebo" ≈ "prueba") que aceptarla
+# por fuzzy genera falsos positivos. Siguen funcionando por coincidencia exacta.
+_FUZZY_EXEMPT = {"reescribir", "apruebo"}
+
+
 def _fuzzy_in(word: str, candidates: set[str]) -> bool:
     """Tolerancia fonética ante errores de Whisper (V5-3): distancia ≤1 para
-    palabras cortas (≤5 chars) y ≤2 para largas."""
+    palabras cortas (≤5 chars) y ≤2 para largas, excluyendo _FUZZY_EXEMPT."""
     for cand in candidates:
+        if cand in _FUZZY_EXEMPT:
+            continue
         max_d = 1 if len(cand) <= 5 else 2
         if abs(len(word) - len(cand)) > max_d:
             continue
