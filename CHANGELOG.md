@@ -6,6 +6,10 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.14.16] — 2026-09-20
+
+- **`docs/PLAN.md` — actualización de estado por instrucción humana explícita** (Regla 6): V6-1, V6-3, V6-4 y V6-5 quedan marcados ✅ — resueltos en v2.14.14, v2.14.13, v2.14.12 y v2.14.15 respectivamente. Con esto, todo el "Nivel 1" y "Nivel 2" del backlog v6 queda completo; solo resta V6-8 (diarización pyannote, Nivel 3, dependencia pesada, deliberadamente diferido). Sin cambios de código.
+
 ## [2.14.15] — 2026-09-20
 
 - **`yunta/voice.py` — V6-5 (`docs/PLAN.md`): corte de chunks en silencios en vez de tiempo fijo**: hasta ahora `split_audio_by_silence` (pese a su nombre) cortaba a duración fija (`-segment_time`), partiendo palabras a la mitad entre fragmentos consecutivos — técnica estándar en WhisperX/faster-whisper para evitarlo.
