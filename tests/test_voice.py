@@ -861,3 +861,79 @@ def test_local_whisper_model_shared_across_transcriber_instances(monkeypatch, tm
     voice_module.AudioTranscriber(api_base="http://localhost:8000/v1").transcribe_offline_local(str(f))
 
     assert load_calls == ["tiny"]
+
+
+# ==================== V6-4: filtro de alucinaciones conocidas de Whisper ====================
+
+def test_filter_hallucinations_discards_known_phrases_exact_match():
+    from yunta.voice import _filter_whisper_hallucinations
+
+    assert _filter_whisper_hallucinations("Gracias por ver el video.") == ""
+    assert _filter_whisper_hallucinations("  suscríbete al canal  ") == ""
+    assert _filter_whisper_hallucinations("Subtítulos realizados por la comunidad de Amara.org") == ""
+    assert _filter_whisper_hallucinations("THANKS FOR WATCHING!") == ""
+
+
+def test_filter_hallucinations_keeps_real_content_untouched():
+    from yunta.voice import _filter_whisper_hallucinations
+
+    real = "El hipotálamo regula el balance energético mediante señales de leptina."
+    assert _filter_whisper_hallucinations(real) == real
+
+
+def test_filter_hallucinations_does_not_strip_partial_mentions():
+    """Si la frase conocida aparece dentro de contenido real (no es TODO el
+    fragmento), no se descarta — solo se filtra el caso 'el chunk es puro relleno'."""
+    from yunta.voice import _filter_whisper_hallucinations
+
+    mixed = "Como decía, gracias por ver el video no es lo que buscamos explicar hoy."
+    assert _filter_whisper_hallucinations(mixed) == mixed
+
+
+def test_filter_hallucinations_handles_empty_string():
+    from yunta.voice import _filter_whisper_hallucinations
+
+    assert _filter_whisper_hallucinations("") == ""
+
+
+def test_clean_transcription_combines_dedup_and_hallucination_filter():
+    from yunta.voice import _clean_transcription
+
+    assert _clean_transcription("Gracias por ver el video") == ""
+    repeated = "vale vale vale vale vale vale"
+    assert _clean_transcription(repeated) != repeated  # el dedup sigue actuando
+
+
+def test_transcribe_with_meta_filters_hallucinated_cloud_success(monkeypatch, tmp_path):
+    """Un fragmento cuya transcripción de nube es pura alucinación conocida
+    vuelve como texto vacío, no como el relleno de YouTube."""
+    from yunta.voice import AudioTranscriber
+
+    transcriber = AudioTranscriber(api_base="http://fake-endpoint.test/v1")
+    monkeypatch.setattr(transcriber, "_post_transcription", lambda path, prompt="": "Gracias por ver el video.")
+
+    f = tmp_path / "a.mp3"
+    f.write_bytes(b"x" * 100)
+    text, meta = transcriber.transcribe_with_meta(str(f))
+
+    assert text == ""
+    assert meta == {"source": "cloud", "cloud_attempted": True, "cloud_failed": False}
+
+
+def test_transcribe_with_meta_filters_hallucinated_local_fallback(monkeypatch, tmp_path):
+    """El mismo filtro aplica al texto del fallback local, no solo a la nube."""
+    from yunta.voice import AudioTranscriber, _TranscribeError
+
+    transcriber = AudioTranscriber(api_base="http://fake-endpoint.test/v1")
+    monkeypatch.setattr(
+        transcriber, "_post_transcription",
+        lambda path, prompt="": (_ for _ in ()).throw(_TranscribeError("fail", 400, "bad request")),
+    )
+    monkeypatch.setattr(transcriber, "transcribe_offline_local", lambda p: "suscríbete al canal")
+
+    f = tmp_path / "a.mp3"
+    f.write_bytes(b"x" * 100)
+    text, meta = transcriber.transcribe_with_meta(str(f))
+
+    assert text == ""
+    assert meta["source"] == "local"

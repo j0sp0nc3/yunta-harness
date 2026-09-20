@@ -6,6 +6,13 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.14.12] — 2026-09-20
+
+- **`yunta/voice.py` — V6-4 (`docs/PLAN.md`): filtro de alucinaciones conocidas de Whisper**: descarta fragmentos cuyo contenido ENTERO (sin puntuación/mayúsculas) coincide con una frase de relleno típica que Whisper aprendió de subtítulos de YouTube en su entrenamiento ("Gracias por ver el video", "Suscríbete al canal", créditos de Amara.org, etc.) — no recorta contenido real que las mencione de pasada, solo el caso "el chunk es puro relleno".
+  - Nuevas funciones de módulo `_filter_whisper_hallucinations(text)` y `_clean_transcription(text)` (combina dedup + filtro de alucinaciones); reemplaza los 3 puntos donde antes se aplicaba `_dedup_whisper_repetition` solo, en `AudioTranscriber.transcribe_with_meta` (éxito de nube, fallback local tras agotar reintentos, y salto directo a local por `skip_cloud`).
+  - **Nota honesta**: esto ataca el patrón clásico de alucinación de Whisper (relleno de outro de YouTube), no necesariamente el mismo fenómeno observado en la transcripción real de 81 min de ayer (balbuceo en portugués/italiano/griego/japonés/finlandés durante silencios) — ese problema apunta más a falta de VAD (V6-7/prefiltro) que a frases de relleno conocidas. Son mitigaciones complementarias, no la misma solución.
+  - 7 tests nuevos en `tests/test_voice.py` (367 → 374 tests totales): coincidencia exacta con variantes de mayúsculas/puntuación, contenido real intacto, no recorta menciones parciales, string vacío, combinación con dedup, y dos tests de integración (filtra alucinación tanto en éxito de nube como en fallback local).
+
 ## [2.14.11] — 2026-09-20
 
 - **`docs/PLAN.md` — actualización de estado por instrucción humana explícita** (Regla 6: el agente no edita el backlog salvo instrucción expresa; el usuario la dio directamente en esta sesión): V6-2 y V6-6 quedan marcados ✅ — ambos ya estaban resueltos por el plan de resiliencia de voz (Fases 0-5) implementado en v2.14.4 y v2.14.9 respectivamente, pero `PLAN.md` no se había actualizado porque el agente no puede tocarlo sin autorización.

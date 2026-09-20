@@ -278,6 +278,53 @@ def _dedup_whisper_repetition(text: str) -> str:
     return cleaned.strip()
 
 
+# V6-4 (docs/PLAN.md): frases de relleno típicas que Whisper "alucina" sobre
+# silencios/ruido, aprendidas de subtítulos de YouTube en su entrenamiento.
+# Lista no exhaustiva, ampliable con el tiempo.
+_KNOWN_HALLUCINATION_PHRASES = {
+    "gracias por ver el video",
+    "gracias por ver el vídeo",
+    "gracias por ver este video",
+    "gracias por ver este vídeo",
+    "suscríbete al canal",
+    "suscríbete a mi canal",
+    "no olvides suscribirte",
+    "no olvides suscribirte al canal",
+    "nos vemos en el próximo video",
+    "nos vemos en el próximo vídeo",
+    "subtítulos realizados por la comunidad de amara.org",
+    "subtítulos por la comunidad de amara.org",
+    "subtitles by the amara.org community",
+    "thanks for watching",
+    "thank you for watching",
+    "please subscribe to my channel",
+    "like, comment and subscribe",
+    "like comment and subscribe",
+    "see you in the next video",
+    "www.youtube.com",
+}
+
+
+def _filter_whisper_hallucinations(text: str) -> str:
+    """Descarta un fragmento si su contenido ENTERO (sin puntuación/mayúsculas)
+    es una de las frases alucinadas conocidas de arriba — no recorta contenido
+    real que las mencione de pasada, solo el caso "el chunk es puro relleno"."""
+    if not text:
+        return text
+    normalized = text.strip().lower()
+    normalized = re.sub(r"\s+", " ", normalized)
+    normalized = normalized.strip(" .!?¡¿-—")
+    if normalized in _KNOWN_HALLUCINATION_PHRASES:
+        return ""
+    return text
+
+
+def _clean_transcription(text: str) -> str:
+    """Limpieza post-transcripción aplicada a cualquier fuente (nube o local):
+    dedup de bucles de repetición + filtro de alucinaciones conocidas (V6-4)."""
+    return _filter_whisper_hallucinations(_dedup_whisper_repetition(text))
+
+
 _local_whisper_model = None
 _local_whisper_model_size = None
 _local_whisper_lock = threading.Lock()
@@ -343,7 +390,7 @@ class AudioTranscriber:
             raise FileNotFoundError(f"Archivo de audio no encontrado: {file_path}")
 
         if skip_cloud:
-            local_text = self.transcribe_offline_local(str(path))
+            local_text = _clean_transcription(self.transcribe_offline_local(str(path)))
             return local_text, {"source": "local", "cloud_attempted": False, "cloud_failed": False}
 
         # Si el archivo supera el límite (25 MB en Whisper API estándar, 500 KB en Workers AI), usar chunker
@@ -368,7 +415,7 @@ class AudioTranscriber:
         for attempt in range(3):
             try:
                 raw_text = self._post_transcription(path, prompt)
-                return _dedup_whisper_repetition(raw_text), {"source": "cloud", "cloud_attempted": True, "cloud_failed": False}
+                return _clean_transcription(raw_text), {"source": "cloud", "cloud_attempted": True, "cloud_failed": False}
             except _TranscribeError as err:
                 last_err = err
                 if err.too_large:
@@ -395,7 +442,7 @@ class AudioTranscriber:
         if last_err is not None:
             print(f"⚠️ Error de transcripción con {self.api_base}: {last_err}")
         # Fallback: servidor Whisper local (Docker) en localhost:8000, si no era la URL principal
-        local_text = self.transcribe_offline_local(str(path))
+        local_text = _clean_transcription(self.transcribe_offline_local(str(path)))
         if local_text:
             print("💡 (Transcripción realizada con el servidor Whisper local de resguardo)")
             return local_text, {"source": "local", "cloud_attempted": True, "cloud_failed": True}
