@@ -6,6 +6,17 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.14.9] — 2026-09-20
+
+- **`yunta/voice.py` — Fase 5 (plan de resiliencia de voz, última fase): paralelismo acotado, opt-in vía `VOICE_PARALLEL_WORKERS`**: fase de mayor riesgo del plan — N workers concurrentes podrían *causar* una ráfaga de 503 si se habilita antes de que el circuit breaker + backoff (Fases 1-2) bajen la tasa de error base, por eso queda opt-in (`default="1"` = secuencial, comportamiento idéntico al actual).
+  - Con `VOICE_PARALLEL_WORKERS > 1`: `ThreadPoolExecutor`/`as_completed` (mismo patrón ya usado en `yunta/tools/delegate.py`), reensamblado por índice (`transcripts[idx] = ...`, no por orden de llegada) para no desordenar la transcripción.
+  - `AudioChunker` gana `self._state_lock` (`threading.Lock`) para las mutaciones de los contadores del circuit breaker (Fase 1) y de telemetría (Fase 3) — sin costo real en el modo secuencial por defecto, un solo hilo nunca contiende el lock.
+  - **Limitación conocida y documentada, no un bug**: sin orden garantizado entre workers concurrentes, no hay continuidad de `tail` (el prompt de continuidad entre fragmentos consecutivos que sí existe en modo secuencial) — cada fragmento en modo paralelo se transcribe con prompt vacío.
+  - Ctrl+C en modo paralelo cancela los fragmentos aún no iniciados (`executor.shutdown(cancel_futures=True)`) y espera a que terminen los ya en vuelo (acotado a `VOICE_PARALLEL_WORKERS`, no al total de fragmentos) antes de devolver la transcripción parcial.
+  - Refactor interno sin cambio de comportamiento por defecto: los offsets de timestamp ahora se precalculan por índice antes del loop (en vez de acumularse durante la iteración), para que sean válidos tanto en modo secuencial como paralelo.
+  - 6 tests nuevos en `tests/test_voice.py` (358 → 364 tests totales): reensamblado fuera de orden, ausencia de continuidad de tail en paralelo, continuidad de tail preservada por defecto, conteo de telemetría independiente del orden de finalización, interrupción por Ctrl+C en paralelo, y tolerancia a un valor inválido de la variable de entorno.
+  - Con esto se completan las 6 fases (0-5) del plan de resiliencia del pipeline de voz. Fase 4 y Fase 5 quedan validadas solo con tests unitarios — no hay un audio real de 81 min disponible en esta sesión para la comparación empírica antes/después (RTF, errores por fragmento) que el plan original preveía como criterio de éxito adicional.
+
 ## [2.14.7] — 2026-09-20
 
 - **`yunta/voice.py` — Fase 4 (plan de resiliencia de voz): recalibración de tamaño de fragmento por bitrate real**: motivado por la misma transcripción real de 81 min (480 errores/259 fragmentos) que originó las Fases 0-3 — los fragmentos contra Cloudflare Workers AI usaban un tamaño fijo de 20s (`chunk_minutes=0.33`) sin importar el bitrate real del audio.

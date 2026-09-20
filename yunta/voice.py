@@ -15,6 +15,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -588,36 +589,55 @@ class AudioChunker:
         self._telem_cloud = 0
         self._telem_local = 0
         self._telem_errors = 0
+        # Fase 5 (2026-09-20): protege las mutaciones de los contadores de
+        # arriba cuando `VOICE_PARALLEL_WORKERS > 1` hace que varios workers
+        # llamen a `_breaker_should_skip_cloud`/`_breaker_record` a la vez.
+        # Sin costo real en el modo secuencial (default): un solo hilo nunca
+        # contiende el lock.
+        self._state_lock = threading.Lock()
 
     def _breaker_should_skip_cloud(self) -> bool:
-        if self._cb_skip_remaining > 0:
-            self._cb_skip_remaining -= 1
-            return True
-        return False
+        with self._state_lock:
+            if self._cb_skip_remaining > 0:
+                self._cb_skip_remaining -= 1
+                return True
+            return False
 
     def _breaker_record(self, meta: dict) -> None:
         """Actualiza el estado del breaker según la metadata de un fragmento
         ya procesado (ver `AudioTranscriber.transcribe_with_meta`)."""
-        if self._cb_threshold <= 0:
-            return
-        if meta.get("source") == "cloud":
-            self._cb_fail_streak = 0
-            return
-        if meta.get("cloud_attempted") and meta.get("cloud_failed"):
-            self._cb_fail_streak += 1
-            if self._cb_fail_streak >= self._cb_threshold and self._cb_skip_remaining == 0:
-                self._cb_skip_remaining = self._cb_cooldown
-                self._cb_tripped_count += 1
-                print(
-                    f"🔌 Circuit breaker: {self._cb_fail_streak} fallos de nube seguidos — "
-                    f"saltando directo a transcripción local por {self._cb_cooldown} fragmento(s)."
-                )
+        with self._state_lock:
+            if self._cb_threshold <= 0:
+                return
+            if meta.get("source") == "cloud":
+                self._cb_fail_streak = 0
+                return
+            if meta.get("cloud_attempted") and meta.get("cloud_failed"):
+                self._cb_fail_streak += 1
+                if self._cb_fail_streak >= self._cb_threshold and self._cb_skip_remaining == 0:
+                    self._cb_skip_remaining = self._cb_cooldown
+                    self._cb_tripped_count += 1
+                    print(
+                        f"🔌 Circuit breaker: {self._cb_fail_streak} fallos de nube seguidos — "
+                        f"saltando directo a transcripción local por {self._cb_cooldown} fragmento(s)."
+                    )
+
+    def _record_telemetry(self, meta: dict) -> None:
+        with self._state_lock:
+            if meta.get("source") == "cloud":
+                self._telem_cloud += 1
+            else:
+                self._telem_local += 1
+            if meta.get("cloud_attempted") and meta.get("cloud_failed"):
+                self._telem_errors += 1
 
     def transcribe_large_audio(self, file_path: str, chunk_minutes: float | int | None = None) -> str:
         """Divide el audio en fragmentos y concatena las transcripciones.
 
         - Continuidad: el final del fragmento anterior se pasa como 'prompt' de
           Whisper al siguiente, para mantener nombres propios y terminología.
+          Con `VOICE_PARALLEL_WORKERS > 1` esta continuidad no se garantiza
+          entre fragmentos concurrentes (ver `_transcribe_chunks_parallel`).
         - Ctrl+C: interrumpe la transcripción y devuelve lo transcrito hasta ese
           momento, marcado como parcial.
         """
@@ -635,48 +655,28 @@ class AudioChunker:
 
         start_time = time.monotonic()
         chunks = self.split_audio_by_silence(file_path, chunk_minutes)
-        transcripts = []
-        tail = ""
-        # Offset temporal acumulado: proporcional a bytes (corte binario) o minutos (ffmpeg)
+        # Offset temporal acumulado: proporcional a bytes (corte binario) o minutos (ffmpeg).
+        # Precomputado por índice (no incremental durante el loop) para que sea
+        # válido tanto en modo secuencial como paralelo, donde los fragmentos
+        # no terminan necesariamente en orden.
         total_size = sum(os.path.getsize(c) for c in chunks) or 1
         total_secs = self._estimate_duration_secs(file_path) or (len(chunks) * float(chunk_minutes) * 60)
-        offset_secs = 0.0
+        offsets = []
+        acc = 0.0
+        for c in chunks:
+            offsets.append(acc)
+            acc += (os.path.getsize(c) / total_size) * total_secs
 
         try:
-            for idx, chunk_file in enumerate(chunks):
-                print(f"🎙️ Transcribiendo fragmento {idx + 1}/{len(chunks)} (Ctrl+C para detener)...")
-                h, rem = int(offset_secs // 3600), int(offset_secs % 3600)
-                timestamp = f"[{h:02d}:{rem // 60:02d}:{rem % 60:02d}]"
+            workers = max(1, int(os.environ.get("VOICE_PARALLEL_WORKERS", "1") or "1"))
+        except ValueError:
+            workers = 1
+        if workers > 1 and len(chunks) > 1:
+            transcripts, completed = self._transcribe_chunks_parallel(chunks, offsets, workers)
+        else:
+            transcripts, completed = self._transcribe_chunks_sequential(chunks, offsets)
 
-                skip_cloud = self._breaker_should_skip_cloud()
-                text, meta = self.transcriber.transcribe_with_meta(chunk_file, prompt=tail, skip_cloud=skip_cloud)
-                text = text.strip()
-                self._breaker_record(meta)
-                if meta.get("source") == "cloud":
-                    self._telem_cloud += 1
-                else:
-                    self._telem_local += 1
-                if meta.get("cloud_attempted") and meta.get("cloud_failed"):
-                    self._telem_errors += 1
-                transcripts.append(f"{timestamp}\n{text}")
-                # Whisper usa ~200 caracteres finales como guía de continuidad
-                tail = text[-200:] if text else tail
-                offset_secs += (os.path.getsize(chunk_file) / total_size) * total_secs
-
-                # Limpiar archivo temporal de fragmento
-                try:
-                    os.remove(chunk_file)
-                except OSError:
-                    pass
-        except KeyboardInterrupt:
-            print("\n⏹️ Transcripción interrumpida por el usuario. Conservando lo transcrito hasta ahora...")
-            for chunk_file in chunks[idx:]:
-                try:
-                    os.remove(chunk_file)
-                except (OSError, NameError):
-                    pass
-
-        outcome = "completed" if len(transcripts) == len(chunks) else "partial"
+        outcome = "completed" if completed == len(chunks) else "partial"
         try:
             from .voice_telemetry import record_voice_snapshot
             record_voice_snapshot(
@@ -692,12 +692,100 @@ class AudioChunker:
         except Exception:
             pass
 
-        if not transcripts:
+        entries = [t for t in transcripts if t is not None]
+        if not entries:
             return ""
-        result = "\n\n".join(transcripts)
-        if tail and len(transcripts) < len(chunks):
+        result = "\n\n".join(entries)
+        if completed and completed < len(chunks):
             result += "\n\n[NOTA: transcripción parcial — el proceso fue detenido por el usuario antes de completar todos los fragmentos.]"
         return result
+
+    def _transcribe_chunks_sequential(self, chunks: list[str], offsets: list[float]) -> tuple[list[str | None], int]:
+        """Camino por defecto (`VOICE_PARALLEL_WORKERS=1`): un fragmento a la
+        vez, con continuidad de `tail` entre fragmentos consecutivos."""
+        transcripts: list[str | None] = [None] * len(chunks)
+        tail = ""
+        completed = 0
+        try:
+            for idx, chunk_file in enumerate(chunks):
+                print(f"🎙️ Transcribiendo fragmento {idx + 1}/{len(chunks)} (Ctrl+C para detener)...")
+                h, rem = int(offsets[idx] // 3600), int(offsets[idx] % 3600)
+                timestamp = f"[{h:02d}:{rem // 60:02d}:{rem % 60:02d}]"
+
+                skip_cloud = self._breaker_should_skip_cloud()
+                text, meta = self.transcriber.transcribe_with_meta(chunk_file, prompt=tail, skip_cloud=skip_cloud)
+                text = text.strip()
+                self._breaker_record(meta)
+                self._record_telemetry(meta)
+                transcripts[idx] = f"{timestamp}\n{text}"
+                # Whisper usa ~200 caracteres finales como guía de continuidad
+                tail = text[-200:] if text else tail
+                completed += 1
+
+                try:
+                    os.remove(chunk_file)
+                except OSError:
+                    pass
+        except KeyboardInterrupt:
+            print("\n⏹️ Transcripción interrumpida por el usuario. Conservando lo transcrito hasta ahora...")
+            for chunk_file in chunks[completed:]:
+                try:
+                    os.remove(chunk_file)
+                except (OSError, NameError):
+                    pass
+        return transcripts, completed
+
+    def _transcribe_chunks_parallel(
+        self, chunks: list[str], offsets: list[float], workers: int
+    ) -> tuple[list[str | None], int]:
+        """Fase 5 (2026-09-20, opt-in vía `VOICE_PARALLEL_WORKERS > 1`).
+
+        Reensambla por índice (no por orden de llegada) para no desordenar la
+        transcripción. Limitación conocida y aceptada: al no haber orden
+        garantizado entre workers, no se puede pasar el `tail` del fragmento
+        anterior como prompt de continuidad (cada fragmento se transcribe con
+        prompt vacío) — trade-off documentado, no un bug.
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        transcripts: list[str | None] = [None] * len(chunks)
+        completed = 0
+
+        def _run(idx: int, chunk_file: str) -> tuple[int, str, str]:
+            h, rem = int(offsets[idx] // 3600), int(offsets[idx] % 3600)
+            timestamp = f"[{h:02d}:{rem // 60:02d}:{rem % 60:02d}]"
+            skip_cloud = self._breaker_should_skip_cloud()
+            text, meta = self.transcriber.transcribe_with_meta(chunk_file, prompt="", skip_cloud=skip_cloud)
+            text = text.strip()
+            self._breaker_record(meta)
+            self._record_telemetry(meta)
+            return idx, f"{timestamp}\n{text}", chunk_file
+
+        print(f"🎙️ Transcribiendo {len(chunks)} fragmentos con {workers} workers en paralelo (Ctrl+C para detener)...")
+        executor = ThreadPoolExecutor(max_workers=workers)
+        futures = {executor.submit(_run, idx, c): idx for idx, c in enumerate(chunks)}
+        try:
+            for future in as_completed(futures):
+                idx, entry, chunk_file = future.result()
+                transcripts[idx] = entry
+                completed += 1
+                try:
+                    os.remove(chunk_file)
+                except OSError:
+                    pass
+            executor.shutdown(wait=True)
+        except KeyboardInterrupt:
+            # Los fragmentos ya en vuelo (hasta `workers` de ellos) no se
+            # pueden interrumpir a mitad de una llamada HTTP; se cancelan los
+            # que aún no empezaron y se espera a que terminen los en curso.
+            print("\n⏹️ Transcripción interrumpida por el usuario. Cancelando fragmentos pendientes...")
+            executor.shutdown(wait=True, cancel_futures=True)
+            for c in chunks:
+                try:
+                    os.remove(c)
+                except OSError:
+                    pass
+        return transcripts, completed
 
     @staticmethod
     def _estimate_bitrate_bps(file_path: str) -> int:

@@ -628,3 +628,147 @@ def test_circuit_breaker_disabled_with_threshold_zero(monkeypatch, tmp_path):
         fake_chunks.append(str(f))
     chunker.split_audio_by_silence = lambda fp, *a, **k: fake_chunks  # type: ignore[assignment]
     chunker.transcribe_large_audio("audio.mp3")
+
+
+# ==================== Fase 5: paralelismo acotado (VOICE_PARALLEL_WORKERS) ====================
+
+def test_parallel_workers_reassembles_out_of_order_completions_by_index(monkeypatch, tmp_path):
+    """Con VOICE_PARALLEL_WORKERS>1, fragmentos que terminan fuera de orden se
+    reensamblan según su índice original, no según orden de llegada."""
+    import time as _time
+    monkeypatch.setenv("VOICE_PARALLEL_WORKERS", "4")
+    from yunta.voice import AudioChunker, AudioTranscriber
+
+    class SlowFirstTranscriber(AudioTranscriber):
+        def transcribe_with_meta(self, file_path, prompt="", skip_cloud=False):
+            idx = int(Path(file_path).stem[1:])  # "c0.mp3" -> 0
+            # El fragmento 0 tarda más: si el reensamblado fuera por orden de
+            # llegada en vez de por índice, terminaría después que los demás.
+            _time.sleep(0.05 * (4 - idx) / 100)
+            return f"fragmento-{idx}", {"source": "cloud", "cloud_attempted": True, "cloud_failed": False}
+
+    chunker = AudioChunker(SlowFirstTranscriber())
+    chunks = [str(tmp_path / f"c{i}.mp3") for i in range(4)]
+    for c in chunks:
+        Path(c).write_bytes(b"\xff\xfb\x90\x00" + b"x" * 512)
+    chunker.split_audio_by_silence = lambda fp, *a, **k: chunks  # type: ignore[assignment]
+
+    result = chunker.transcribe_large_audio("audio.mp3")
+
+    order = [f"fragmento-{i}" for i in range(4)]
+    positions = [result.index(o) for o in order]
+    assert positions == sorted(positions), f"orden incorrecto en el resultado:\n{result}"
+
+
+def test_parallel_workers_use_empty_prompt_no_tail_continuity(monkeypatch, tmp_path):
+    """Limitación documentada de la Fase 5: sin orden garantizado entre workers,
+    no hay continuidad de `tail` — cada fragmento recibe prompt vacío."""
+    monkeypatch.setenv("VOICE_PARALLEL_WORKERS", "3")
+    from yunta.voice import AudioChunker, AudioTranscriber
+
+    prompts = []
+
+    class MetaTranscriber(AudioTranscriber):
+        def transcribe_with_meta(self, file_path, prompt="", skip_cloud=False):
+            prompts.append(prompt)
+            return "texto con contenido largo " * 10, {"source": "cloud", "cloud_attempted": True, "cloud_failed": False}
+
+    chunker = AudioChunker(MetaTranscriber())
+    chunks = [str(tmp_path / f"c{i}.mp3") for i in range(3)]
+    for c in chunks:
+        Path(c).write_bytes(b"\xff\xfb\x90\x00" + b"x" * 512)
+    chunker.split_audio_by_silence = lambda fp, *a, **k: chunks  # type: ignore[assignment]
+
+    chunker.transcribe_large_audio("audio.mp3")
+    assert prompts == ["", "", ""]
+
+
+def test_parallel_workers_disabled_by_default_keeps_tail_continuity(tmp_path):
+    """Sin VOICE_PARALLEL_WORKERS (o =1), el comportamiento es idéntico al
+    secuencial existente: continuidad de tail entre fragmentos."""
+    from yunta.voice import AudioChunker, AudioTranscriber
+
+    prompts = []
+
+    class MetaTranscriber(AudioTranscriber):
+        def transcribe_with_meta(self, file_path, prompt="", skip_cloud=False):
+            prompts.append(prompt)
+            return "cola de continuidad", {"source": "cloud", "cloud_attempted": True, "cloud_failed": False}
+
+    chunker = AudioChunker(MetaTranscriber())
+    chunks = [str(tmp_path / f"c{i}.mp3") for i in range(3)]
+    for c in chunks:
+        Path(c).write_bytes(b"\xff\xfb\x90\x00" + b"x" * 512)
+    chunker.split_audio_by_silence = lambda fp, *a, **k: chunks  # type: ignore[assignment]
+
+    chunker.transcribe_large_audio("audio.mp3")
+    assert prompts[0] == ""
+    assert prompts[1] == "cola de continuidad"
+
+
+def test_parallel_workers_telemetry_counts_are_order_independent(monkeypatch, tmp_path):
+    """Los contadores agregados de telemetría (protegidos por lock) suman
+    correctamente sin importar el orden real de finalización de los threads."""
+    monkeypatch.setenv("VOICE_PARALLEL_WORKERS", "5")
+    from yunta.voice import AudioChunker, AudioTranscriber
+
+    class MixedTranscriber(AudioTranscriber):
+        def transcribe_with_meta(self, file_path, prompt="", skip_cloud=False):
+            idx = int(Path(file_path).stem[1:])
+            if idx % 2 == 0:
+                return "nube", {"source": "cloud", "cloud_attempted": True, "cloud_failed": False}
+            return "local", {"source": "local", "cloud_attempted": True, "cloud_failed": True}
+
+    chunker = AudioChunker(MixedTranscriber())
+    chunks = [str(tmp_path / f"c{i}.mp3") for i in range(10)]
+    for c in chunks:
+        Path(c).write_bytes(b"\xff\xfb\x90\x00" + b"x" * 512)
+    chunker.split_audio_by_silence = lambda fp, *a, **k: chunks  # type: ignore[assignment]
+
+    chunker.transcribe_large_audio("audio.mp3")
+
+    assert chunker._telem_cloud == 5
+    assert chunker._telem_local == 5
+    assert chunker._telem_errors == 5
+
+
+def test_parallel_workers_keyboard_interrupt_returns_partial(monkeypatch, tmp_path):
+    """Ctrl+C en modo paralelo cancela los fragmentos pendientes y devuelve
+    lo ya transcrito, marcado como parcial."""
+    monkeypatch.setenv("VOICE_PARALLEL_WORKERS", "2")
+    from yunta.voice import AudioChunker, AudioTranscriber
+
+    class InterruptingTranscriber(AudioTranscriber):
+        def transcribe_with_meta(self, file_path, prompt="", skip_cloud=False):
+            idx = int(Path(file_path).stem[1:])
+            if idx == 0:
+                raise KeyboardInterrupt
+            return f"fragmento-{idx}", {"source": "cloud", "cloud_attempted": True, "cloud_failed": False}
+
+    chunker = AudioChunker(InterruptingTranscriber())
+    chunks = [str(tmp_path / f"c{i}.mp3") for i in range(4)]
+    for c in chunks:
+        Path(c).write_bytes(b"\xff\xfb\x90\x00" + b"x" * 512)
+    chunker.split_audio_by_silence = lambda fp, *a, **k: chunks  # type: ignore[assignment]
+
+    result = chunker.transcribe_large_audio("audio.mp3")
+    assert "transcripción parcial" in result or result == ""
+
+
+def test_transcribe_large_audio_workers_invalid_value_falls_back_to_sequential(monkeypatch, tmp_path):
+    """Un VOICE_PARALLEL_WORKERS no numérico no debe romper la transcripción
+    (mismo patrón de tolerancia que VOICE_CHUNK_MINUTES: cae al default 1)."""
+    monkeypatch.setenv("VOICE_PARALLEL_WORKERS", "not-a-number")
+    from yunta.voice import AudioChunker, AudioTranscriber
+
+    class MetaTranscriber(AudioTranscriber):
+        def transcribe_with_meta(self, file_path, prompt="", skip_cloud=False):
+            return "ok", {"source": "cloud", "cloud_attempted": True, "cloud_failed": False}
+
+    chunker = AudioChunker(MetaTranscriber())
+    chunks = [str(tmp_path / "c0.mp3")]
+    Path(chunks[0]).write_bytes(b"\xff\xfb\x90\x00" + b"x" * 512)
+    chunker.split_audio_by_silence = lambda fp, *a, **k: chunks  # type: ignore[assignment]
+
+    result = chunker.transcribe_large_audio("audio.mp3")
+    assert "ok" in result
