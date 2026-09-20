@@ -6,6 +6,13 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.14.6] — 2026-09-20
+
+- **`AGENTS.md` — Regla 7: Protocolo de Relevo y Continuidad (Step 0 obligatorio)**: motivada por un incidente real de esta misma fecha — un relevo entre sesiones concurrentes (ZCode → Claude Code) dejó `tests/test_voice.py` con bytes nulos literales que rompían la compilación, invisibles para un chequeo superficial.
+  - **Step 0 obligatorio**: `yunta check --tests` + `git status` antes de proponer cambios. Explícitamente `--tests` y no `yunta check` a secas, porque sin ese flag el comando solo detecta que existe un runner de pytest, no lo ejecuta — no habría atrapado el incidente que motiva la regla.
+  - **Handoff estructurado**: el traspaso de estado real de sesión usa `yunta handoff export/import` (Feature 1, v2.8.0), no un markdown ad-hoc; un `scratch/HANDOFF*.md` narrativo sigue siendo válido como complemento, nunca como único registro.
+  - Prohibición de "trabajo fantasma" (commits `wip:` ante agotamiento de cuota) y cierre de relevo limpio (working tree commiteado o documentado en CHANGELOG).
+
 ## [2.14.5] — 2026-09-20
 
 - **Telemetría persistente del pipeline de voz (`yunta/voice_telemetry.py`, nuevo)**: reemplaza el script ad-hoc (`python -c "..."` grepeando logs) que se usó para medir la transcripción de 81 min/259 fragmentos por un registro estructurado consultable con `yunta health --voice [--json]`.
