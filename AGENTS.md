@@ -43,12 +43,15 @@ trabajar.
      — no habría atrapado el incidente que motiva esta regla. Si hay archivos
      modificados o tests rotos de una sesión anterior, **estabilizar y
      registrar ese trabajo es la prioridad #1** antes de iniciar tarea nueva.
-   - **Handoff estructurado**: el traspaso de estado real de sesión (mensajes,
-     permisos, sandbox activo) usa `yunta handoff export`/`import`
-     (`yunta/handoff.py`, spec pública en
-     `docs/schemas/yunta-session-spec-v1.md`), no un archivo ad-hoc. Un
-     `scratch/HANDOFF*.md` en prosa (decisiones, prioridades, próximos pasos)
-     es un complemento narrativo válido, nunca el único registro del estado.
+   - **Handoff estructurado y buzón canónico**: el traspaso de estado real de sesión
+     (mensajes, permisos, sandbox activo) usa `yunta handoff export`/`import`
+     (`yunta/handoff.py`, spec pública en `docs/schemas/yunta-session-spec-v1.md`).
+     El complemento narrativo (decisiones, prioridades, próximos pasos) debe residir
+     en el buzón canónico **`.yunta/HANDOFF.md`** (evitando `scratch/`, que se reserva
+     para archivos temporales u offload).
+   - **Coordinación estricta (un agente a la vez)**: nunca deben operar dos agentes
+     simultáneamente sobre el mismo working tree. Si otro agente tiene trabajo en curso,
+     esperar a que concluya o formalice su relevo antes de iniciar modificaciones.
    - **Prohibición de trabajo fantasma**: si una tarea queda incompleta por
      agotamiento de cuota o relevo inminente, registrar un commit `wip: <qué
      falta y qué tests están pendientes>` en vez de dejar el working tree

@@ -17,6 +17,13 @@ Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
   - 6 tests nuevos en `tests/test_voice.py` (358 → 364 tests totales): reensamblado fuera de orden, ausencia de continuidad de tail en paralelo, continuidad de tail preservada por defecto, conteo de telemetría independiente del orden de finalización, interrupción por Ctrl+C en paralelo, y tolerancia a un valor inválido de la variable de entorno.
   - Con esto se completan las 6 fases (0-5) del plan de resiliencia del pipeline de voz. Fase 4 y Fase 5 quedan validadas solo con tests unitarios — no hay un audio real de 81 min disponible en esta sesión para la comparación empírica antes/después (RTF, errores por fragmento) que el plan original preveía como criterio de éxito adicional.
 
+## [2.14.8] — 2026-09-20
+
+- **Metodología Yunta y Buzón Canónico de Relevo (`docs/METODOLOGIA_YUNTA.md`, `AGENTS.md`)**:
+  - **Especificación de Metodología Yunta (`docs/METODOLOGIA_YUNTA.md`)**: formalización exhaustiva de los 4 principios de continuidad inter-agente y multi-IDE (Persistencia Zero-Tokens, Diagnóstico Forense Asimétrico / Step 0, Git como Ancla de Verdad Inmutable, y Operador Único Secuencial). Resuelve estructuralmente la "Paradoja de la Amnesia" y el aislamiento de contexto en herramientas como Claude Code, ZCode, Cursor y Antigravity.
+  - **Buzón Canónico de Relevo (`.yunta/HANDOFF.md`)**: especificado en `AGENTS.md` (Regla 7) para separar notas narrativas del directorio temporal `scratch/`, permitiendo handoffs limpios y persistentes sin ensuciar el working tree de Git.
+  - **Principio de Operador Único**: formalización explícita en `AGENTS.md` de la coordinación estricta secuencial (nunca dos agentes concurrentes modificando el working tree).
+
 ## [2.14.7] — 2026-09-20
 
 - **`yunta/voice.py` — Fase 4 (plan de resiliencia de voz): recalibración de tamaño de fragmento por bitrate real**: motivado por la misma transcripción real de 81 min (480 errores/259 fragmentos) que originó las Fases 0-3 — los fragmentos contra Cloudflare Workers AI usaban un tamaño fijo de 20s (`chunk_minutes=0.33`) sin importar el bitrate real del audio.
