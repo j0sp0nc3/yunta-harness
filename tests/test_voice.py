@@ -1073,3 +1073,100 @@ def test_checkpoint_cleared_after_full_completion(tmp_path, monkeypatch):
     chunker.transcribe_large_audio("clase2.mp3")
 
     assert _load_checkpoint("clase2.mp3", 2) == [None, None]
+
+
+# ==================== V6-1: marcas de tiempo reales por chunk (ffprobe) ====================
+
+def test_ffprobe_duration_secs_parses_output(monkeypatch):
+    import yunta.voice as voice_module
+    monkeypatch.setattr(voice_module, "_ffprobe_available", None)
+
+    class FakeCompleted:
+        stdout = "12.345\n"
+
+    monkeypatch.setattr(voice_module.subprocess, "run", lambda *a, **k: FakeCompleted())
+    assert voice_module._ffprobe_duration_secs("chunk.mp3") == 12.345
+    assert voice_module._ffprobe_available is True
+
+
+def test_ffprobe_duration_secs_disables_after_binary_missing(monkeypatch):
+    import yunta.voice as voice_module
+    monkeypatch.setattr(voice_module, "_ffprobe_available", None)
+
+    calls = []
+
+    def fake_run(*a, **k):
+        calls.append(1)
+        raise FileNotFoundError("ffprobe no encontrado")
+
+    monkeypatch.setattr(voice_module.subprocess, "run", fake_run)
+    assert voice_module._ffprobe_duration_secs("chunk.mp3") == 0.0
+    assert voice_module._ffprobe_available is False
+
+    # Segunda llamada: no debe ni intentar invocar el subprocess de nuevo
+    assert voice_module._ffprobe_duration_secs("otro.mp3") == 0.0
+    assert len(calls) == 1
+
+
+def test_ffprobe_duration_secs_bad_file_does_not_disable_binary(monkeypatch):
+    """Un archivo puntual que ffprobe no puede parsear no debe desactivar
+    ffprobe para el resto de los fragmentos (el binario sí funciona)."""
+    import yunta.voice as voice_module
+    monkeypatch.setattr(voice_module, "_ffprobe_available", True)
+
+    class FakeCompleted:
+        stdout = ""  # ffprobe corrió pero no pudo extraer duración
+
+    monkeypatch.setattr(voice_module.subprocess, "run", lambda *a, **k: FakeCompleted())
+    assert voice_module._ffprobe_duration_secs("corrupto.mp3") == 0.0
+    assert voice_module._ffprobe_available is True
+
+
+def test_transcribe_large_audio_uses_ffprobe_real_durations_for_offsets(tmp_path, monkeypatch):
+    """Si ffprobe da la duración real de cada chunk, los timestamps reflejan
+    esa duración real — no bytes proporcionales ni chunk_minutes fijo (los
+    3 fragmentos de este test pesan lo mismo en bytes pero duran distinto,
+    simulando audio VBR)."""
+    monkeypatch.chdir(tmp_path)
+    from yunta.voice import AudioChunker, AudioTranscriber
+
+    chunks = [str(tmp_path / f"c{i}.mp3") for i in range(3)]
+    for c in chunks:
+        Path(c).write_bytes(b"\xff\xfb\x90\x00" + b"x" * 512)
+
+    durations = {chunks[0]: 5.0, chunks[1]: 55.0, chunks[2]: 3.0}
+    monkeypatch.setattr("yunta.voice._ffprobe_duration_secs", lambda p: durations[p])
+
+    class MetaTranscriber(AudioTranscriber):
+        def transcribe_with_meta(self, file_path, prompt="", skip_cloud=False):
+            return "ok", {"source": "cloud", "cloud_attempted": True, "cloud_failed": False}
+
+    chunker = AudioChunker(MetaTranscriber())
+    chunker.split_audio_by_silence = lambda fp, *a, **k: chunks
+    result = chunker.transcribe_large_audio("audio.mp3")
+
+    assert "[00:00:00]" in result  # chunk 0 arranca en 0
+    assert "[00:00:05]" in result  # chunk 1 arranca a los 5s reales
+    assert "[00:01:00]" in result  # chunk 2 arranca a los 60s (5+55)
+
+
+def test_transcribe_large_audio_falls_back_when_ffprobe_unavailable(tmp_path, monkeypatch):
+    """Si ffprobe no está disponible o falla para algún chunk, cae a la
+    heurística anterior (bytes proporcionales) sin romper la transcripción."""
+    monkeypatch.chdir(tmp_path)
+    from yunta.voice import AudioChunker, AudioTranscriber
+
+    monkeypatch.setattr("yunta.voice._ffprobe_duration_secs", lambda p: 0.0)
+
+    chunks = [str(tmp_path / f"c{i}.mp3") for i in range(2)]
+    for c in chunks:
+        Path(c).write_bytes(b"\xff\xfb\x90\x00" + b"x" * 512)
+
+    class MetaTranscriber(AudioTranscriber):
+        def transcribe_with_meta(self, file_path, prompt="", skip_cloud=False):
+            return "ok", {"source": "cloud", "cloud_attempted": True, "cloud_failed": False}
+
+    chunker = AudioChunker(MetaTranscriber())
+    chunker.split_audio_by_silence = lambda fp, *a, **k: chunks
+    result = chunker.transcribe_large_audio("audio.mp3")
+    assert "[00:00:00]" in result

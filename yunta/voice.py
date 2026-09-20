@@ -681,6 +681,35 @@ def _clear_checkpoint(file_path: str, total: int) -> None:
             pass
 
 
+# V6-1 (docs/PLAN.md): marcas de tiempo reales por chunk vía ffprobe, en vez de
+# asumir `índice × chunk_minutes` o repartir proporcionalmente por bytes — con
+# `-c copy` los fragmentos varían de duración (el último casi siempre es más
+# corto) y esas aproximaciones se desincronizan de forma acumulativa a medida
+# que avanza el audio.
+_ffprobe_available = None
+
+
+def _ffprobe_duration_secs(file_path: str) -> float:
+    """Duración real de un archivo de audio/video vía `ffprobe`. 0.0 si
+    `ffprobe` no está en PATH o falla — el caller cae a la heurística
+    anterior (bitrate/proporción de bytes), sin regresión."""
+    global _ffprobe_available
+    if _ffprobe_available is False:
+        return 0.0
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", file_path],
+            capture_output=True, text=True, timeout=10,
+        )
+        _ffprobe_available = True
+        return float(out.stdout.strip())
+    except Exception:
+        if _ffprobe_available is None:
+            _ffprobe_available = False
+        return 0.0
+
+
 class AudioChunker:
     """Fragmenta audios grandes (>25 MB / cátedras de varias horas) en bloques."""
 
@@ -771,17 +800,30 @@ class AudioChunker:
 
         start_time = time.monotonic()
         chunks = self.split_audio_by_silence(file_path, chunk_minutes)
-        # Offset temporal acumulado: proporcional a bytes (corte binario) o minutos (ffmpeg).
-        # Precomputado por índice (no incremental durante el loop) para que sea
-        # válido tanto en modo secuencial como paralelo, donde los fragmentos
-        # no terminan necesariamente en orden.
-        total_size = sum(os.path.getsize(c) for c in chunks) or 1
-        total_secs = self._estimate_duration_secs(file_path) or (len(chunks) * float(chunk_minutes) * 60)
-        offsets = []
-        acc = 0.0
-        for c in chunks:
-            offsets.append(acc)
-            acc += (os.path.getsize(c) / total_size) * total_secs
+        # Offset temporal acumulado por índice (no incremental durante el
+        # loop) para que sea válido tanto en modo secuencial como paralelo,
+        # donde los fragmentos no terminan necesariamente en orden.
+        # V6-1: duración real por chunk vía ffprobe si está disponible —
+        # mucho más precisa que asumir bytes proporcionales a duración
+        # (variable con VBR) o `índice × chunk_minutes` (el último chunk casi
+        # siempre es más corto). Si ffprobe falla para algún chunk, cae a la
+        # heurística anterior sin romper la transcripción.
+        chunk_durations = [_ffprobe_duration_secs(c) for c in chunks]
+        if chunk_durations and all(d > 0 for d in chunk_durations):
+            total_secs = sum(chunk_durations)
+            offsets = []
+            acc = 0.0
+            for d in chunk_durations:
+                offsets.append(acc)
+                acc += d
+        else:
+            total_size = sum(os.path.getsize(c) for c in chunks) or 1
+            total_secs = self._estimate_duration_secs(file_path) or (len(chunks) * float(chunk_minutes) * 60)
+            offsets = []
+            acc = 0.0
+            for c in chunks:
+                offsets.append(acc)
+                acc += (os.path.getsize(c) / total_size) * total_secs
 
         resume_entries = _load_checkpoint(file_path, len(chunks))
         if any(e is not None for e in resume_entries):

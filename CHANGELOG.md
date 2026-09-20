@@ -6,6 +6,14 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.14.14] — 2026-09-20
+
+- **`yunta/voice.py` — V6-1 (`docs/PLAN.md`): marcas de tiempo reales por chunk vía `ffprobe`**: hasta ahora el offset de cada fragmento se repartía proporcionalmente por tamaño en bytes, una aproximación que se desincroniza con audio VBR o cuando el último chunk de `ffmpeg -f segment` sale más corto que el resto.
+  - Nueva `_ffprobe_duration_secs(file_path)`: mide la duración real de cada chunk con `ffprobe`. Detecta una sola vez si el binario está disponible (`_ffprobe_available`) para no reintentarlo en cada uno de los N fragmentos si falta; un fallo puntual en UN chunk (archivo corrupto) no desactiva `ffprobe` para el resto.
+  - En `transcribe_large_audio`: si `ffprobe` da duración real para **todos** los chunks, los offsets se calculan por duración acumulada real; si falla para alguno, cae íntegro a la heurística anterior (bytes proporcionales / `_estimate_duration_secs`) — sin regresión cuando `ffprobe` no está instalado.
+  - Funciona para cualquier formato que `ffprobe` sepa leer, no solo `.mp3` — beneficia también a `.m4a` y otros formatos que quedaban fuera de la calibración de Fase 4.
+  - 5 tests nuevos en `tests/test_voice.py` (379 → 384 tests totales): parseo de duración, desactivación tras binario ausente, tolerancia a un archivo puntual corrupto, offsets reales en una transcripción simulada (bytes iguales, duraciones distintas), y fallback cuando `ffprobe` no está disponible.
+
 ## [2.14.13] — 2026-09-20
 
 - **`yunta/voice.py` — V6-3 (`docs/PLAN.md`): checkpoint incremental de transcripción**: motivado directamente por la corrida real de 81 min (43m46s de pared) — si el proceso se hubiera caído en el fragmento 200/259, se perdía TODO lo transcrito sin ningún resguardo intermedio.
