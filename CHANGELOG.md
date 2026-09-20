@@ -6,6 +6,15 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.14.7] — 2026-09-20
+
+- **`yunta/voice.py` — Fase 4 (plan de resiliencia de voz): recalibración de tamaño de fragmento por bitrate real**: motivado por la misma transcripción real de 81 min (480 errores/259 fragmentos) que originó las Fases 0-3 — los fragmentos contra Cloudflare Workers AI usaban un tamaño fijo de 20s (`chunk_minutes=0.33`) sin importar el bitrate real del audio.
+  - Nuevas funciones a nivel de módulo `_estimate_bitrate_bps(file_path)` (extraída de `AudioChunker._estimate_duration_secs`, sniffing del primer frame MP3) y `_calibrate_chunk_minutes(file_path, max_bytes, safety=0.85, floor=0.33, ceiling=0.5)`, que usa el bitrate real para calcular minutos por fragmento en vez de asumir siempre el peor caso. `ceiling=0.5` (30s) es deliberadamente conservador: el límite real de Workers AI es CPU-por-invocación, no solo tamaño de payload.
+  - Deliberadamente funciones de módulo y no métodos de `AudioChunker`: se invocan desde `AudioTranscriber.transcribe_with_meta` antes de instanciar `AudioChunker`, y varios tests existentes mockean la clase `AudioChunker` completa — un método de clase habría resuelto el mock en vez de la lógica real. `AudioChunker._estimate_bitrate_bps`/`_calibrate_chunk_minutes` se mantienen como `@staticmethod` de conveniencia que delegan a las funciones de módulo.
+  - Solo aplica a `.mp3` contra endpoints Workers AI (`workers.dev`) y solo si no hay override manual (`VOICE_CHUNK_MINUTES` sigue teniendo prioridad absoluta). Otros formatos y el endpoint estándar (25 MB, `chunk_minutes=10`) no cambian de comportamiento.
+  - 8 tests nuevos en `tests/test_voice.py` (350 → 358 tests totales): lectura de bitrate, clamping a floor/ceiling, fallback sin bitrate legible, cableado end-to-end contra Workers AI, y respeto del override manual.
+  - Validación: solo unitaria — no hay un audio real de 81 min disponible en esta sesión para la comparación empírica antes/después (RTF, errores por fragmento) que el plan original preveía como criterio de éxito adicional para esta fase. Queda pendiente correr esa comparación cuando haya audio real disponible.
+
 ## [2.14.6] — 2026-09-20
 
 - **`AGENTS.md` — Regla 7: Protocolo de Relevo y Continuidad (Step 0 obligatorio)**: motivada por un incidente real de esta misma fecha — un relevo entre sesiones concurrentes (ZCode → Claude Code) dejó `tests/test_voice.py` con bytes nulos literales que rompían la compilación, invisibles para un chequeo superficial.

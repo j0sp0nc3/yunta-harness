@@ -470,6 +470,103 @@ def test_too_large_error_retries_with_smaller_chunks(tmp_path, monkeypatch):
     mock_chunker_instance.transcribe_large_audio.assert_called_once_with(str(audio_file), chunk_minutes=0.33)
 
 
+def test_estimate_bitrate_bps_reads_mp3_frame_header(tmp_path):
+    """Frame MP3 con índice de bitrate 9 (tabla MPEG1 Layer3) = 128 kbps."""
+    f = tmp_path / "audio.mp3"
+    f.write_bytes(b"\xff\xfb\x90\x00" + b"x" * 512)
+    assert AudioChunker._estimate_bitrate_bps(str(f)) == 128000
+
+
+def test_estimate_bitrate_bps_returns_zero_for_non_mp3(tmp_path):
+    f = tmp_path / "audio.wav"
+    f.write_bytes(b"\xff\xfb\x90\x00" + b"x" * 512)
+    assert AudioChunker._estimate_bitrate_bps(str(f)) == 0
+
+
+def test_calibrate_chunk_minutes_uses_real_bitrate_within_bounds(tmp_path):
+    """Bitrate real (128 kbps) da un valor entre floor y ceiling, distinto del
+    0.33 fijo anterior — el caso central que motiva la Fase 4."""
+    f = tmp_path / "audio.mp3"
+    f.write_bytes(b"\xff\xfb\x90\x00" + b"x" * 512)
+    cm = AudioChunker._calibrate_chunk_minutes(str(f), max_bytes=500 * 1024)
+    assert 0.33 < cm < 0.5
+    assert cm == pytest.approx(0.4533, abs=0.001)
+
+
+def test_calibrate_chunk_minutes_clamps_to_ceiling_for_low_bitrate(tmp_path):
+    """Bitrate bajo (32 kbps) permitiría fragmentos largos bajo el mismo límite
+    de bytes, pero el ceiling conservador (30s) no se supera."""
+    f = tmp_path / "audio.mp3"
+    f.write_bytes(b"\xff\xfb\x10\x00" + b"x" * 512)  # índice de bitrate 1 = 32 kbps
+    cm = AudioChunker._calibrate_chunk_minutes(str(f), max_bytes=500 * 1024)
+    assert cm == 0.5
+
+
+def test_calibrate_chunk_minutes_clamps_to_floor_for_high_bitrate(tmp_path):
+    """Bitrate alto (320 kbps) no reduce el fragmento por debajo del floor actual."""
+    f = tmp_path / "audio.mp3"
+    f.write_bytes(b"\xff\xfb\xe0\x00" + b"x" * 512)  # índice de bitrate 14 = 320 kbps
+    cm = AudioChunker._calibrate_chunk_minutes(str(f), max_bytes=500 * 1024)
+    assert cm == 0.33
+
+
+def test_calibrate_chunk_minutes_falls_back_to_floor_without_bitrate(tmp_path):
+    """Sin bitrate legible (formato no MP3), se mantiene el comportamiento
+    previo (0.33 fijo) — sin regresión."""
+    f = tmp_path / "audio.m4a"
+    f.write_bytes(b"x" * (1024 * 1024))
+    assert AudioChunker._calibrate_chunk_minutes(str(f), max_bytes=500 * 1024) == 0.33
+
+
+def test_workers_ai_calibrates_chunk_minutes_by_real_bitrate_for_mp3(tmp_path, monkeypatch):
+    """Para .mp3 contra Workers AI, sin override manual, se usa el bitrate real
+    en vez del 0.33 fijo — verifica el cableado en transcribe_with_meta."""
+    from unittest.mock import MagicMock
+    from yunta.voice import AudioTranscriber
+
+    audio_file = tmp_path / "lecture.mp3"
+    audio_file.write_bytes(b"\xff\xfb\x90\x00" + b"x" * (1 * 1024 * 1024))
+
+    transcriber = AudioTranscriber(
+        model="@cf/openai/whisper",
+        api_base="https://my-worker.beroiza.workers.dev/v1",
+        api_key="fake-key",
+    )
+
+    mock_chunker_instance = MagicMock()
+    mock_chunker_instance.transcribe_large_audio.return_value = "transcripcion fragmentada"
+    mock_chunker_cls = MagicMock(return_value=mock_chunker_instance)
+    monkeypatch.setattr("yunta.voice.AudioChunker", mock_chunker_cls)
+
+    res = transcriber.transcribe(str(audio_file))
+    assert res == "transcripcion fragmentada"
+    _, kwargs = mock_chunker_cls.call_args
+    assert kwargs["chunk_minutes"] == pytest.approx(0.4533, abs=0.001)
+
+
+def test_workers_ai_env_override_bypasses_calibration(tmp_path, monkeypatch):
+    """VOICE_CHUNK_MINUTES explícito respeta el override manual y no calibra."""
+    from unittest.mock import MagicMock
+    from yunta.voice import AudioTranscriber
+
+    monkeypatch.setenv("VOICE_CHUNK_MINUTES", "2.0")
+    audio_file = tmp_path / "lecture.mp3"
+    audio_file.write_bytes(b"\xff\xfb\x90\x00" + b"x" * (1 * 1024 * 1024))
+
+    transcriber = AudioTranscriber(
+        model="@cf/openai/whisper",
+        api_base="https://my-worker.beroiza.workers.dev/v1",
+        api_key="fake-key",
+    )
+
+    mock_chunker_instance = MagicMock()
+    mock_chunker_instance.transcribe_large_audio.return_value = "ok"
+    mock_chunker_cls = MagicMock(return_value=mock_chunker_instance)
+    monkeypatch.setattr("yunta.voice.AudioChunker", mock_chunker_cls)
+
+    transcriber.transcribe(str(audio_file))
+    mock_chunker_cls.assert_called_once_with(transcriber, chunk_minutes=2.0)
+
 
 
 def test_circuit_breaker_skips_cloud_after_consecutive_failures(tmp_path):

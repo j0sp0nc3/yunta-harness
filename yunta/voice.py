@@ -328,7 +328,15 @@ class AudioTranscriber:
             or (500 * 1024 if "workers.dev" in self.api_base else 25 * 1024 * 1024)
         )
         if path.stat().st_size > max_size:
-            cm = float(os.environ.get("VOICE_CHUNK_MINUTES", "0.33" if "workers.dev" in self.api_base else "10"))
+            env_cm = os.environ.get("VOICE_CHUNK_MINUTES")
+            if env_cm:
+                cm = float(env_cm)
+            elif "workers.dev" in self.api_base:
+                # Fase 4: calibrar por bitrate real en vez de asumir siempre
+                # el peor caso (0.33 min fijos) — solo si no hay override manual.
+                cm = _calibrate_chunk_minutes(str(path), max_size)
+            else:
+                cm = 10.0
             text = AudioChunker(self, chunk_minutes=cm).transcribe_large_audio(str(path))
             return text, {"source": "cloud", "cloud_attempted": True, "cloud_failed": False}
 
@@ -504,6 +512,58 @@ class AudioTranscriber:
         return ""
 
 
+_MP3_BITRATES = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0]
+
+
+def _estimate_bitrate_bps(file_path: str) -> int:
+    """Estima el bitrate (bps) de un MP3 leyendo el primer frame válido. 0 si no se puede.
+
+    Función a nivel de módulo (no método de `AudioChunker`) a propósito: se
+    llama desde `AudioTranscriber.transcribe_with_meta` antes de instanciar
+    `AudioChunker`, y varios tests mockean la clase `AudioChunker` completa
+    (`monkeypatch.setattr("yunta.voice.AudioChunker", ...)`) — llamarla como
+    `AudioChunker._estimate_bitrate_bps(...)` desde ahí resolvería el mock en
+    vez de la lógica real.
+    """
+    if Path(file_path).suffix.lower() != ".mp3":
+        return 0
+    try:
+        data = Path(file_path).read_bytes()[:8192]
+        for i in range(len(data) - 4):
+            b = data[i:i + 4]
+            if b[0] == 0xFF and (b[1] & 0xE0) == 0xE0:  # sync MP3 frame
+                bitrate = _MP3_BITRATES[(b[2] >> 4) & 0x0F] * 1000
+                if bitrate:
+                    return bitrate
+    except Exception:
+        pass
+    return 0
+
+
+def _calibrate_chunk_minutes(
+    file_path: str, max_bytes: int, safety: float = 0.85, floor: float = 0.33, ceiling: float = 0.5
+) -> float:
+    """Calcula minutos por fragmento usando el bitrate real del audio en vez
+    de asumir siempre el peor caso (Fase 4, 2026-09-20).
+
+    Motivado por una transcripción real de 81 min contra Cloudflare Workers
+    AI: 480 errores 503/1102 manejados para solo 259 fragmentos de 20s fijos,
+    pese a que el bitrate real del audio permitía fragmentos algo mayores
+    bajo el mismo límite de payload (500 KB). `ceiling` es deliberadamente
+    conservador (30s por defecto) porque el límite real de Workers AI es
+    CPU-por-invocación, no solo tamaño de payload — no se busca maximizar
+    el tamaño de fragmento, solo evitar fragmentar más fino de lo necesario.
+    Si no se puede leer el bitrate (formato no MP3, archivo dañado), cae al
+    `floor` — comportamiento idéntico al valor fijo previo, sin regresión.
+    """
+    bitrate = _estimate_bitrate_bps(file_path)
+    if not bitrate:
+        return floor
+    bytes_per_sec = bitrate / 8
+    minutes = (max_bytes * safety) / bytes_per_sec / 60
+    return max(floor, min(ceiling, minutes))
+
+
 class AudioChunker:
     """Fragmenta audios grandes (>25 MB / cátedras de varias horas) en bloques."""
 
@@ -640,22 +700,26 @@ class AudioChunker:
         return result
 
     @staticmethod
+    def _estimate_bitrate_bps(file_path: str) -> int:
+        """Estima el bitrate (bps) de un MP3 leyendo el primer frame válido. 0 si no se puede."""
+        return _estimate_bitrate_bps(file_path)
+
+    @staticmethod
     def _estimate_duration_secs(file_path: str) -> float:
         """Estima la duración de un MP3 asumiendo CBR (bitrate del primer frame). 0 si no se puede."""
-        if Path(file_path).suffix.lower() != ".mp3":
+        bitrate = _estimate_bitrate_bps(file_path)
+        if not bitrate:
             return 0.0
-        _BITRATES = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0]
-        try:
-            data = Path(file_path).read_bytes()[:8192]
-            for i in range(len(data) - 4):
-                b = data[i:i + 4]
-                if b[0] == 0xFF and (b[1] & 0xE0) == 0xE0:  # sync MP3 frame
-                    bitrate = _BITRATES[(b[2] >> 4) & 0x0F] * 1000
-                    if bitrate:
-                        return (os.path.getsize(file_path) * 8) / bitrate
-        except Exception:
-            pass
-        return 0.0
+        return (os.path.getsize(file_path) * 8) / bitrate
+
+    @staticmethod
+    def _calibrate_chunk_minutes(
+        file_path: str, max_bytes: int, safety: float = 0.85, floor: float = 0.33, ceiling: float = 0.5
+    ) -> float:
+        """Calcula minutos por fragmento usando el bitrate real del audio en vez
+        de asumir siempre el peor caso (Fase 4, 2026-09-20). Ver `_calibrate_chunk_minutes`
+        a nivel de módulo para la lógica completa."""
+        return _calibrate_chunk_minutes(file_path, max_bytes, safety=safety, floor=floor, ceiling=ceiling)
 
     def split_audio_by_silence(self, file_path: str, chunk_minutes: float | int = 10, chunk_bytes: int = 1024 * 1024) -> list[str]:
         """Divide el archivo de audio usando ffmpeg si está disponible.
