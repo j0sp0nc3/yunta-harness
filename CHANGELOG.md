@@ -8,11 +8,12 @@ Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
 ## [2.14.3] — 2026-09-19
 
-- **Blindaje y resiliencia de transcripción de audio (`yunta/voice.py`)**:
-  - **Soporte nativo para endpoints con límites estrictos de payload (Cloudflare Workers AI)**: cuando `api_base` apunta a `workers.dev` (o se define `VOICE_CHUNK_MINUTES`), los audios mayores a 2 MB se dividen automáticamente en fragmentos de 2 minutos (~1.9 MB), evitando el error HTTP 413 (`"Audio payload too large for Workers AI... Split into smaller chunks (~1-2 MB)"`).
-  - **Fragmentación sin corrupción de contenedor AAC/M4A (`split_audio_by_silence`)**: `ffmpeg` ahora preserva la extensión original del archivo (`chunk_%03d{ext}` con `-c copy`) en lugar de forzar `.mp3`, permitiendo segmentar audios `.m4a`/AAC en milisegundos sin errores de muxing.
-  - **Reintento adaptativo ante `too_large`**: si el endpoint rechaza un fragmento por tamaño, el reintento fuerza granularidad de 1 minuto (`chunk_minutes=1`) garantizando progreso efectivo en lugar de reintentar el mismo tamaño en bucle.
-  - **Timeout de red extendido (`VOICE_TIMEOUT`)**: ampliado de 10s fijos a 60s configurables, evitando falsos `TimeoutError` durante inferencias en la nube. Extracción robusta de texto compatible con JSON OpenAI (`data.get("text")`) y Cloudflare REST directo (`data.get("result", {}).get("text")`).
+- **Blindaje y resiliencia de transcripción de audio (`yunta/voice.py`, `yunta/cli.py`)**:
+  - **Soporte nativo y calibración para Cloudflare Workers AI (`workers.dev`)**: Workers AI impone un límite estricto de CPU (~50ms) y memoria (HTTP 413 / error 1102). La calibración automática fragmenta audios >500 KB en bloques de **20 segundos** (`chunk_minutes=0.33`, ~320 KB), permitiendo inferencia fluida en 1.5s sin colapsar el worker.
+  - **Fragmentación sin corrupción de contenedor AAC/M4A (`split_audio_by_silence`)**: `ffmpeg` ahora preserva la extensión original del archivo (`chunk_%03d{ext}` con `-c copy`) en lugar de forzar `.mp3`, permitiendo segmentar audios `.m4a`/AAC en milisegundos sin errores de muxing ni pérdida de calidad.
+  - **Deduplicación de bucles patológicos de Whisper (`_dedup_whisper_repetition`)**: filtra alucinaciones en loop que Whisper produce ocasionalmente en fragmentos con silencios o ruido ambiente, evitando texto repetitivo.
+  - **Compatibilidad con consolas Windows (cp1252)**: reconfiguración segura de `sys.stdout` y `sys.stderr` a `utf-8` con `errors='replace'`, eliminando `UnicodeEncodeError` al imprimir emojis e indicadores de progreso en terminales Windows.
+  - **Timeout de red extendido (`VOICE_TIMEOUT`)**: ampliado de 10s fijos a 60s configurables, evitando falsos `TimeoutError` durante inferencias en la nube.
 - **Tests: 338** (2 nuevos en `tests/test_voice.py`). 100% pasando.
 
 ## [2.14.2] — 2026-09-19

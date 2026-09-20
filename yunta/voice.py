@@ -21,6 +21,18 @@ import unicodedata
 import uuid
 import wave
 
+# Evitar UnicodeEncodeError en consolas Windows (cp1252) al imprimir emojis o caracteres especiales
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 APPROVAL_SYNONYMS = {
     "s", "si", "sí", "yes", "y", "ok", "okay", "okei", "okey", "oki",
     "aprobado", "aprobar", "aprobada", "apruebo", "aprobarlo", "aprobado ok",
@@ -241,7 +253,6 @@ class _TranscribeError(Exception):
         self.too_large = (
             "too large" in self.detail
             or "3006" in self.detail
-            or "1102" in self.detail
             or self.code == 413
         )
         self.retryable = (
@@ -249,6 +260,15 @@ class _TranscribeError(Exception):
             or (self.code is not None and self.code >= 500)
             or self.code == 429
         )
+
+
+def _dedup_whisper_repetition(text: str) -> str:
+    """Elimina bucles patológicos de repetición que Whisper a veces genera en silencios o pausas."""
+    if not text:
+        return text
+    pattern = re.compile(r"(\b[\w\s]{2,30}?[\s,.;]+)\1{2,}", re.IGNORECASE)
+    cleaned = pattern.sub(r"\1\1", text)
+    return cleaned.strip()
 
 
 class AudioTranscriber:
@@ -287,20 +307,21 @@ class AudioTranscriber:
             or (500 * 1024 if "workers.dev" in self.api_base else 25 * 1024 * 1024)
         )
         if path.stat().st_size > max_size:
-            cm = float(os.environ.get("VOICE_CHUNK_MINUTES", "0.5" if "workers.dev" in self.api_base else "10"))
+            cm = float(os.environ.get("VOICE_CHUNK_MINUTES", "0.33" if "workers.dev" in self.api_base else "10"))
             return AudioChunker(self, chunk_minutes=cm).transcribe_large_audio(str(path))
 
         last_err = None
         for attempt in range(3):
             try:
-                return self._post_transcription(path, prompt)
+                raw_text = self._post_transcription(path, prompt)
+                return _dedup_whisper_repetition(raw_text)
             except _TranscribeError as err:
                 last_err = err
                 if err.too_large:
-                    # El endpoint rechaza el tamaño o CPU (1102): fragmentar y reintentar con fragmentos menores (20s)
+                    # El endpoint rechaza el tamaño: fragmentar y reintentar con fragmentos menores (20s)
                     if path.stat().st_size <= 128 * 1024:
                         break
-                    print(f"⚠️ Endpoint rechazó el audio por límites de cómputo/tamaño ({err}). Reintentando por fragmentos menores...")
+                    print(f"⚠️ Endpoint rechazó el audio por límites de tamaño ({err}). Reintentando por fragmentos menores...")
                     return AudioChunker(self).transcribe_large_audio(str(path), chunk_minutes=0.33)
                 if err.retryable and attempt < 2:
                     wait = (attempt + 1) * 3
@@ -445,11 +466,11 @@ class AudioTranscriber:
 class AudioChunker:
     """Fragmenta audios grandes (>25 MB / cátedras de varias horas) en bloques."""
 
-    def __init__(self, transcriber: AudioTranscriber, chunk_minutes: int | None = None):
+    def __init__(self, transcriber: AudioTranscriber, chunk_minutes: float | int | None = None):
         self.transcriber = transcriber
         self.default_chunk_minutes = chunk_minutes
 
-    def transcribe_large_audio(self, file_path: str, chunk_minutes: int | None = None) -> str:
+    def transcribe_large_audio(self, file_path: str, chunk_minutes: float | int | None = None) -> str:
         """Divide el audio en fragmentos y concatena las transcripciones.
 
         - Continuidad: el final del fragmento anterior se pasa como 'prompt' de
@@ -463,18 +484,18 @@ class AudioChunker:
             env_cm = os.environ.get("VOICE_CHUNK_MINUTES")
             if env_cm:
                 try:
-                    chunk_minutes = max(1, int(env_cm))
+                    chunk_minutes = float(env_cm)
                 except ValueError:
-                    chunk_minutes = 10
+                    chunk_minutes = 10.0
             else:
-                chunk_minutes = 10
+                chunk_minutes = 10.0
 
         chunks = self.split_audio_by_silence(file_path, chunk_minutes)
         transcripts = []
         tail = ""
         # Offset temporal acumulado: proporcional a bytes (corte binario) o minutos (ffmpeg)
         total_size = sum(os.path.getsize(c) for c in chunks) or 1
-        total_secs = self._estimate_duration_secs(file_path) or (len(chunks) * chunk_minutes * 60)
+        total_secs = self._estimate_duration_secs(file_path) or (len(chunks) * float(chunk_minutes) * 60)
         offset_secs = 0.0
 
         try:
@@ -527,7 +548,7 @@ class AudioChunker:
             pass
         return 0.0
 
-    def split_audio_by_silence(self, file_path: str, chunk_minutes: int = 10, chunk_bytes: int = 1024 * 1024) -> list[str]:
+    def split_audio_by_silence(self, file_path: str, chunk_minutes: float | int = 10, chunk_bytes: int = 1024 * 1024) -> list[str]:
         """Divide el archivo de audio usando ffmpeg si está disponible.
 
         Sin ffmpeg: para MP3 se permite el corte por bytes (~1 MB por fragmento)
@@ -549,9 +570,10 @@ class AudioChunker:
         try:
             ext = Path(file_path).suffix.lower() or ".mp3"
             out_pattern = os.path.join(temp_dir, f"chunk_%03d{ext}")
+            segment_secs = max(5, int(float(chunk_minutes) * 60))
             cmd = [
                 "ffmpeg", "-i", file_path, "-f", "segment",
-                "-segment_time", str(chunk_minutes * 60), "-c", "copy", out_pattern
+                "-segment_time", str(segment_secs), "-c", "copy", out_pattern
             ]
             subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
             files = sorted(os.listdir(temp_dir))

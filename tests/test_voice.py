@@ -316,14 +316,14 @@ def test_make_voice_approval():
     assert cb("bash") is False
 
 
-def test_workers_ai_uses_2mb_threshold_and_2min_chunks(tmp_path, monkeypatch):
-    """Endpoints de Workers AI (workers.dev) fragmentan a partir de 2 MB en bloques de 2 min."""
+def test_workers_ai_uses_500kb_threshold_and_30s_chunks(tmp_path, monkeypatch):
+    """Endpoints de Workers AI (workers.dev) fragmentan a partir de 500 KB en bloques de 30s (0.5m)."""
     from unittest.mock import MagicMock
     from yunta.voice import AudioTranscriber
 
     audio_file = tmp_path / "lecture.m4a"
-    # Archivo de 3 MB
-    audio_file.write_bytes(b"x" * (3 * 1024 * 1024))
+    # Archivo de 1 MB
+    audio_file.write_bytes(b"x" * (1 * 1024 * 1024))
 
     transcriber = AudioTranscriber(
         model="@cf/openai/whisper",
@@ -338,8 +338,8 @@ def test_workers_ai_uses_2mb_threshold_and_2min_chunks(tmp_path, monkeypatch):
 
     res = transcriber.transcribe(str(audio_file))
     assert res == "transcripcion fragmentada"
-    # Verificamos que se instanció con chunk_minutes=2
-    mock_chunker_cls.assert_called_once_with(transcriber, chunk_minutes=2)
+    # Verificamos que se instanció con chunk_minutes=0.33 (20 segundos)
+    mock_chunker_cls.assert_called_once_with(transcriber, chunk_minutes=0.33)
     mock_chunker_instance.transcribe_large_audio.assert_called_once_with(str(audio_file))
 
 
@@ -366,6 +366,6 @@ def test_too_large_error_retries_with_smaller_chunks(tmp_path, monkeypatch):
 
     res = transcriber.transcribe(str(audio_file))
     assert res == "rescate con fragmentos menores"
-    mock_chunker_instance.transcribe_large_audio.assert_called_once_with(str(audio_file), chunk_minutes=1)
+    mock_chunker_instance.transcribe_large_audio.assert_called_once_with(str(audio_file), chunk_minutes=0.33)
 
 

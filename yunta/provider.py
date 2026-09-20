@@ -3,6 +3,9 @@ import os
 
 import litellm
 
+# Descartar parámetros opcionales que el modelo/proveedor seleccionado no soporte (ej. thinking/reasoning_effort)
+litellm.drop_params = True
+
 from .api import Block, BlockType, Message, Response, Role, StopReason, ToolDef, Usage
 
 _FINISH_REASONS = {
@@ -189,6 +192,10 @@ class LiteLLMProvider(Provider):
             except Exception as e:
                 err_str = str(e).lower()
                 err_name = type(e).__name__
+                if "unsupportedparam" in err_name.lower() or "not support parameter" in err_str:
+                    reasoning_effort = "off"
+                    os.environ["LLM_REASONING_EFFORT"] = "off"
+                    continue
                 is_fallback_candidate = any(
                     x in err_str or x in err_name.lower()
                     for x in ["429", "503", "401", "400", "unauthorized", "authentication", "badrequest", "unknown model", "unavailable", "exhausted", "ratelimit", "quota", "serviceunavailable", "midstreamfallback"]

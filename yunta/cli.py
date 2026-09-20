@@ -5,6 +5,18 @@ import sys
 import time
 from pathlib import Path
 
+# Evitar UnicodeEncodeError en consolas Windows (cp1252) al imprimir emojis o caracteres especiales
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 from .agent import Agent
 from .api import Block, BlockType, Message, Role
 from .compact import SlidingWindow, TokenBudgetCompactor
