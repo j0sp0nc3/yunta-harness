@@ -10,10 +10,12 @@ import json
 import mimetypes
 import os
 from pathlib import Path
+import random
 import struct
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
 import re
@@ -246,7 +248,7 @@ def offload_transcript(text: str, preview_chars: int = 500, threshold: int = 800
 class _TranscribeError(Exception):
     """Error HTTP o de red al transcribir, con clasificación para retry/fragmentación."""
 
-    def __init__(self, msg: str, code: int | None, detail: str):
+    def __init__(self, msg: str, code: int | None, detail: str, retry_after: float | None = None):
         super().__init__(msg)
         self.code = code
         self.detail = detail.lower()
@@ -260,6 +262,10 @@ class _TranscribeError(Exception):
             or (self.code is not None and self.code >= 500)
             or self.code == 429
         )
+        # Fase 2 (2026-09-20): segundos que el endpoint pide esperar (header
+        # Retry-After), si lo manda. Solo formato numérico (segundos); el
+        # formato HTTP-date queda fuera de alcance.
+        self.retry_after = retry_after
 
 
 def _dedup_whisper_repetition(text: str) -> str:
@@ -297,9 +303,24 @@ class AudioTranscriber:
         - Si el endpoint rechaza el payload por tamaño (3006/"too large"), reintenta
           automáticamente fragmentando el audio en partes menores (V6-2).
         """
+        return self.transcribe_with_meta(file_path, prompt)[0]
+
+    def transcribe_with_meta(self, file_path: str, prompt: str = "", skip_cloud: bool = False) -> tuple[str, dict]:
+        """Como `transcribe()`, pero además devuelve metadata de la ejecución:
+        `{"source": "cloud"|"local", "cloud_attempted": bool, "cloud_failed": bool}`.
+
+        `AudioChunker` usa esta metadata para implementar un circuit breaker
+        entre fragmentos sin duplicar la lógica de reintento/fallback aquí.
+        `skip_cloud=True` salta directo al fallback local sin tocar la red
+        (usado por el circuit breaker cuando la nube ya se detectó saturada).
+        """
         path = Path(file_path)
         if not path.exists():
             raise FileNotFoundError(f"Archivo de audio no encontrado: {file_path}")
+
+        if skip_cloud:
+            local_text = self.transcribe_offline_local(str(path))
+            return local_text, {"source": "local", "cloud_attempted": False, "cloud_failed": False}
 
         # Si el archivo supera el límite (25 MB en Whisper API estándar, 500 KB en Workers AI), usar chunker
         max_size = (
@@ -308,13 +329,14 @@ class AudioTranscriber:
         )
         if path.stat().st_size > max_size:
             cm = float(os.environ.get("VOICE_CHUNK_MINUTES", "0.33" if "workers.dev" in self.api_base else "10"))
-            return AudioChunker(self, chunk_minutes=cm).transcribe_large_audio(str(path))
+            text = AudioChunker(self, chunk_minutes=cm).transcribe_large_audio(str(path))
+            return text, {"source": "cloud", "cloud_attempted": True, "cloud_failed": False}
 
         last_err = None
         for attempt in range(3):
             try:
                 raw_text = self._post_transcription(path, prompt)
-                return _dedup_whisper_repetition(raw_text)
+                return _dedup_whisper_repetition(raw_text), {"source": "cloud", "cloud_attempted": True, "cloud_failed": False}
             except _TranscribeError as err:
                 last_err = err
                 if err.too_large:
@@ -322,12 +344,19 @@ class AudioTranscriber:
                     if path.stat().st_size <= 128 * 1024:
                         break
                     print(f"⚠️ Endpoint rechazó el audio por límites de tamaño ({err}). Reintentando por fragmentos menores...")
-                    return AudioChunker(self).transcribe_large_audio(str(path), chunk_minutes=0.33)
+                    text = AudioChunker(self).transcribe_large_audio(str(path), chunk_minutes=0.33)
+                    return text, {"source": "cloud", "cloud_attempted": True, "cloud_failed": False}
                 if err.retryable and attempt < 2:
-                    wait = (attempt + 1) * 3
-                    print(f"⚠️ {err}. Reintentando en {wait}s (intento {attempt + 2}/3)...")
-                    import time
-
+                    cap = float(os.environ.get("VOICE_BACKOFF_CAP", "30"))
+                    if err.retry_after is not None:
+                        wait = min(err.retry_after, cap)
+                    else:
+                        # Fase 2: exponencial con jitter en vez de lineal fijo
+                        # (antes (attempt+1)*3 = 3s, 6s sin importar la señal
+                        # real del servidor).
+                        base = float(os.environ.get("VOICE_BACKOFF_BASE", "1.0")) * (2 ** attempt)
+                        wait = min(base + random.uniform(0, base), cap)
+                    print(f"⚠️ {err}. Reintentando en {wait:.1f}s (intento {attempt + 2}/3)...")
                     time.sleep(wait)
                     continue
                 break
@@ -337,8 +366,8 @@ class AudioTranscriber:
         local_text = self.transcribe_offline_local(str(path))
         if local_text:
             print("💡 (Transcripción realizada con el servidor Whisper local de resguardo)")
-            return local_text
-        return ""
+            return local_text, {"source": "local", "cloud_attempted": True, "cloud_failed": True}
+        return "", {"source": "local", "cloud_attempted": True, "cloud_failed": True}
 
     def _post_transcription(self, path: Path, prompt: str = "") -> str:
         """Un POST multipart al endpoint de transcripción. Lanza _TranscribeError."""
@@ -400,7 +429,19 @@ class AudioTranscriber:
                 detail = err.read().decode("utf-8", errors="replace")[:200]
             except Exception:
                 detail = ""
-            raise _TranscribeError(f"HTTP {err.code}: {detail or err.reason}", err.code, detail) from err
+            # Fase 2: respetar Retry-After si el endpoint lo manda (solo
+            # formato numérico en segundos — el formato HTTP-date queda
+            # fuera de alcance por complejidad no justificada aquí).
+            retry_after = None
+            try:
+                ra = err.headers.get("Retry-After") if err.headers else None
+                if ra is not None:
+                    retry_after = float(ra)
+            except (TypeError, ValueError):
+                retry_after = None
+            raise _TranscribeError(
+                f"HTTP {err.code}: {detail or err.reason}", err.code, detail, retry_after=retry_after
+            ) from err
         except Exception as err:
             # Errores de red (timeout, DNS, conexión): reintentables
             raise _TranscribeError(f"{type(err).__name__}: {err}", None, "") from err
@@ -469,6 +510,41 @@ class AudioChunker:
     def __init__(self, transcriber: AudioTranscriber, chunk_minutes: float | int | None = None):
         self.transcriber = transcriber
         self.default_chunk_minutes = chunk_minutes
+        # Circuit breaker (Fase 1, 2026-09-20): tras N fallos de nube
+        # CONSECUTIVOS entre fragmentos, deja de intentar la nube por un
+        # tramo de fragmentos en vez de que cada uno pelee su propia
+        # batalla de reintentos contra un endpoint ya saturado.
+        # VOICE_BREAKER_THRESHOLD=0 desactiva el breaker (comportamiento
+        # idéntico al actual: siempre intenta la nube).
+        self._cb_threshold = int(os.environ.get("VOICE_BREAKER_THRESHOLD", "3"))
+        self._cb_cooldown = int(os.environ.get("VOICE_BREAKER_COOLDOWN", "5"))
+        self._cb_fail_streak = 0
+        self._cb_skip_remaining = 0
+        self._cb_tripped_count = 0  # telemetría (Fase 3)
+
+    def _breaker_should_skip_cloud(self) -> bool:
+        if self._cb_skip_remaining > 0:
+            self._cb_skip_remaining -= 1
+            return True
+        return False
+
+    def _breaker_record(self, meta: dict) -> None:
+        """Actualiza el estado del breaker según la metadata de un fragmento
+        ya procesado (ver `AudioTranscriber.transcribe_with_meta`)."""
+        if self._cb_threshold <= 0:
+            return
+        if meta.get("source") == "cloud":
+            self._cb_fail_streak = 0
+            return
+        if meta.get("cloud_attempted") and meta.get("cloud_failed"):
+            self._cb_fail_streak += 1
+            if self._cb_fail_streak >= self._cb_threshold and self._cb_skip_remaining == 0:
+                self._cb_skip_remaining = self._cb_cooldown
+                self._cb_tripped_count += 1
+                print(
+                    f"🔌 Circuit breaker: {self._cb_fail_streak} fallos de nube seguidos — "
+                    f"saltando directo a transcripción local por {self._cb_cooldown} fragmento(s)."
+                )
 
     def transcribe_large_audio(self, file_path: str, chunk_minutes: float | int | None = None) -> str:
         """Divide el audio en fragmentos y concatena las transcripciones.
@@ -504,7 +580,10 @@ class AudioChunker:
                 h, rem = int(offset_secs // 3600), int(offset_secs % 3600)
                 timestamp = f"[{h:02d}:{rem // 60:02d}:{rem % 60:02d}]"
 
-                text = self.transcriber.transcribe(chunk_file, prompt=tail).strip()
+                skip_cloud = self._breaker_should_skip_cloud()
+                text, meta = self.transcriber.transcribe_with_meta(chunk_file, prompt=tail, skip_cloud=skip_cloud)
+                text = text.strip()
+                self._breaker_record(meta)
                 transcripts.append(f"{timestamp}\n{text}")
                 # Whisper usa ~200 caracteres finales como guía de continuidad
                 tail = text[-200:] if text else tail

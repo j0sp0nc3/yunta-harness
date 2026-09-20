@@ -6,6 +6,15 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.14.4] — 2026-09-20
+
+- **Resiliencia del pipeline STT: circuit breaker + backoff adaptativo (`yunta/voice.py`)**: motivado por una transcripción real de 81 min (259 fragmentos) contra Cloudflare Workers AI que registró 480 errores 503/1102 manejados — cada fragmento peleaba su propia batalla de reintentos sin memoria de que los anteriores también habían fallado. Trabajo iniciado en paralelo por ZCode (sesión dogfooding, agotó cuota antes de documentar/commitear) y completado aquí con el mismo diseño.
+  - **`AudioTranscriber.transcribe_with_meta(file_path, prompt, skip_cloud)`** (nuevo): extrae el cuerpo de `transcribe()` devolviendo además `{"source": "cloud"|"local", "cloud_attempted": bool, "cloud_failed": bool}`. `transcribe()` queda como wrapper de una línea — cero cambio de firma/comportamiento para los llamadores existentes (`cli.py`, `VoiceListener`). `skip_cloud=True` salta directo al fallback local sin tocar la red.
+  - **Circuit breaker en `AudioChunker`**: tras `VOICE_BREAKER_THRESHOLD` (default 3) fallos de nube CONSECUTIVOS entre fragmentos, salta la nube por `VOICE_BREAKER_COOLDOWN` (default 5) fragmentos, con sondeo automático (el streak no se resetea al disparar, así que el primer fragmento tras el cooldown reintenta la nube). `VOICE_BREAKER_THRESHOLD=0` desactiva el breaker (comportamiento idéntico al anterior). Anuncia en consola cuando se dispara — sin fallback oculto (regla 2 de AGENTS.md). `_cb_tripped_count` queda listo para telemetría futura.
+  - **Backoff adaptativo con `Retry-After`**: `_TranscribeError` gana `retry_after: float | None`, leído del header HTTP si el endpoint lo manda (solo formato numérico en segundos). Sin el header, backoff exponencial con jitter (`VOICE_BACKOFF_BASE * 2**attempt`) en vez del lineal fijo anterior (3s, 6s). Tope configurable vía `VOICE_BACKOFF_CAP` (default 30s).
+  - Nuevas env vars: `VOICE_BREAKER_THRESHOLD`, `VOICE_BREAKER_COOLDOWN`, `VOICE_BACKOFF_BASE`, `VOICE_BACKOFF_CAP`.
+- **Tests: 345** (7 nuevos: 2 de `transcribe_with_meta`, 3 de backoff/retry_after, 2 de circuit breaker). 100% pasando.
+
 ## [2.14.3] — 2026-09-19
 
 - **Blindaje y resiliencia de transcripción de audio (`yunta/voice.py`, `yunta/cli.py`)**:

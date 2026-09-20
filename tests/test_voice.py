@@ -74,6 +74,106 @@ def test_audio_transcribe_success(mock_urlopen, tmp_path):
     assert result == "Hola esta es una clase de fisiologia médica"
 
 
+@patch("urllib.request.urlopen")
+def test_transcribe_with_meta_reports_cloud_source_on_success(mock_urlopen, tmp_path):
+    """Fase 0: transcribe() sigue devolviendo solo texto (sin cambio para
+    los llamadores existentes); transcribe_with_meta() expone la metadata
+    que el circuit breaker de AudioChunker necesita."""
+    audio_file = tmp_path / "sample.mp3"
+    audio_file.write_bytes(b"dummy audio content")
+
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = json.dumps({"text": "hola"}).encode("utf-8")
+    mock_resp.__enter__.return_value = mock_resp
+    mock_urlopen.return_value = mock_resp
+
+    transcriber = AudioTranscriber(api_key="test")
+    text, meta = transcriber.transcribe_with_meta(str(audio_file))
+    assert text == "hola"
+    assert meta == {"source": "cloud", "cloud_attempted": True, "cloud_failed": False}
+
+    # transcribe() público no cambia de comportamiento
+    assert transcriber.transcribe(str(audio_file)) == "hola"
+
+
+def test_retry_after_header_respected_in_backoff(tmp_path, monkeypatch):
+    """Fase 2: si el error trae retry_after (header Retry-After), el
+    backoff usa ese valor exacto (con tope VOICE_BACKOFF_CAP) en vez de la
+    fórmula exponencial."""
+    from yunta.voice import _TranscribeError
+
+    audio_file = tmp_path / "sample.mp3"
+    audio_file.write_bytes(b"dummy")
+
+    transcriber = AudioTranscriber(api_key="test")
+    sleeps = []
+    monkeypatch.setattr("yunta.voice.time.sleep", lambda s: sleeps.append(s))
+
+    call_count = {"n": 0}
+
+    def fake_post(path, prompt=""):
+        call_count["n"] += 1
+        if call_count["n"] < 3:
+            raise _TranscribeError("HTTP 429: rate limited", 429, "rate limited", retry_after=2.0)
+        return "listo"
+
+    monkeypatch.setattr(transcriber, "_post_transcription", fake_post)
+
+    result = transcriber.transcribe(str(audio_file))
+    assert result == "listo"
+    assert sleeps == [2.0, 2.0]
+
+
+def test_backoff_exponential_with_jitter_when_no_retry_after(tmp_path, monkeypatch):
+    """Fase 2: sin Retry-After, el backoff es exponencial (creciente por
+    intento) en vez del lineal fijo anterior (3s, 6s)."""
+    from yunta.voice import _TranscribeError
+
+    audio_file = tmp_path / "sample.mp3"
+    audio_file.write_bytes(b"dummy")
+
+    transcriber = AudioTranscriber(api_key="test")
+    sleeps = []
+    monkeypatch.setattr("yunta.voice.time.sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr("yunta.voice.random.uniform", lambda a, b: 0.0)  # jitter determinista
+    monkeypatch.setattr(transcriber, "transcribe_offline_local", lambda p: "")
+
+    def fake_post(path, prompt=""):
+        raise _TranscribeError("URLError: timeout", None, "")
+
+    monkeypatch.setattr(transcriber, "_post_transcription", fake_post)
+
+    transcriber.transcribe(str(audio_file))
+    assert len(sleeps) == 2
+    assert sleeps[1] > sleeps[0]  # monotonía creciente (exponencial)
+    assert all(s <= 30 for s in sleeps)
+
+
+def test_transcribe_error_retry_after_defaults_to_none():
+    """Regresión: construir _TranscribeError sin retry_after (como en todos
+    los sitios existentes) debe seguir funcionando con retry_after=None."""
+    from yunta.voice import _TranscribeError
+
+    err = _TranscribeError("msg", 500, "detail")
+    assert err.retry_after is None
+
+
+def test_transcribe_with_meta_skip_cloud_goes_straight_to_local(tmp_path, monkeypatch):
+    audio_file = tmp_path / "sample.mp3"
+    audio_file.write_bytes(b"dummy audio content")
+
+    transcriber = AudioTranscriber(api_key="test")
+    monkeypatch.setattr(transcriber, "transcribe_offline_local", lambda p: "texto local")
+
+    calls = {"urlopen": 0}
+    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: calls.__setitem__("urlopen", calls["urlopen"] + 1))
+
+    text, meta = transcriber.transcribe_with_meta(str(audio_file), skip_cloud=True)
+    assert text == "texto local"
+    assert meta == {"source": "local", "cloud_attempted": False, "cloud_failed": False}
+    assert calls["urlopen"] == 0  # nunca tocó la red
+
+
 def test_transcribe_audio_tool_file_not_found():
     raw_args = json.dumps({"path": "non_existent_audio.mp3"})
     res = transcribe_audio(raw_args)
@@ -129,12 +229,13 @@ def test_chunker_passes_tail_as_prompt_and_supports_interrupt(tmp_path, monkeypa
     calls = []
 
     class FakeTranscriber(AudioTranscriber):
-        def transcribe(self, file_path, prompt=""):
+        def transcribe_with_meta(self, file_path, prompt="", skip_cloud=False):
             calls.append(prompt)
             # Interrumpir en el fragmento 3 de 4
             if len(calls) == 3:
                 raise KeyboardInterrupt
-            return f"texto del fragmento {len(calls)} con terminología médica"
+            text = f"texto del fragmento {len(calls)} con terminología médica"
+            return text, {"source": "cloud", "cloud_attempted": True, "cloud_failed": False}
 
     chunker = AudioChunker(FakeTranscriber())
     chunks = [str(tmp_path / f"c{i}.mp3") for i in range(4)]
@@ -369,3 +470,64 @@ def test_too_large_error_retries_with_smaller_chunks(tmp_path, monkeypatch):
     mock_chunker_instance.transcribe_large_audio.assert_called_once_with(str(audio_file), chunk_minutes=0.33)
 
 
+
+
+def test_circuit_breaker_skips_cloud_after_consecutive_failures(tmp_path):
+    """Tras N fallos de nube consecutivos, el breaker salta directo a local
+    (skip_cloud=True) durante el cooldown, y la nube exitosa resetea el streak."""
+    from yunta.voice import AudioChunker, AudioTranscriber
+
+    calls: list[bool] = []  # valor de skip_cloud por fragmento
+
+    class MetaTranscriber(AudioTranscriber):
+        def transcribe_with_meta(self, file_path, prompt="", skip_cloud=False):
+            calls.append(skip_cloud)
+            n = len(calls)
+            if skip_cloud:
+                return "local", {"source": "local", "cloud_attempted": False, "cloud_failed": False}
+            # fragmentos 1-3: nube falla; 4+: si se intenta nube, ya con cooldown activo
+            if n <= 3:
+                return "", {"source": "local", "cloud_attempted": True, "cloud_failed": True}
+            return "nube", {"source": "cloud", "cloud_attempted": True, "cloud_failed": False}
+
+    chunker = AudioChunker(MetaTranscriber())
+    chunker._cb_threshold = 3
+    chunker._cb_cooldown = 2
+
+    chunks = []
+    for i in range(6):
+        f = tmp_path / f"c{i}.mp3"
+        f.write_bytes(b"\xff\xfb\x90\x00" + b"a" * 512)
+        chunks.append(str(f))
+    chunker.split_audio_by_silence
+    chunker.split_audio_by_silence = lambda fp, *a, **k: chunks  # type: ignore[assignment]
+
+    result = chunker.transcribe_large_audio("audio.mp3")
+
+    # 3 primeros fragmentos intentaron nube (skip_cloud=False)
+    assert calls[:3] == [False, False, False]
+    # el breaker se disparó: los siguientes van directo a local
+    assert any(calls[3:]), "el breaker debió saltar la nube tras 3 fallos"
+    assert chunker._cb_tripped_count == 1
+    assert "local" in result
+
+
+def test_circuit_breaker_disabled_with_threshold_zero(monkeypatch, tmp_path):
+    """VOICE_BREAKER_THRESHOLD=0 desactiva el breaker: siempre intenta la nube."""
+    import os as _os
+    monkeypatch.setenv("VOICE_BREAKER_THRESHOLD", "0")
+    from yunta.voice import AudioChunker, AudioTranscriber
+
+    class MetaTranscriber(AudioTranscriber):
+        def transcribe_with_meta(self, file_path, prompt="", skip_cloud=False):
+            assert skip_cloud is False, "con breaker desactivado nunca debe saltar la nube"
+            return "texto", {"source": "local", "cloud_attempted": True, "cloud_failed": True}
+
+    chunker = AudioChunker(MetaTranscriber())
+    fake_chunks = []
+    for i in range(2):
+        f = tmp_path / f"c{i}.mp3"
+        f.write_bytes(b"\xff\xfb\x90\x00" + b"a" * 512)
+        fake_chunks.append(str(f))
+    chunker.split_audio_by_silence = lambda fp, *a, **k: fake_chunks  # type: ignore[assignment]
+    chunker.transcribe_large_audio("audio.mp3")
