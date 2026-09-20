@@ -224,6 +224,7 @@ def test_offload_transcript_long_saved_to_scratch(tmp_path, monkeypatch):
 def test_chunker_passes_tail_as_prompt_and_supports_interrupt(tmp_path, monkeypatch):
     """AudioChunker: (1) pasa el final del chunk anterior como prompt de continuidad,
     (2) Ctrl+C interrumpe y devuelve transcripción parcial marcada."""
+    monkeypatch.chdir(tmp_path)  # aisla los checkpoints de V6-3 (.yunta/scratch)
     from yunta.voice import AudioChunker, AudioTranscriber
 
     calls = []
@@ -569,9 +570,10 @@ def test_workers_ai_env_override_bypasses_calibration(tmp_path, monkeypatch):
 
 
 
-def test_circuit_breaker_skips_cloud_after_consecutive_failures(tmp_path):
+def test_circuit_breaker_skips_cloud_after_consecutive_failures(tmp_path, monkeypatch):
     """Tras N fallos de nube consecutivos, el breaker salta directo a local
     (skip_cloud=True) durante el cooldown, y la nube exitosa resetea el streak."""
+    monkeypatch.chdir(tmp_path)  # aisla los checkpoints de V6-3 (.yunta/scratch)
     from yunta.voice import AudioChunker, AudioTranscriber
 
     calls: list[bool] = []  # valor de skip_cloud por fragmento
@@ -611,6 +613,7 @@ def test_circuit_breaker_skips_cloud_after_consecutive_failures(tmp_path):
 
 def test_circuit_breaker_disabled_with_threshold_zero(monkeypatch, tmp_path):
     """VOICE_BREAKER_THRESHOLD=0 desactiva el breaker: siempre intenta la nube."""
+    monkeypatch.chdir(tmp_path)  # aisla los checkpoints de V6-3 (.yunta/scratch)
     import os as _os
     monkeypatch.setenv("VOICE_BREAKER_THRESHOLD", "0")
     from yunta.voice import AudioChunker, AudioTranscriber
@@ -635,6 +638,7 @@ def test_circuit_breaker_disabled_with_threshold_zero(monkeypatch, tmp_path):
 def test_parallel_workers_reassembles_out_of_order_completions_by_index(monkeypatch, tmp_path):
     """Con VOICE_PARALLEL_WORKERS>1, fragmentos que terminan fuera de orden se
     reensamblan según su índice original, no según orden de llegada."""
+    monkeypatch.chdir(tmp_path)  # aisla los checkpoints de V6-3 (.yunta/scratch)
     import time as _time
     monkeypatch.setenv("VOICE_PARALLEL_WORKERS", "4")
     from yunta.voice import AudioChunker, AudioTranscriber
@@ -663,6 +667,7 @@ def test_parallel_workers_reassembles_out_of_order_completions_by_index(monkeypa
 def test_parallel_workers_use_empty_prompt_no_tail_continuity(monkeypatch, tmp_path):
     """Limitación documentada de la Fase 5: sin orden garantizado entre workers,
     no hay continuidad de `tail` — cada fragmento recibe prompt vacío."""
+    monkeypatch.chdir(tmp_path)  # aisla los checkpoints de V6-3 (.yunta/scratch)
     monkeypatch.setenv("VOICE_PARALLEL_WORKERS", "3")
     from yunta.voice import AudioChunker, AudioTranscriber
 
@@ -683,9 +688,10 @@ def test_parallel_workers_use_empty_prompt_no_tail_continuity(monkeypatch, tmp_p
     assert prompts == ["", "", ""]
 
 
-def test_parallel_workers_disabled_by_default_keeps_tail_continuity(tmp_path):
+def test_parallel_workers_disabled_by_default_keeps_tail_continuity(tmp_path, monkeypatch):
     """Sin VOICE_PARALLEL_WORKERS (o =1), el comportamiento es idéntico al
     secuencial existente: continuidad de tail entre fragmentos."""
+    monkeypatch.chdir(tmp_path)  # aisla los checkpoints de V6-3 (.yunta/scratch)
     from yunta.voice import AudioChunker, AudioTranscriber
 
     prompts = []
@@ -709,6 +715,7 @@ def test_parallel_workers_disabled_by_default_keeps_tail_continuity(tmp_path):
 def test_parallel_workers_telemetry_counts_are_order_independent(monkeypatch, tmp_path):
     """Los contadores agregados de telemetría (protegidos por lock) suman
     correctamente sin importar el orden real de finalización de los threads."""
+    monkeypatch.chdir(tmp_path)  # aisla los checkpoints de V6-3 (.yunta/scratch)
     monkeypatch.setenv("VOICE_PARALLEL_WORKERS", "5")
     from yunta.voice import AudioChunker, AudioTranscriber
 
@@ -735,6 +742,7 @@ def test_parallel_workers_telemetry_counts_are_order_independent(monkeypatch, tm
 def test_parallel_workers_keyboard_interrupt_returns_partial(monkeypatch, tmp_path):
     """Ctrl+C en modo paralelo cancela los fragmentos pendientes y devuelve
     lo ya transcrito, marcado como parcial."""
+    monkeypatch.chdir(tmp_path)  # aisla los checkpoints de V6-3 (.yunta/scratch)
     monkeypatch.setenv("VOICE_PARALLEL_WORKERS", "2")
     from yunta.voice import AudioChunker, AudioTranscriber
 
@@ -758,6 +766,7 @@ def test_parallel_workers_keyboard_interrupt_returns_partial(monkeypatch, tmp_pa
 def test_transcribe_large_audio_workers_invalid_value_falls_back_to_sequential(monkeypatch, tmp_path):
     """Un VOICE_PARALLEL_WORKERS no numérico no debe romper la transcripción
     (mismo patrón de tolerancia que VOICE_CHUNK_MINUTES: cae al default 1)."""
+    monkeypatch.chdir(tmp_path)  # aisla los checkpoints de V6-3 (.yunta/scratch)
     monkeypatch.setenv("VOICE_PARALLEL_WORKERS", "not-a-number")
     from yunta.voice import AudioChunker, AudioTranscriber
 
@@ -937,3 +946,130 @@ def test_transcribe_with_meta_filters_hallucinated_local_fallback(monkeypatch, t
 
     assert text == ""
     assert meta["source"] == "local"
+
+
+# ==================== V6-3: checkpoint incremental de transcripción ====================
+
+def test_checkpoint_roundtrip_save_load_clear(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from yunta.voice import _save_checkpoint_fragment, _load_checkpoint, _clear_checkpoint
+
+    _save_checkpoint_fragment("audio.mp3", 3, 0, "[00:00:00]\ntexto uno")
+    _save_checkpoint_fragment("audio.mp3", 3, 1, "[00:00:20]\ntexto dos")
+
+    entries = _load_checkpoint("audio.mp3", 3)
+    assert entries[0] == "[00:00:00]\ntexto uno"
+    assert entries[1] == "[00:00:20]\ntexto dos"
+    assert entries[2] is None
+
+    _clear_checkpoint("audio.mp3", 3)
+    assert _load_checkpoint("audio.mp3", 3) == [None, None, None]
+
+
+def test_checkpoint_mismatched_total_does_not_resume(tmp_path, monkeypatch):
+    """Si el total de fragmentos cambia entre corridas (p.ej. VOICE_CHUNK_MINUTES
+    distinto), los checkpoints viejos no matchean — fallback seguro a
+    transcripción completa en vez de desalinear fragmentos."""
+    monkeypatch.chdir(tmp_path)
+    from yunta.voice import _save_checkpoint_fragment, _load_checkpoint
+
+    _save_checkpoint_fragment("audio.mp3", 3, 0, "[00:00:00]\ntexto")
+    assert _load_checkpoint("audio.mp3", 5) == [None] * 5
+
+
+def test_transcribe_large_audio_resumes_after_interrupt_sequential(tmp_path, monkeypatch):
+    """Una interrupción a mitad de camino deja checkpoints en disco; relanzar
+    el mismo archivo reanuda desde el último fragmento sin re-llamar a la red
+    para los ya transcritos."""
+    monkeypatch.chdir(tmp_path)
+    from yunta.voice import AudioChunker, AudioTranscriber
+
+    def make_chunks():
+        chunks = [str(tmp_path / f"c{i}.mp3") for i in range(4)]
+        for c in chunks:
+            Path(c).write_bytes(b"\xff\xfb\x90\x00" + b"x" * 512)
+        return chunks
+
+    calls = []
+
+    class InterruptingTranscriber(AudioTranscriber):
+        def transcribe_with_meta(self, file_path, prompt="", skip_cloud=False):
+            calls.append(file_path)
+            if len(calls) == 3:
+                raise KeyboardInterrupt
+            return f"texto {len(calls)}", {"source": "cloud", "cloud_attempted": True, "cloud_failed": False}
+
+    chunker = AudioChunker(InterruptingTranscriber())
+    chunker.split_audio_by_silence = lambda fp, *a, **k: make_chunks()
+
+    result1 = chunker.transcribe_large_audio("clase.mp3")
+    assert "transcripción parcial" in result1
+    assert len(calls) == 3
+
+    # Segunda corrida (mismo nombre y mismo total de fragmentos): reanuda.
+    calls.clear()
+
+    class CompletingTranscriber(AudioTranscriber):
+        def transcribe_with_meta(self, file_path, prompt="", skip_cloud=False):
+            calls.append(file_path)
+            return f"resumido {len(calls)}", {"source": "cloud", "cloud_attempted": True, "cloud_failed": False}
+
+    chunker2 = AudioChunker(CompletingTranscriber())
+    chunker2.split_audio_by_silence = lambda fp, *a, **k: make_chunks()
+    result2 = chunker2.transcribe_large_audio("clase.mp3")
+
+    assert len(calls) == 2, "solo debieron transcribirse los 2 fragmentos pendientes"
+    assert "texto 1" in result2 and "texto 2" in result2  # reusados del checkpoint
+    assert "resumido 1" in result2 and "resumido 2" in result2  # nuevos
+    assert "transcripción parcial" not in result2
+
+
+def test_transcribe_large_audio_resumes_with_parallel_workers(tmp_path, monkeypatch):
+    """El resume de V6-3 también aplica en modo paralelo (Fase 5)."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("VOICE_PARALLEL_WORKERS", "2")
+    from yunta.voice import AudioChunker, AudioTranscriber, _save_checkpoint_fragment
+
+    chunks = [str(tmp_path / f"c{i}.mp3") for i in range(4)]
+    for c in chunks:
+        Path(c).write_bytes(b"\xff\xfb\x90\x00" + b"x" * 512)
+
+    _save_checkpoint_fragment("clase.mp3", 4, 0, "[00:00:00]\nviejo 1")
+    _save_checkpoint_fragment("clase.mp3", 4, 1, "[00:00:20]\nviejo 2")
+
+    calls = []
+
+    class MetaTranscriber(AudioTranscriber):
+        def transcribe_with_meta(self, file_path, prompt="", skip_cloud=False):
+            calls.append(file_path)
+            return "nuevo", {"source": "cloud", "cloud_attempted": True, "cloud_failed": False}
+
+    chunker = AudioChunker(MetaTranscriber())
+    chunker.split_audio_by_silence = lambda fp, *a, **k: chunks
+
+    result = chunker.transcribe_large_audio("clase.mp3")
+
+    assert len(calls) == 2, "solo debieron someterse al pool los 2 fragmentos pendientes"
+    assert "viejo 1" in result and "viejo 2" in result
+    assert result.count("nuevo") == 2
+
+
+def test_checkpoint_cleared_after_full_completion(tmp_path, monkeypatch):
+    """Al completar la transcripción entera (sin interrupción), los
+    checkpoints se borran — no quedan archivos huérfanos en .yunta/scratch."""
+    monkeypatch.chdir(tmp_path)
+    from yunta.voice import AudioChunker, AudioTranscriber, _load_checkpoint
+
+    chunks = [str(tmp_path / f"c{i}.mp3") for i in range(2)]
+    for c in chunks:
+        Path(c).write_bytes(b"\xff\xfb\x90\x00" + b"x" * 512)
+
+    class MetaTranscriber(AudioTranscriber):
+        def transcribe_with_meta(self, file_path, prompt="", skip_cloud=False):
+            return "ok", {"source": "cloud", "cloud_attempted": True, "cloud_failed": False}
+
+    chunker = AudioChunker(MetaTranscriber())
+    chunker.split_audio_by_silence = lambda fp, *a, **k: chunks
+    chunker.transcribe_large_audio("clase2.mp3")
+
+    assert _load_checkpoint("clase2.mp3", 2) == [None, None]

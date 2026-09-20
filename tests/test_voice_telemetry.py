@@ -49,6 +49,7 @@ def test_record_voice_snapshot_zero_elapsed_does_not_crash(tmp_path):
 
 
 def test_transcribe_large_audio_records_telemetry_on_completion(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # aisla los checkpoints de V6-3 (.yunta/scratch)
     from yunta.voice import AudioChunker, AudioTranscriber
 
     class FakeTranscriber(AudioTranscriber):
@@ -74,6 +75,7 @@ def test_transcribe_large_audio_records_telemetry_on_completion(tmp_path, monkey
 
 
 def test_telemetry_recording_failure_does_not_break_transcription(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # aisla los checkpoints de V6-3 (.yunta/scratch)
     from yunta.voice import AudioChunker, AudioTranscriber
 
     class FakeTranscriber(AudioTranscriber):

@@ -636,6 +636,51 @@ def _calibrate_chunk_minutes(
     return max(floor, min(ceiling, minutes))
 
 
+# V6-3 (docs/PLAN.md): checkpoint incremental de transcripción. Si el proceso
+# muere a mitad de una cátedra larga, relanzar el mismo archivo reanuda desde
+# el último fragmento en vez de empezar de cero. El `total` de fragmentos va
+# en el nombre del archivo a propósito: si `chunk_minutes` cambia entre
+# corridas, el conteo de fragmentos cambia y los checkpoints viejos
+# simplemente no matchean (fallback seguro a transcripción completa, sin
+# desalinear fragmentos de una fragmentación distinta).
+def _checkpoint_dir() -> Path:
+    d = Path(".yunta") / "scratch"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _checkpoint_path(file_path: str, total: int, idx: int) -> Path:
+    stem = re.sub(r"[^\w.-]", "_", Path(file_path).stem)
+    return _checkpoint_dir() / f"transcript_{stem}.n{total}.part{idx}.txt"
+
+
+def _load_checkpoint(file_path: str, total: int) -> list[str | None]:
+    entries: list[str | None] = [None] * total
+    for idx in range(total):
+        p = _checkpoint_path(file_path, total, idx)
+        if p.exists():
+            try:
+                entries[idx] = p.read_text(encoding="utf-8")
+            except OSError:
+                pass
+    return entries
+
+
+def _save_checkpoint_fragment(file_path: str, total: int, idx: int, entry: str) -> None:
+    try:
+        _checkpoint_path(file_path, total, idx).write_text(entry, encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _clear_checkpoint(file_path: str, total: int) -> None:
+    for idx in range(total):
+        try:
+            _checkpoint_path(file_path, total, idx).unlink()
+        except OSError:
+            pass
+
+
 class AudioChunker:
     """Fragmenta audios grandes (>25 MB / cátedras de varias horas) en bloques."""
 
@@ -738,16 +783,23 @@ class AudioChunker:
             offsets.append(acc)
             acc += (os.path.getsize(c) / total_size) * total_secs
 
+        resume_entries = _load_checkpoint(file_path, len(chunks))
+        if any(e is not None for e in resume_entries):
+            n_resumed = sum(1 for e in resume_entries if e is not None)
+            print(f"♻️ Reanudando: {n_resumed}/{len(chunks)} fragmentos ya transcritos en un intento anterior.")
+
         try:
             workers = max(1, int(os.environ.get("VOICE_PARALLEL_WORKERS", "1") or "1"))
         except ValueError:
             workers = 1
         if workers > 1 and len(chunks) > 1:
-            transcripts, completed = self._transcribe_chunks_parallel(chunks, offsets, workers)
+            transcripts, completed = self._transcribe_chunks_parallel(chunks, offsets, workers, file_path, resume_entries)
         else:
-            transcripts, completed = self._transcribe_chunks_sequential(chunks, offsets)
+            transcripts, completed = self._transcribe_chunks_sequential(chunks, offsets, file_path, resume_entries)
 
         outcome = "completed" if completed == len(chunks) else "partial"
+        if outcome == "completed":
+            _clear_checkpoint(file_path, len(chunks))
         try:
             from .voice_telemetry import record_voice_snapshot
             record_voice_snapshot(
@@ -771,15 +823,30 @@ class AudioChunker:
             result += "\n\n[NOTA: transcripción parcial — el proceso fue detenido por el usuario antes de completar todos los fragmentos.]"
         return result
 
-    def _transcribe_chunks_sequential(self, chunks: list[str], offsets: list[float]) -> tuple[list[str | None], int]:
+    def _transcribe_chunks_sequential(
+        self, chunks: list[str], offsets: list[float], file_path: str, resume_entries: list[str | None]
+    ) -> tuple[list[str | None], int]:
         """Camino por defecto (`VOICE_PARALLEL_WORKERS=1`): un fragmento a la
-        vez, con continuidad de `tail` entre fragmentos consecutivos."""
-        transcripts: list[str | None] = [None] * len(chunks)
+        vez, con continuidad de `tail` entre fragmentos consecutivos.
+        `resume_entries[idx]` no-None significa que ese fragmento ya fue
+        transcrito en un intento anterior (V6-3) — se reutiliza sin llamar
+        de nuevo a la red."""
+        total = len(chunks)
+        transcripts: list[str | None] = list(resume_entries)
         tail = ""
-        completed = 0
+        for e in resume_entries:
+            if e is not None:
+                tail = e.split("\n", 1)[-1][-200:] or tail
+        completed = sum(1 for e in resume_entries if e is not None)
         try:
             for idx, chunk_file in enumerate(chunks):
-                print(f"🎙️ Transcribiendo fragmento {idx + 1}/{len(chunks)} (Ctrl+C para detener)...")
+                if resume_entries[idx] is not None:
+                    try:
+                        os.remove(chunk_file)
+                    except OSError:
+                        pass
+                    continue
+                print(f"🎙️ Transcribiendo fragmento {idx + 1}/{total} (Ctrl+C para detener)...")
                 h, rem = int(offsets[idx] // 3600), int(offsets[idx] % 3600)
                 timestamp = f"[{h:02d}:{rem // 60:02d}:{rem % 60:02d}]"
 
@@ -788,7 +855,9 @@ class AudioChunker:
                 text = text.strip()
                 self._breaker_record(meta)
                 self._record_telemetry(meta)
-                transcripts[idx] = f"{timestamp}\n{text}"
+                entry = f"{timestamp}\n{text}"
+                transcripts[idx] = entry
+                _save_checkpoint_fragment(file_path, total, idx, entry)
                 # Whisper usa ~200 caracteres finales como guía de continuidad
                 tail = text[-200:] if text else tail
                 completed += 1
@@ -799,15 +868,21 @@ class AudioChunker:
                     pass
         except KeyboardInterrupt:
             print("\n⏹️ Transcripción interrumpida por el usuario. Conservando lo transcrito hasta ahora...")
-            for chunk_file in chunks[completed:]:
-                try:
-                    os.remove(chunk_file)
-                except (OSError, NameError):
-                    pass
+            for idx in range(total):
+                if transcripts[idx] is None:
+                    try:
+                        os.remove(chunks[idx])
+                    except (OSError, IndexError):
+                        pass
         return transcripts, completed
 
     def _transcribe_chunks_parallel(
-        self, chunks: list[str], offsets: list[float], workers: int
+        self,
+        chunks: list[str],
+        offsets: list[float],
+        workers: int,
+        file_path: str,
+        resume_entries: list[str | None],
     ) -> tuple[list[str | None], int]:
         """Fase 5 (2026-09-20, opt-in vía `VOICE_PARALLEL_WORKERS > 1`).
 
@@ -816,11 +891,24 @@ class AudioChunker:
         garantizado entre workers, no se puede pasar el `tail` del fragmento
         anterior como prompt de continuidad (cada fragmento se transcribe con
         prompt vacío) — trade-off documentado, no un bug.
+        `resume_entries[idx]` no-None (V6-3): fragmento ya transcrito en un
+        intento anterior, se reutiliza sin someterlo al pool de workers.
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        transcripts: list[str | None] = [None] * len(chunks)
+        total = len(chunks)
+        transcripts: list[str | None] = list(resume_entries)
         completed = 0
+        pending = []
+        for idx, c in enumerate(chunks):
+            if resume_entries[idx] is not None:
+                completed += 1
+                try:
+                    os.remove(c)
+                except OSError:
+                    pass
+            else:
+                pending.append(idx)
 
         def _run(idx: int, chunk_file: str) -> tuple[int, str, str]:
             h, rem = int(offsets[idx] // 3600), int(offsets[idx] % 3600)
@@ -832,13 +920,17 @@ class AudioChunker:
             self._record_telemetry(meta)
             return idx, f"{timestamp}\n{text}", chunk_file
 
-        print(f"🎙️ Transcribiendo {len(chunks)} fragmentos con {workers} workers en paralelo (Ctrl+C para detener)...")
+        if not pending:
+            return transcripts, completed
+
+        print(f"🎙️ Transcribiendo {len(pending)}/{total} fragmentos con {workers} workers en paralelo (Ctrl+C para detener)...")
         executor = ThreadPoolExecutor(max_workers=workers)
-        futures = {executor.submit(_run, idx, c): idx for idx, c in enumerate(chunks)}
+        futures = {executor.submit(_run, idx, chunks[idx]): idx for idx in pending}
         try:
             for future in as_completed(futures):
                 idx, entry, chunk_file = future.result()
                 transcripts[idx] = entry
+                _save_checkpoint_fragment(file_path, total, idx, entry)
                 completed += 1
                 try:
                     os.remove(chunk_file)
@@ -851,9 +943,9 @@ class AudioChunker:
             # que aún no empezaron y se espera a que terminen los en curso.
             print("\n⏹️ Transcripción interrumpida por el usuario. Cancelando fragmentos pendientes...")
             executor.shutdown(wait=True, cancel_futures=True)
-            for c in chunks:
+            for idx in pending:
                 try:
-                    os.remove(c)
+                    os.remove(chunks[idx])
                 except OSError:
                     pass
         return transcripts, completed

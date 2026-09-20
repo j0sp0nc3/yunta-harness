@@ -6,6 +6,15 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.14.13] — 2026-09-20
+
+- **`yunta/voice.py` — V6-3 (`docs/PLAN.md`): checkpoint incremental de transcripción**: motivado directamente por la corrida real de 81 min (43m46s de pared) — si el proceso se hubiera caído en el fragmento 200/259, se perdía TODO lo transcrito sin ningún resguardo intermedio.
+  - Nuevas funciones de módulo `_checkpoint_path/_load_checkpoint/_save_checkpoint_fragment/_clear_checkpoint`: cada fragmento completado se persiste a `.yunta/scratch/transcript_<audio>.n<total>.part<N>.txt`; relanzar el mismo archivo reanuda desde el último fragmento en vez de empezar de cero, en modo secuencial y paralelo (`VOICE_PARALLEL_WORKERS>1`).
+  - El `total` de fragmentos va en el nombre del checkpoint a propósito: si `chunk_minutes` cambia entre corridas (distinto `VOICE_CHUNK_MINUTES` o recalibración de Fase 4), el conteo de fragmentos cambia y los checkpoints viejos simplemente no matchean — fallback seguro a transcripción completa en vez de desalinear fragmentos de una fragmentación distinta.
+  - Al completar la transcripción entera (`outcome == "completed"`), los checkpoints se borran — no quedan archivos huérfanos en `.yunta/scratch/`.
+  - **Corrección de una regresión propia antes de commitear**: los checkpoints usan una ruta relativa (`.yunta/scratch`) resuelta contra el directorio de trabajo — varios tests existentes de `tests/test_voice.py` y `tests/test_voice_telemetry.py` llamaban a `transcribe_large_audio` sin `monkeypatch.chdir(tmp_path)`, lo que habría escrito archivos de checkpoint reales en el repo cada vez que corriera la suite (el mismo tipo de contaminación ya detectado en `voice_health.jsonl`). Se agregó `monkeypatch.chdir(tmp_path)` a los 11 tests afectados antes de que esto llegara a producirse.
+  - 5 tests nuevos en `tests/test_voice.py` (374 → 379 tests totales): roundtrip de guardar/cargar/limpiar, no reanuda si cambia el total de fragmentos, reanudación real tras una interrupción (secuencial y paralelo), y limpieza de checkpoints tras completar.
+
 ## [2.14.12] — 2026-09-20
 
 - **`yunta/voice.py` — V6-4 (`docs/PLAN.md`): filtro de alucinaciones conocidas de Whisper**: descarta fragmentos cuyo contenido ENTERO (sin puntuación/mayúsculas) coincide con una frase de relleno típica que Whisper aprendió de subtítulos de YouTube en su entrenamiento ("Gracias por ver el video", "Suscríbete al canal", créditos de Amara.org, etc.) — no recorta contenido real que las mencione de pasada, solo el caso "el chunk es puro relleno".
