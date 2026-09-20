@@ -817,6 +817,14 @@ class AudioChunker:
         # Sin costo real en el modo secuencial (default): un solo hilo nunca
         # contiende el lock.
         self._state_lock = threading.Lock()
+        # V6-1 (corregido 2026-09-20): duraciones reales por chunk ya
+        # calculadas por `split_audio_by_silence` a partir de UNA sola
+        # medición de `ffprobe` sobre el archivo original + los puntos de
+        # corte (silencio o fijos) — evita volver a medir cada fragmento por
+        # separado. Antes se llamaba a `ffprobe` una vez POR FRAGMENTO
+        # (259 llamadas medidas en ~36.5s de overhead puro para una cátedra
+        # de 81 min), redescubriendo algo que ya se sabía de antemano.
+        self._last_chunk_durations: list[float] | None = None
 
     def _breaker_should_skip_cloud(self) -> bool:
         with self._state_lock:
@@ -880,12 +888,19 @@ class AudioChunker:
         # Offset temporal acumulado por índice (no incremental durante el
         # loop) para que sea válido tanto en modo secuencial como paralelo,
         # donde los fragmentos no terminan necesariamente en orden.
-        # V6-1: duración real por chunk vía ffprobe si está disponible —
-        # mucho más precisa que asumir bytes proporcionales a duración
-        # (variable con VBR) o `índice × chunk_minutes` (el último chunk casi
-        # siempre es más corto). Si ffprobe falla para algún chunk, cae a la
-        # heurística anterior sin romper la transcripción.
-        chunk_durations = [_ffprobe_duration_secs(c) for c in chunks]
+        # V6-1: duración real por chunk — mucho más precisa que asumir bytes
+        # proporcionales a duración (variable con VBR) o `índice ×
+        # chunk_minutes` (el último chunk casi siempre es más corto).
+        # Corregido 2026-09-20: usar primero `self._last_chunk_durations`
+        # (ya calculado por `split_audio_by_silence` con UNA sola medición de
+        # `ffprobe` sobre el archivo original) en vez de volver a medir cada
+        # fragmento por separado — eliminaba 259 llamadas a `ffprobe`
+        # redundantes (~36.5s de overhead medido) en una transcripción real
+        # de 81 min. Solo se re-mide por fragmento si ese dato no está
+        # disponible (p.ej. `split_audio_by_silence` fue reemplazado en un test).
+        chunk_durations = self._last_chunk_durations
+        if not chunk_durations or len(chunk_durations) != len(chunks):
+            chunk_durations = [_ffprobe_duration_secs(c) for c in chunks]
         if chunk_durations and all(d > 0 for d in chunk_durations):
             total_secs = sum(chunk_durations)
             offsets = []
@@ -1106,6 +1121,7 @@ class AudioChunker:
         if os.path.getsize(file_path) == 0:
             raise RuntimeError(f"el archivo de audio '{file_path}' está vacío (0 bytes) — no hay nada que transcribir.")
 
+        self._last_chunk_durations = None
         temp_dir = tempfile.mkdtemp(prefix="yunta_audio_")
         chunk_files = []
 
@@ -1127,6 +1143,25 @@ class AudioChunker:
                         total_secs, float(segment_secs), silences, tolerance=segment_secs * 0.3
                     )
 
+            # Boundaries esperados de cada fragmento: o bien los cortes por
+            # silencio de arriba, o bien múltiplos exactos de `segment_secs`
+            # (así corta `-segment_time`, sample-accurate en audio con
+            # `-c copy`, sin el redondeo por keyframe que sí afecta a video).
+            # Corregido 2026-09-20: antes esto se recalculaba con UNA llamada
+            # a `ffprobe` POR FRAGMENTO ya generado (259 llamadas, ~36.5s de
+            # overhead medido) para redescubrir algo que ya se sabe acá con
+            # la ÚNICA medición de `total_secs` de arriba.
+            expected_boundaries: list[float] = []
+            if total_secs > 0:
+                if cut_points:
+                    expected_boundaries = cut_points + [total_secs]
+                else:
+                    b = float(segment_secs)
+                    while b < total_secs:
+                        expected_boundaries.append(b)
+                        b += segment_secs
+                    expected_boundaries.append(total_secs)
+
             cmd = ["ffmpeg", "-i", file_path, "-f", "segment"]
             if cut_points:
                 cmd += ["-segment_times", ",".join(f"{c:.3f}" for c in cut_points)]
@@ -1138,6 +1173,12 @@ class AudioChunker:
             for f in files:
                 chunk_files.append(os.path.join(temp_dir, f))
             if chunk_files:
+                if expected_boundaries and len(expected_boundaries) == len(chunk_files):
+                    prev = 0.0
+                    self._last_chunk_durations = []
+                    for b in expected_boundaries:
+                        self._last_chunk_durations.append(b - prev)
+                        prev = b
                 return chunk_files
         except Exception:
             pass

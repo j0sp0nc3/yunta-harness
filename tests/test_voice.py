@@ -1292,6 +1292,103 @@ def test_split_audio_uses_segment_times_when_silence_detected(tmp_path, monkeypa
     assert len(result) == 2
 
 
+def test_split_audio_by_silence_exposes_exact_chunk_durations_from_cut_points(tmp_path, monkeypatch):
+    """Corregido 2026-09-20: split_audio_by_silence expone las duraciones
+    exactas que ya calculó (a partir de los cortes por silencio), para que
+    transcribe_large_audio no tenga que volver a medirlas con ffprobe."""
+    import os
+    import yunta.voice as voice_module
+    from yunta.voice import AudioTranscriber
+
+    audio_file = tmp_path / "clase.mp3"
+    audio_file.write_bytes(b"\xff\xfb\x90\x00" + b"x" * 2048)
+
+    monkeypatch.setattr(voice_module, "_ffprobe_duration_secs", lambda p: 100.0)
+    monkeypatch.setattr(voice_module, "_detect_silence_intervals", lambda p: [(58.0, 60.0), (118.0, 120.0)])
+
+    def fake_run(cmd, **kwargs):
+        out_pattern = cmd[-1]
+        d = os.path.dirname(out_pattern)
+        Path(os.path.join(d, "chunk_000.mp3")).write_bytes(b"a")
+        Path(os.path.join(d, "chunk_001.mp3")).write_bytes(b"b")
+
+    monkeypatch.setattr(voice_module.subprocess, "run", fake_run)
+
+    chunker = voice_module.AudioChunker(AudioTranscriber())
+    chunker.split_audio_by_silence(str(audio_file), chunk_minutes=1)
+
+    assert chunker._last_chunk_durations == [59.0, 41.0]
+
+
+def test_split_audio_by_silence_exposes_exact_chunk_durations_fixed_segments(tmp_path, monkeypatch):
+    """Mismo mecanismo sin silencios detectados: las duraciones se derivan de
+    múltiplos exactos de segment_secs (así corta -segment_time), no de
+    volver a medir cada fragmento."""
+    import os
+    import yunta.voice as voice_module
+    from yunta.voice import AudioTranscriber
+
+    audio_file = tmp_path / "clase.mp3"
+    audio_file.write_bytes(b"\xff\xfb\x90\x00" + b"x" * 2048)
+
+    monkeypatch.setattr(voice_module, "_ffprobe_duration_secs", lambda p: 100.0)
+    monkeypatch.setattr(voice_module, "_detect_silence_intervals", lambda p: [])
+
+    def fake_run(cmd, **kwargs):
+        out_pattern = cmd[-1]
+        d = os.path.dirname(out_pattern)
+        Path(os.path.join(d, "chunk_000.mp3")).write_bytes(b"a")
+        Path(os.path.join(d, "chunk_001.mp3")).write_bytes(b"b")
+
+    monkeypatch.setattr(voice_module.subprocess, "run", fake_run)
+
+    chunker = voice_module.AudioChunker(AudioTranscriber())
+    chunker.split_audio_by_silence(str(audio_file), chunk_minutes=1)  # segment_secs=60
+
+    assert chunker._last_chunk_durations == [60.0, 40.0]
+
+
+def test_transcribe_large_audio_reuses_split_durations_no_redundant_ffprobe(tmp_path, monkeypatch):
+    """La duración real de cada chunk, ya calculada por split_audio_by_silence,
+    se reutiliza en vez de volver a medir cada fragmento con ffprobe por
+    separado — antes eran N llamadas redundantes (259 en la corrida real de
+    81 min, ~36.5s de overhead medido)."""
+    monkeypatch.chdir(tmp_path)
+    import os
+    import yunta.voice as voice_module
+    from yunta.voice import AudioChunker, AudioTranscriber
+
+    audio_file = tmp_path / "clase.mp3"
+    audio_file.write_bytes(b"\xff\xfb\x90\x00" + b"x" * 2048)
+
+    ffprobe_calls = []
+
+    def fake_ffprobe(path):
+        ffprobe_calls.append(path)
+        return 100.0
+
+    monkeypatch.setattr(voice_module, "_ffprobe_duration_secs", fake_ffprobe)
+    monkeypatch.setattr(voice_module, "_detect_silence_intervals", lambda p: [])
+
+    def fake_run(cmd, **kwargs):
+        out_pattern = cmd[-1]
+        d = os.path.dirname(out_pattern)
+        Path(os.path.join(d, "chunk_000.mp3")).write_bytes(b"a" * 100)
+        Path(os.path.join(d, "chunk_001.mp3")).write_bytes(b"a" * 100)
+
+    monkeypatch.setattr(voice_module.subprocess, "run", fake_run)
+
+    class MetaTranscriber(AudioTranscriber):
+        def transcribe_with_meta(self, file_path, prompt="", skip_cloud=False):
+            return "ok", {"source": "cloud", "cloud_attempted": True, "cloud_failed": False}
+
+    chunker = AudioChunker(MetaTranscriber())
+    result = chunker.transcribe_large_audio(str(audio_file), chunk_minutes=1)
+
+    assert ffprobe_calls == [str(audio_file)], f"ffprobe debió llamarse 1 sola vez, se llamó: {ffprobe_calls}"
+    assert "[00:01:00]" in result  # segundo fragmento arranca a los 60s reales
+
+
 def test_split_audio_falls_back_to_segment_time_without_silence_data(tmp_path, monkeypatch):
     """Sin duración real (ffprobe falla) se mantiene el corte a tiempo fijo
     de siempre — sin regresión cuando ffmpeg/ffprobe no cooperan."""

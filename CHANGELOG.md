@@ -6,6 +6,15 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.14.18] — 2026-09-20
+
+- **`yunta/voice.py` — corrección de regresión: elimina 259 llamadas redundantes a `ffprobe`**: la segunda corrida real de auditoría (mismo audio de 81 min, después de v2.14.12-17) salió **más lenta** que la primera (STT: 2265.7s vs 2127.8s; total: 50m40s vs 43m46s) — el objetivo de estas fases era mejorar, no empeorar, y el resultado neto no lo cumplió.
+  - Causa raíz medida (no supuesta): `split_audio_by_silence` (V6-5) ya mide la duración total del audio con `ffprobe` y ya conoce los puntos de corte exactos (por silencio o por múltiplos de `segment_secs`) — pero `transcribe_large_audio` (V6-1) volvía a llamar a `ffprobe` **una vez por cada uno de los 259 fragmentos ya generados**, redescubriendo algo que ya se sabía. Medido con el archivo real: 259 llamadas × ~141ms = **~36.5s de overhead puro**, más ~10.1s de la pasada de `silencedetect` — overhead real total ~47s, pero no explica toda la diferencia observada (~138s en la fase STT); el resto es contención de CPU/red compartida no atribuible al código.
+  - `AudioChunker` gana `_last_chunk_durations`: `split_audio_by_silence` calcula las duraciones exactas de cada fragmento a partir de los boundaries que ya conoce (una sola medición de `ffprobe` sobre el archivo original) y las expone; `transcribe_large_audio` las reutiliza directamente en vez de re-medir cada fragmento. Verificado con el archivo real de 81 min: `split_audio_by_silence` completo (silencedetect + corte + cálculo de duraciones) ahora tarda **16.74s en total** (antes: ~47s+ solo en overhead de medición, sin contar el corte en sí), con duraciones exactas (suma = 4906.68s, coincide con la medición real de `ffprobe`).
+  - Fallback preservado: si `split_audio_by_silence` fue reemplazado (como en varios tests) o las duraciones no coinciden en cantidad con los chunks generados, se vuelve a medir por fragmento como antes — sin regresión funcional.
+  - 3 tests nuevos en `tests/test_voice.py` (394 → 397 tests totales): duraciones exactas expuestas con cortes por silencio, duraciones exactas expuestas con corte fijo, y verificación de que `ffprobe` se llama una sola vez (no una por fragmento) en una transcripción completa.
+  - Pendiente: falta una tercera corrida real completa para confirmar que el tiempo total vuelve a ser competitivo con la corrida original — la fase de resumen del LLM (donde también hubo una demora sin explicar en la segunda corrida) no se tocó en este commit.
+
 ## [2.14.17] — 2026-09-20
 
 - **Higiene de `.yunta/voice_health.jsonl`**: confirmado que la contaminación por tests ya quedó resuelta como efecto colateral del `monkeypatch.chdir(tmp_path)` agregado en v2.14.13 (V6-3) — corrí toda la suite de voz y el archivo real no creció ni una línea. Limpiadas las 161 entradas sintéticas acumuladas de antes de ese fix (backup en el scratchpad de la sesión), dejando solo la entrada real de la transcripción de 81 min. No es un cambio de código — `.yunta/` está gitignored, es mantenimiento local.
