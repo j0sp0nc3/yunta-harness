@@ -6,6 +6,15 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.14.17] — 2026-09-20
+
+- **Higiene de `.yunta/voice_health.jsonl`**: confirmado que la contaminación por tests ya quedó resuelta como efecto colateral del `monkeypatch.chdir(tmp_path)` agregado en v2.14.13 (V6-3) — corrí toda la suite de voz y el archivo real no creció ni una línea. Limpiadas las 161 entradas sintéticas acumuladas de antes de ese fix (backup en el scratchpad de la sesión), dejando solo la entrada real de la transcripción de 81 min. No es un cambio de código — `.yunta/` está gitignored, es mantenimiento local.
+- **`yunta/voice.py` — `offload_transcript`: sugerir lectura única en vez de fragmentada cuando el tamaño lo permite**: motivado por la misma corrida real — el agente fragmentó la lectura del transcript (775 líneas, cabían en una sola llamada a `read_file` bajo su límite de 2000) en 6 llamadas "para procesarlo mejor", porque el mensaje de `offload_transcript` siempre sugería leer "por partes" sin importar el tamaño. Cada llamada extra reenvía todo el historial acumulado — eso, sumado a 7 tool calls perdidas explorando el filesystem tras un dígito mal transcrito en el nombre del archivo, explica buena parte de los 172K tokens de entrada de esa corrida.
+  - Bajo un umbral generoso (~50K tokens), ahora sugiere explícitamente una sola lectura sin offset/limit; por encima, mantiene la sugerencia de lectura fragmentada — no se quita la protección para audios de muchas horas.
+  - La ruta del archivo ahora se reporta en formato POSIX (`scratch_file.as_posix()`, barras) en vez del formato nativo de Windows (backslashes) — reduce el riesgo de que el modelo la corrompa al reproducirla en un argumento JSON de tool call (`\t`, `\n`, etc. son secuencias de escape válidas que pueden aparecer por casualidad en una ruta de Windows).
+  - **Nota honesta**: esto no elimina el riesgo de que el modelo transcriba mal un dígito del timestamp del archivo (lo que causó la mayoría de las 7 llamadas perdidas explorando el filesystem en la corrida real) — es un problema inherente de pedirle a un LLM que reproduzca de memoria una cadena numérica larga, no algo resoluble solo con este cambio.
+  - 3 tests nuevos en `tests/test_voice.py` (391 → 394 tests totales): sugiere lectura única para tamaño moderado, mantiene sugerencia fragmentada para tamaño muy grande, y la ruta reportada no contiene backslashes.
+
 ## [2.14.16] — 2026-09-20
 
 - **`docs/PLAN.md` — actualización de estado por instrucción humana explícita** (Regla 6): V6-1, V6-3, V6-4 y V6-5 quedan marcados ✅ — resueltos en v2.14.14, v2.14.13, v2.14.12 y v2.14.15 respectivamente. Con esto, todo el "Nivel 1" y "Nivel 2" del backlog v6 queda completo; solo resta V6-8 (diarización pyannote, Nivel 3, dependencia pesada, deliberadamente diferido). Sin cambios de código.

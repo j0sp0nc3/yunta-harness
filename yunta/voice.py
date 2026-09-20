@@ -229,7 +229,23 @@ def trim_initial_noise_and_silence(wav_path: str, noise_gate_ms: int = 150, lead
 
 def offload_transcript(text: str, preview_chars: int = 500, threshold: int = 8000) -> str:
     """Si el transcript supera el umbral, lo guarda en .yunta/scratch/ y retorna
-    un preview + referencia, para no saturar el contexto del agente (V3-3)."""
+    un preview + referencia, para no saturar el contexto del agente (V3-3).
+
+    2026-09-20: motivado por una corrida real donde el agente, pese a poder
+    leer el archivo completo en una sola llamada (775 líneas, bajo el límite
+    de 2000 de `read_file`), lo fragmentó en 6 lecturas "para procesarlo
+    mejor" — cada llamada adicional reenvía todo el historial acumulado, y
+    eso solo, en ~15 turnos totales, hizo pesar la transcripción entera 172K
+    tokens de entrada. Además se detectó path confusion: el agente
+    transcribió mal un dígito del nombre de archivo con timestamp y perdió 7
+    tool calls explorando el filesystem antes de encontrarlo. Dos mitigaciones:
+    (1) sugerir explícitamente una sola lectura cuando el tamaño lo permite
+    (bajo un umbral generoso de tokens), en vez de empujar a fragmentar
+    siempre; (2) reportar la ruta en formato POSIX (barras, no backslashes)
+    para reducir el riesgo de que el modelo la corrompa al reproducirla en un
+    argumento JSON (`\\t`, `\\n`, etc. son secuencias de escape válidas que
+    pueden aparecer por casualidad en una ruta de Windows).
+    """
     if len(text) <= threshold:
         return text
     from datetime import datetime
@@ -239,10 +255,16 @@ def offload_transcript(text: str, preview_chars: int = 500, threshold: int = 800
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     scratch_file = scratch_dir / f"transcript_{ts}.txt"
     scratch_file.write_text(text, encoding="utf-8")
+    posix_path = scratch_file.as_posix()
     preview = text[:preview_chars]
+    approx_tokens = len(text) // 4
+    if approx_tokens <= 50_000:
+        instruction = f'usa read_file con path="{posix_path}" (cabe entero en una sola lectura, sin offset/limit)'
+    else:
+        instruction = f'usa read_file con path="{posix_path}" y offset/limit para leerlo por partes (muy extenso para una sola lectura)'
     return (
-        f"{preview}\n\n[... transcript completo ({len(text)} caracteres, {len(text)//4} tokens aprox) "
-        f"guardado en: {scratch_file} — usa read_file con offset/limit para leerlo por partes]"
+        f"{preview}\n\n[... transcript completo ({len(text)} caracteres, {approx_tokens} tokens aprox) "
+        f"guardado en: {posix_path} — {instruction}]"
     )
 
 

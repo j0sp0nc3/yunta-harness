@@ -221,6 +221,42 @@ def test_offload_transcript_long_saved_to_scratch(tmp_path, monkeypatch):
     assert scratch_files[0].read_text(encoding="utf-8") == text
 
 
+def test_offload_transcript_suggests_single_read_when_moderate_size(tmp_path, monkeypatch):
+    """Motivado por una corrida real: un transcript de ~18K tokens (81 min de
+    audio) cabe en una sola lectura, pero el agente lo fragmentó en 6
+    llamadas porque el mensaje anterior siempre sugería leer 'por partes'.
+    Bajo un umbral generoso, ahora sugiere una sola lectura."""
+    from yunta.voice import offload_transcript
+    monkeypatch.chdir(tmp_path)
+    text = "clase de cardiología. " * 1000  # ~22K chars, ~5500 tokens aprox
+    result = offload_transcript(text)
+    assert "sin offset/limit" in result
+    assert "por partes" not in result
+
+
+def test_offload_transcript_suggests_chunked_read_when_very_large(tmp_path, monkeypatch):
+    """Un transcript genuinamente enorme (>50K tokens aprox) sigue sugiriendo
+    lectura fragmentada — no se quita la protección para audios de muchas horas."""
+    from yunta.voice import offload_transcript
+    monkeypatch.chdir(tmp_path)
+    text = "clase muy larga de anatomía. " * 10000  # ~290K chars, ~72K tokens aprox
+    result = offload_transcript(text)
+    assert "por partes" in result
+    assert "sin offset/limit" not in result
+
+
+def test_offload_transcript_reports_posix_path_not_backslashes(tmp_path, monkeypatch):
+    """La ruta se reporta con barras (POSIX), no backslashes de Windows — un
+    backslash seguido de una letra como 't' o 'n' es una secuencia de escape
+    JSON válida y puede corromperse si el modelo la reproduce en un argumento
+    de tool call."""
+    from yunta.voice import offload_transcript
+    monkeypatch.chdir(tmp_path)
+    text = "clase de cardiología. " * 1000
+    result = offload_transcript(text)
+    assert "\\" not in result.split("guardado en:")[1].split(" — ")[0]
+
+
 def test_chunker_passes_tail_as_prompt_and_supports_interrupt(tmp_path, monkeypatch):
     """AudioChunker: (1) pasa el final del chunk anterior como prompt de continuidad,
     (2) Ctrl+C interrumpe y devuelve transcripción parcial marcada."""
