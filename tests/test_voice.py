@@ -1170,3 +1170,116 @@ def test_transcribe_large_audio_falls_back_when_ffprobe_unavailable(tmp_path, mo
     chunker.split_audio_by_silence = lambda fp, *a, **k: chunks
     result = chunker.transcribe_large_audio("audio.mp3")
     assert "[00:00:00]" in result
+
+
+# ==================== V6-5: corte de chunks en silencios (ffmpeg silencedetect) ====================
+
+def test_detect_silence_intervals_parses_ffmpeg_output(monkeypatch):
+    import yunta.voice as voice_module
+
+    fake_stderr = (
+        "some ffmpeg banner\n"
+        "[silencedetect @ 0x1] silence_start: 10.5\n"
+        "[silencedetect @ 0x1] silence_end: 12.25 | silence_duration: 1.75\n"
+        "[silencedetect @ 0x1] silence_start: 40.0\n"
+        "[silencedetect @ 0x1] silence_end: 41.0 | silence_duration: 1.0\n"
+    )
+
+    class FakeResult:
+        stderr = fake_stderr
+
+    monkeypatch.setattr(voice_module.subprocess, "run", lambda *a, **k: FakeResult())
+    intervals = voice_module._detect_silence_intervals("audio.mp3")
+    assert intervals == [(10.5, 12.25), (40.0, 41.0)]
+
+
+def test_detect_silence_intervals_returns_empty_on_failure(monkeypatch):
+    import yunta.voice as voice_module
+
+    def fake_run(*a, **k):
+        raise FileNotFoundError("ffmpeg no encontrado")
+
+    monkeypatch.setattr(voice_module.subprocess, "run", fake_run)
+    assert voice_module._detect_silence_intervals("audio.mp3") == []
+
+
+def test_silence_aware_cut_points_snaps_to_nearest_silence_midpoint():
+    from yunta.voice import _silence_aware_cut_points
+
+    cuts = _silence_aware_cut_points(total_secs=100, segment_secs=60, silences=[(55, 63)], tolerance=20)
+    assert cuts == [59.0]
+
+
+def test_silence_aware_cut_points_keeps_fixed_target_without_nearby_silence():
+    from yunta.voice import _silence_aware_cut_points
+
+    cuts = _silence_aware_cut_points(total_secs=130, segment_secs=60, silences=[(10, 11)], tolerance=5)
+    assert cuts == [60.0, 120.0]
+
+
+def test_silence_aware_cut_points_empty_without_silences():
+    from yunta.voice import _silence_aware_cut_points
+
+    assert _silence_aware_cut_points(100, 60, [], tolerance=10) == []
+
+
+def test_split_audio_uses_segment_times_when_silence_detected(tmp_path, monkeypatch):
+    """Cuando ffprobe da duración real y se detectan silencios, el comando de
+    ffmpeg usa -segment_times con los cortes ajustados en vez de -segment_time."""
+    import os
+    import yunta.voice as voice_module
+    from yunta.voice import AudioTranscriber
+
+    audio_file = tmp_path / "clase.mp3"
+    audio_file.write_bytes(b"\xff\xfb\x90\x00" + b"x" * 2048)
+
+    monkeypatch.setattr(voice_module, "_ffprobe_duration_secs", lambda p: 100.0)
+    monkeypatch.setattr(voice_module, "_detect_silence_intervals", lambda p: [(58.0, 60.0), (118.0, 120.0)])
+
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        out_pattern = cmd[-1]
+        d = os.path.dirname(out_pattern)
+        Path(os.path.join(d, "chunk_000.mp3")).write_bytes(b"a")
+        Path(os.path.join(d, "chunk_001.mp3")).write_bytes(b"b")
+
+    monkeypatch.setattr(voice_module.subprocess, "run", fake_run)
+
+    chunker = voice_module.AudioChunker(AudioTranscriber())
+    result = chunker.split_audio_by_silence(str(audio_file), chunk_minutes=1)
+
+    assert "-segment_times" in captured["cmd"]
+    idx = captured["cmd"].index("-segment_times")
+    assert captured["cmd"][idx + 1] == "59.000"
+    assert len(result) == 2
+
+
+def test_split_audio_falls_back_to_segment_time_without_silence_data(tmp_path, monkeypatch):
+    """Sin duración real (ffprobe falla) se mantiene el corte a tiempo fijo
+    de siempre — sin regresión cuando ffmpeg/ffprobe no cooperan."""
+    import os
+    import yunta.voice as voice_module
+    from yunta.voice import AudioTranscriber
+
+    audio_file = tmp_path / "clase.mp3"
+    audio_file.write_bytes(b"\xff\xfb\x90\x00" + b"x" * 2048)
+
+    monkeypatch.setattr(voice_module, "_ffprobe_duration_secs", lambda p: 0.0)
+
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        out_pattern = cmd[-1]
+        d = os.path.dirname(out_pattern)
+        Path(os.path.join(d, "chunk_000.mp3")).write_bytes(b"a")
+
+    monkeypatch.setattr(voice_module.subprocess, "run", fake_run)
+
+    chunker = voice_module.AudioChunker(AudioTranscriber())
+    chunker.split_audio_by_silence(str(audio_file), chunk_minutes=1)
+
+    assert "-segment_time" in captured["cmd"]
+    assert "-segment_times" not in captured["cmd"]

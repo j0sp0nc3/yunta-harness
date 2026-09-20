@@ -710,6 +710,61 @@ def _ffprobe_duration_secs(file_path: str) -> float:
         return 0.0
 
 
+# V6-5 (docs/PLAN.md): cortar cada fragmento en la pausa de silencio más
+# cercana al límite de `chunk_minutes`, en vez de un corte a tiempo fijo que
+# puede partir una palabra a la mitad (técnica estándar en WhisperX/faster-whisper).
+def _detect_silence_intervals(file_path: str, noise_db: int = -30, min_silence_secs: float = 0.5) -> list[tuple[float, float]]:
+    """Detecta intervalos de silencio con `ffmpeg -af silencedetect`. Devuelve
+    una lista de `(inicio, fin)` en segundos; lista vacía si `ffmpeg` no está
+    disponible, la detección falla o no hay silencios — el caller cae al
+    corte a tiempo fijo anterior, sin regresión."""
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-i", file_path, "-af",
+             f"silencedetect=noise={noise_db}dB:d={min_silence_secs}", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=300,
+        )
+    except Exception:
+        return []
+    intervals: list[tuple[float, float]] = []
+    start = None
+    for line in result.stderr.splitlines():
+        m = re.search(r"silence_start:\s*([\d.]+)", line)
+        if m:
+            start = float(m.group(1))
+            continue
+        m = re.search(r"silence_end:\s*([\d.]+)", line)
+        if m and start is not None:
+            intervals.append((start, float(m.group(1))))
+            start = None
+    return intervals
+
+
+def _silence_aware_cut_points(
+    total_secs: float, segment_secs: float, silences: list[tuple[float, float]], tolerance: float
+) -> list[float]:
+    """Ajusta los cortes fijos (múltiplos de `segment_secs`) al punto medio
+    del silencio más cercano dentro de `tolerance` segundos, para no partir
+    palabras a la mitad. Si un corte no tiene silencio cerca, se mantiene el
+    corte fijo original en vez de descartarlo. Lista vacía si no hay
+    silencios detectados (el caller usa eso como señal para no ajustar nada)."""
+    if not silences or total_secs <= 0 or segment_secs <= 0:
+        return []
+    cuts = []
+    n = 1
+    while n * segment_secs < total_secs:
+        target = n * segment_secs
+        best, best_dist = None, tolerance
+        for s, e in silences:
+            mid = (s + e) / 2
+            dist = abs(mid - target)
+            if dist <= best_dist:
+                best, best_dist = mid, dist
+        cuts.append(best if best is not None else target)
+        n += 1
+    return sorted(set(round(c, 3) for c in cuts))
+
+
 class AudioChunker:
     """Fragmenta audios grandes (>25 MB / cátedras de varias horas) en bloques."""
 
@@ -1037,10 +1092,25 @@ class AudioChunker:
             ext = Path(file_path).suffix.lower() or ".mp3"
             out_pattern = os.path.join(temp_dir, f"chunk_%03d{ext}")
             segment_secs = max(5, int(float(chunk_minutes) * 60))
-            cmd = [
-                "ffmpeg", "-i", file_path, "-f", "segment",
-                "-segment_time", str(segment_secs), "-c", "copy", out_pattern
-            ]
+
+            # V6-5: cortar en la pausa de silencio más cercana a cada límite
+            # en vez de un tiempo fijo, si se puede medir la duración real y
+            # detectar silencios. Tolerancia del 30% del tamaño de fragmento.
+            cut_points: list[float] = []
+            total_secs = _ffprobe_duration_secs(file_path)
+            if total_secs > 0:
+                silences = _detect_silence_intervals(file_path)
+                if silences:
+                    cut_points = _silence_aware_cut_points(
+                        total_secs, float(segment_secs), silences, tolerance=segment_secs * 0.3
+                    )
+
+            cmd = ["ffmpeg", "-i", file_path, "-f", "segment"]
+            if cut_points:
+                cmd += ["-segment_times", ",".join(f"{c:.3f}" for c in cut_points)]
+            else:
+                cmd += ["-segment_time", str(segment_secs)]
+            cmd += ["-c", "copy", out_pattern]
             subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
             files = sorted(os.listdir(temp_dir))
             for f in files:

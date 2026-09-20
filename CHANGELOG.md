@@ -6,6 +6,14 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.14.15] — 2026-09-20
+
+- **`yunta/voice.py` — V6-5 (`docs/PLAN.md`): corte de chunks en silencios en vez de tiempo fijo**: hasta ahora `split_audio_by_silence` (pese a su nombre) cortaba a duración fija (`-segment_time`), partiendo palabras a la mitad entre fragmentos consecutivos — técnica estándar en WhisperX/faster-whisper para evitarlo.
+  - Nuevas `_detect_silence_intervals(file_path)` (parsea la salida de `ffmpeg -af silencedetect` por stderr) y `_silence_aware_cut_points(total_secs, segment_secs, silences, tolerance)` (ajusta cada corte al punto medio del silencio más cercano dentro de una tolerancia del 30% del tamaño de fragmento; si no hay silencio cerca, mantiene el corte fijo original en vez de descartarlo).
+  - En `split_audio_by_silence`: si `ffprobe` da la duración real (V6-1) y se detectan silencios, el comando de `ffmpeg` usa `-segment_times` con los cortes ajustados; si cualquiera de los dos falla, cae íntegro al `-segment_time` de siempre — sin regresión cuando `ffmpeg`/`ffprobe` no cooperan o el audio no tiene pausas detectables.
+  - Riesgo controlado: es la función de fragmentación más usada de todo el pipeline, pero el cambio es aditivo (nueva rama opt-in por resultado, no reemplaza el camino existente) y ningún test previo ejercía el comando real de `ffmpeg` con contenido no vacío (todos usan archivos MP3 falsos que `ffprobe` ya rechazaba antes de este cambio), así que no hubo regresiones que corregir.
+  - 7 tests nuevos en `tests/test_voice.py` (384 → 391 tests totales): parseo de `silencedetect`, fallback ante fallo de `ffmpeg`, ajuste al punto medio más cercano, mantención del corte fijo sin silencio cercano, lista vacía sin silencios, y dos tests de integración (usa `-segment_times` vs. cae a `-segment_time`).
+
 ## [2.14.14] — 2026-09-20
 
 - **`yunta/voice.py` — V6-1 (`docs/PLAN.md`): marcas de tiempo reales por chunk vía `ffprobe`**: hasta ahora el offset de cada fragmento se repartía proporcionalmente por tamaño en bytes, una aproximación que se desincroniza con audio VBR o cuando el último chunk de `ffmpeg -f segment` sale más corto que el resto.
