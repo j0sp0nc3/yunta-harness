@@ -278,6 +278,29 @@ def _dedup_whisper_repetition(text: str) -> str:
     return cleaned.strip()
 
 
+_local_whisper_model = None
+_local_whisper_model_size = None
+_local_whisper_lock = threading.Lock()
+
+
+def _get_local_whisper_model(model_size: str):
+    """Carga el modelo local de `faster_whisper` una sola vez por proceso y lo
+    reutiliza entre fragmentos (2026-09-20, benchmark real: recargarlo en cada
+    llamada costaba ~3.9s de overhead por fragmento — ~17 min extra en una
+    transcripción de 259 fragmentos si el fallback local se usa seguido).
+    Cache a nivel de módulo (no de instancia) porque `AudioTranscriber`/
+    `AudioChunker` a veces se instancian varias veces dentro del mismo proceso
+    (p.ej. el retry por `too_large`), y el modelo debe compartirse entre todas.
+    """
+    global _local_whisper_model, _local_whisper_model_size
+    with _local_whisper_lock:
+        if _local_whisper_model is None or _local_whisper_model_size != model_size:
+            from faster_whisper import WhisperModel
+            _local_whisper_model = WhisperModel(model_size, device="cpu", compute_type="int8")
+            _local_whisper_model_size = model_size
+        return _local_whisper_model
+
+
 class AudioTranscriber:
     """Cliente HTTP nativo y agnóstico a proveedores para transcripción de voz (Whisper)."""
 
@@ -498,11 +521,12 @@ class AudioTranscriber:
             except Exception:
                 pass
 
-        # 2. Respaldo local offline vía `faster_whisper` (Lazy Loading) si está instalado
+        # 2. Respaldo local offline vía `faster_whisper` (modelo cacheado a nivel
+        # de módulo, ver `_get_local_whisper_model` — antes se recargaba en cada
+        # llamada, ~3.9s de overhead por fragmento)
         try:
-            from faster_whisper import WhisperModel
             model_size = os.environ.get("LOCAL_WHISPER_MODEL", "tiny")
-            model = WhisperModel(model_size, device="cpu", compute_type="int8")
+            model = _get_local_whisper_model(model_size)
             segments, _ = model.transcribe(str(path), language="es")
             text = " ".join(s.text.strip() for s in segments if s.text.strip()).strip()
             if text:

@@ -772,3 +772,92 @@ def test_transcribe_large_audio_workers_invalid_value_falls_back_to_sequential(m
 
     result = chunker.transcribe_large_audio("audio.mp3")
     assert "ok" in result
+
+
+# ==================== Cache del modelo local de faster-whisper ====================
+
+def _install_fake_faster_whisper(monkeypatch, load_calls, text="texto simulado"):
+    import sys
+    import types
+
+    class FakeSegment:
+        def __init__(self, t):
+            self.text = t
+
+    class FakeModel:
+        def __init__(self, model_size, device, compute_type):
+            load_calls.append(model_size)
+
+        def transcribe(self, path, language="es"):
+            return [FakeSegment(text)], None
+
+    fake_module = types.SimpleNamespace(WhisperModel=FakeModel)
+    monkeypatch.setitem(sys.modules, "faster_whisper", fake_module)
+
+
+def test_local_whisper_model_loaded_once_and_reused(monkeypatch, tmp_path):
+    """El modelo local de faster-whisper se carga una sola vez por proceso y se
+    reutiliza entre fragmentos — antes se recargaba en cada llamada (benchmark
+    real: ~3.9s de overhead por fragmento, ~17 min extra en 259 fragmentos)."""
+    import yunta.voice as voice_module
+
+    monkeypatch.setattr(voice_module, "_local_whisper_model", None)
+    monkeypatch.setattr(voice_module, "_local_whisper_model_size", None)
+    monkeypatch.setenv("LOCAL_WHISPER_MODEL", "tiny")
+
+    load_calls = []
+    _install_fake_faster_whisper(monkeypatch, load_calls)
+
+    transcriber = voice_module.AudioTranscriber(api_base="http://localhost:8000/v1")
+    f = tmp_path / "a.mp3"
+    f.write_bytes(b"\xff\xfb\x90\x00" + b"x" * 512)
+
+    for _ in range(5):
+        text = transcriber.transcribe_offline_local(str(f))
+        assert text == "texto simulado"
+
+    assert load_calls == ["tiny"], f"el modelo debió cargarse una sola vez, se cargó {len(load_calls)} veces"
+
+
+def test_local_whisper_model_reloads_if_size_changes(monkeypatch, tmp_path):
+    """Si LOCAL_WHISPER_MODEL cambia entre llamadas, el cache invalida y recarga
+    (no queda pegado al primer tamaño de modelo pedido)."""
+    import yunta.voice as voice_module
+
+    monkeypatch.setattr(voice_module, "_local_whisper_model", None)
+    monkeypatch.setattr(voice_module, "_local_whisper_model_size", None)
+
+    load_calls = []
+    _install_fake_faster_whisper(monkeypatch, load_calls)
+
+    transcriber = voice_module.AudioTranscriber(api_base="http://localhost:8000/v1")
+    f = tmp_path / "a.mp3"
+    f.write_bytes(b"\xff\xfb\x90\x00" + b"x" * 512)
+
+    monkeypatch.setenv("LOCAL_WHISPER_MODEL", "tiny")
+    transcriber.transcribe_offline_local(str(f))
+    monkeypatch.setenv("LOCAL_WHISPER_MODEL", "small")
+    transcriber.transcribe_offline_local(str(f))
+
+    assert load_calls == ["tiny", "small"]
+
+
+def test_local_whisper_model_shared_across_transcriber_instances(monkeypatch, tmp_path):
+    """El cache es de módulo, no de instancia: dos AudioTranscriber distintos
+    (como ocurre en el retry por `too_large`) comparten el mismo modelo cargado."""
+    import yunta.voice as voice_module
+
+    monkeypatch.setattr(voice_module, "_local_whisper_model", None)
+    monkeypatch.setattr(voice_module, "_local_whisper_model_size", None)
+    monkeypatch.setenv("LOCAL_WHISPER_MODEL", "tiny")
+
+    load_calls = []
+    _install_fake_faster_whisper(monkeypatch, load_calls)
+
+    f = tmp_path / "a.mp3"
+    f.write_bytes(b"\xff\xfb\x90\x00" + b"x" * 512)
+
+    voice_module.AudioTranscriber(api_base="http://localhost:8000/v1").transcribe_offline_local(str(f))
+    voice_module.AudioTranscriber(api_base="http://localhost:8000/v1").transcribe_offline_local(str(f))
+
+    assert load_calls == ["tiny"]

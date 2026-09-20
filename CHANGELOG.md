@@ -6,6 +6,14 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.14.10] — 2026-09-20
+
+- **`yunta/voice.py` — cache del modelo local de `faster_whisper`**: motivado por un benchmark real hecho tras la transcripción de 81 min de hoy — `transcribe_offline_local` recargaba el modelo (`WhisperModel(...)`) en **cada llamada**, con ~3.9s de overhead medido por carga; en una transcripción de 259 fragmentos que cayera seguido a fallback local, eso son ~17 min extra solo en recargas.
+  - Nuevo `_get_local_whisper_model(model_size)` a nivel de módulo: carga el modelo una sola vez por proceso y lo reutiliza en llamadas siguientes, protegido por `threading.Lock` (relevante también bajo `VOICE_PARALLEL_WORKERS>1`, Fase 5). Invalida y recarga si `LOCAL_WHISPER_MODEL` cambia entre llamadas.
+  - Cache a nivel de **módulo**, no de instancia: `AudioTranscriber`/`AudioChunker` a veces se instancian varias veces dentro del mismo proceso (p.ej. el retry por `too_large` crea un `AudioChunker` nuevo) y todas deben compartir el mismo modelo cargado.
+  - 3 tests nuevos en `tests/test_voice.py` (364 → 367 tests totales, con `faster_whisper` mockeado vía `sys.modules`): carga única tras 5 llamadas, recarga si cambia `LOCAL_WHISPER_MODEL`, y modelo compartido entre instancias distintas de `AudioTranscriber`.
+  - Validado además con el modelo real (`faster_whisper` tiny, CPU int8) sobre un fragmento de 20s del audio de la corrida de hoy: la primera llamada paga la carga, las siguientes no repiten ese costo fijo — la medición exacta en esta máquina es ruidosa por carga de CPU compartida con otra sesión concurrente, pero el patrón (sin overhead repetido) es consistente con el fix.
+
 ## [2.14.9] — 2026-09-20
 
 - **`yunta/voice.py` — Fase 5 (plan de resiliencia de voz, última fase): paralelismo acotado, opt-in vía `VOICE_PARALLEL_WORKERS`**: fase de mayor riesgo del plan — N workers concurrentes podrían *causar* una ráfaga de 503 si se habilita antes de que el circuit breaker + backoff (Fases 1-2) bajen la tasa de error base, por eso queda opt-in (`default="1"` = secuencial, comportamiento idéntico al actual).
