@@ -300,14 +300,14 @@ Iniciativas derivadas del análisis comparativo contra implementaciones de refer
 ### Nivel 1 — alto impacto, ~60 líneas
 
 - **V6-1 🔴 Marcas de tiempo reales por chunk (ffprobe)**: Medir la duración real de cada fragmento con ffprobe en lugar de asumir `índice × 10 min`; con `-c copy` los segmentos varían y las marcas actuales se desincronizan acumulativamente.
-- **V6-2 🔴 Retry por chunk con backoff**: 3 reintentos ante 429/5xx por fragmento antes de rendirse; una cátedra de 2h son ~12 requests y hoy un fallo transitorio deja un chunk vacío silencioso.
+- **V6-2 ✅ (v2.14.4) Retry por chunk con backoff**: 3 reintentos ante 429/5xx por fragmento con backoff adaptativo (`Retry-After` del servidor si está presente, exponencial con jitter si no) más circuit breaker cloud↔local tras fallos consecutivos (`AudioTranscriber.transcribe_with_meta`, `AudioChunker._breaker_*`). 8+ tests en `tests/test_voice.py`.
 - **V6-3 🔴 Checkpoint incremental de transcripción**: Persistir cada transcript de fragmento a `.yunta/scratch/transcript_<audio>.part<N>.txt` al completarse; si el proceso muere, relanzar reanuda desde el último chunk en vez de empezar de cero.
 - **V6-4 🟡 Filtro de alucinaciones de Whisper**: Descartar/flaggear chunks que solo contienen frases alucinadas conocidas ("Gracias por ver el video", "Subtítulos por...", "Amara.org") en silencios largos.
 
 ### Nivel 2 — moderado, ~40 líneas
 
 - **V6-5 🟡 Corte de chunks en silencios**: Usar `ffmpeg silencedetect` para cortar cada fragmento (límite 10 min) en la pausa natural más cercana en vez de corte fijo — elimina palabras partidas entre fragmentos (técnica estándar en WhisperX/faster-whisper).
-- **V6-6 🟢 Chunks en paralelo (ThreadPool 2-3)**: Transcripción 2-3x más rápida si el endpoint STT tolera concurrencia; controlar rate limits.
+- **V6-6 ✅ (v2.14.9) Chunks en paralelo (ThreadPool)**: Opt-in vía `VOICE_PARALLEL_WORKERS` (default `1` = secuencial, sin cambio de comportamiento), `ThreadPoolExecutor`/`as_completed`, reensamblado por índice, circuit breaker con `threading.Lock`. Pendiente de validación empírica con audio real bajo concurrencia (aún no se ha medido la mejora de velocidad ni si el endpoint tolera la carga).
 
 ### Nivel 3 — server-side, cambio de stack (mediano plazo)
 

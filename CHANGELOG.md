@@ -6,6 +6,13 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.14.11] — 2026-09-20
+
+- **`docs/PLAN.md` — actualización de estado por instrucción humana explícita** (Regla 6: el agente no edita el backlog salvo instrucción expresa; el usuario la dio directamente en esta sesión): V6-2 y V6-6 quedan marcados ✅ — ambos ya estaban resueltos por el plan de resiliencia de voz (Fases 0-5) implementado en v2.14.4 y v2.14.9 respectivamente, pero `PLAN.md` no se había actualizado porque el agente no puede tocarlo sin autorización.
+  - **V6-2** ✅ (v2.14.4): retry con backoff adaptativo + circuit breaker cloud↔local.
+  - **V6-6** ✅ (v2.14.9): paralelismo acotado opt-in vía `VOICE_PARALLEL_WORKERS`, marcado explícitamente como pendiente de validación empírica con audio real bajo concurrencia (no confundir "implementado" con "medido").
+  - Sin cambios de código; ningún test afectado.
+
 ## [2.14.10] — 2026-09-20
 
 - **`yunta/voice.py` — cache del modelo local de `faster_whisper`**: motivado por un benchmark real hecho tras la transcripción de 81 min de hoy — `transcribe_offline_local` recargaba el modelo (`WhisperModel(...)`) en **cada llamada**, con ~3.9s de overhead medido por carga; en una transcripción de 259 fragmentos que cayera seguido a fallback local, eso son ~17 min extra solo en recargas.
