@@ -521,6 +521,13 @@ class AudioChunker:
         self._cb_fail_streak = 0
         self._cb_skip_remaining = 0
         self._cb_tripped_count = 0  # telemetría (Fase 3)
+        # Telemetría (Fase 3, 2026-09-20): contadores agregados por
+        # transcripción, grabados a .yunta/voice_health.jsonl al terminar
+        # (ver yunta/voice_telemetry.py). errors_handled cuenta FRAGMENTOS
+        # con al menos un error de nube manejado, no reintentos individuales.
+        self._telem_cloud = 0
+        self._telem_local = 0
+        self._telem_errors = 0
 
     def _breaker_should_skip_cloud(self) -> bool:
         if self._cb_skip_remaining > 0:
@@ -566,6 +573,7 @@ class AudioChunker:
             else:
                 chunk_minutes = 10.0
 
+        start_time = time.monotonic()
         chunks = self.split_audio_by_silence(file_path, chunk_minutes)
         transcripts = []
         tail = ""
@@ -584,6 +592,12 @@ class AudioChunker:
                 text, meta = self.transcriber.transcribe_with_meta(chunk_file, prompt=tail, skip_cloud=skip_cloud)
                 text = text.strip()
                 self._breaker_record(meta)
+                if meta.get("source") == "cloud":
+                    self._telem_cloud += 1
+                else:
+                    self._telem_local += 1
+                if meta.get("cloud_attempted") and meta.get("cloud_failed"):
+                    self._telem_errors += 1
                 transcripts.append(f"{timestamp}\n{text}")
                 # Whisper usa ~200 caracteres finales como guía de continuidad
                 tail = text[-200:] if text else tail
@@ -601,6 +615,22 @@ class AudioChunker:
                     os.remove(chunk_file)
                 except (OSError, NameError):
                     pass
+
+        outcome = "completed" if len(transcripts) == len(chunks) else "partial"
+        try:
+            from .voice_telemetry import record_voice_snapshot
+            record_voice_snapshot(
+                total_fragments=len(chunks),
+                cloud_fragments=self._telem_cloud,
+                local_fragments=self._telem_local,
+                errors_handled=self._telem_errors,
+                breaker_trips=self._cb_tripped_count,
+                elapsed_secs=time.monotonic() - start_time,
+                audio_duration_secs=total_secs,
+                outcome=outcome,
+            )
+        except Exception:
+            pass
 
         if not transcripts:
             return ""

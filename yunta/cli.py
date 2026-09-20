@@ -139,6 +139,7 @@ Comandos de Terminal (CLI):
   yunta memory sync [--fix]    Reporta y deduplica la memoria de equipo (learnings.md/memory.json)
   yunta memory init-sync       Habilita versionar la memoria de equipo en git (pide confirmación)
   yunta health [--json]        Muestra el Health Score histórico del repo (doom-loops, errores, ROI)
+  yunta health --voice [--json] Muestra la telemetría histórica del pipeline STT (RTF, nube/local, breaker)
   yunta handoff export [ruta]  Empaqueta la sesión guardada en un bundle portable (handoff)
   yunta handoff import <ruta>  Reanuda una sesión desde un bundle de handoff exportado
   yunta "tu instrucción"       Ejecución directa single-shot (ej. yunta "revisa los tests")
@@ -349,7 +350,29 @@ def run_memory_sync(fix: bool = False) -> None:
         print(f"🧹 Deduplicado: {removed_l} lección(es) repetida(s), {removed_m} entrada(s) repetida(s).")
 
 
-def run_health(as_json: bool = False) -> None:
+def run_health(as_json: bool = False, voice: bool = False) -> None:
+    if voice:
+        from .voice_telemetry import DEFAULT_VOICE_HEALTH_PATH, aggregate_voice
+
+        stats = aggregate_voice(DEFAULT_VOICE_HEALTH_PATH)
+        if as_json:
+            print(json.dumps(stats, indent=2, ensure_ascii=False))
+            return
+        if stats.get("sessions", 0) == 0:
+            print("No hay snapshots de voz registrados todavía (se guardan al terminar una transcripción larga).")
+            return
+        print("┌────────────────────────────────────────────────────────┐")
+        print("│ YUNTA — VOICE HEALTH (pipeline STT, histórico)         │")
+        print("├────────────────────────────────────────────────────────┤")
+        print(f"│ 🎙️  Transcripciones registradas:        {stats['sessions']:>6}               │")
+        print(f"│ 📦 Fragmentos totales (acumulado):      {stats['total_fragments']:>10,}          │")
+        print(f"│ ☁️  Proporción nube/total:               {stats['cloud_ratio']:>6.1%}              │")
+        print(f"│ ⚠️  Errores manejados por fragmento:     {stats['errors_per_fragment']:>6.2f}              │")
+        print(f"│ 🔌 Disparos de circuit breaker:         {stats['total_breaker_trips']:>6}               │")
+        print(f"│ ⏱️  RTF promedio (>1 = más rápido que tiempo real): {stats['avg_rtf']:>6.2f}x     │")
+        print("└────────────────────────────────────────────────────────┘\n")
+        return
+
     from .health import DEFAULT_HEALTH_PATH, aggregate
 
     stats = aggregate(DEFAULT_HEALTH_PATH)
@@ -495,7 +518,7 @@ def main():
 
     # Despacho de comando `yunta health [--json]`
     if len(sys.argv) > 1 and sys.argv[1].lower() == "health":
-        run_health(as_json="--json" in sys.argv)
+        run_health(as_json="--json" in sys.argv, voice="--voice" in sys.argv)
         return
 
     # Despacho de comando `yunta memory sync [--fix]` / `yunta memory init-sync`

@@ -6,6 +6,14 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.14.5] — 2026-09-20
+
+- **Telemetría persistente del pipeline de voz (`yunta/voice_telemetry.py`, nuevo)**: reemplaza el script ad-hoc (`python -c "..."` grepeando logs) que se usó para medir la transcripción de 81 min/259 fragmentos por un registro estructurado consultable con `yunta health --voice [--json]`.
+  - Módulo separado de `yunta/health.py` a propósito: su `health_score` es una heurística específica de agente LLM (tasa de error de tools, doom-loops) que no tiene sentido para un pipeline de audio. Clona el mismo patrón (JSONL append-only en `.yunta/voice_health.jsonl`) sin heredar ese acoplamiento.
+  - `AudioChunker` acumula 3 contadores nuevos (`_telem_cloud`, `_telem_local`, `_telem_errors`) en el mismo punto donde ya se actualiza el circuit breaker (v2.14.4), y graba una snapshot (fragmentos totales, nube vs local, errores manejados, disparos de breaker, RTF) al terminar `transcribe_large_audio` — tanto en el camino feliz como en interrupción por Ctrl+C (`outcome="completed"|"partial"`). Envuelto en `try/except: pass`: un fallo al grabar telemetría nunca rompe una transcripción en curso.
+  - Comando `yunta health --voice`.
+- **Tests: 350** (5 nuevos en `tests/test_voice_telemetry.py`). 100% pasando.
+
 ## [2.14.4] — 2026-09-20
 
 - **Resiliencia del pipeline STT: circuit breaker + backoff adaptativo (`yunta/voice.py`)**: motivado por una transcripción real de 81 min (259 fragmentos) contra Cloudflare Workers AI que registró 480 errores 503/1102 manejados — cada fragmento peleaba su propia batalla de reintentos sin memoria de que los anteriores también habían fallado. Trabajo iniciado en paralelo por ZCode (sesión dogfooding, agotó cuota antes de documentar/commitear) y completado aquí con el mismo diseño.
