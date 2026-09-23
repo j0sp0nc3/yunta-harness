@@ -6,6 +6,7 @@ inteligente de audios largos por silencios (VAD) y grabación desde micrófono.
 """
 
 from io import BytesIO
+import http.client
 import json
 import mimetypes
 import os
@@ -18,6 +19,7 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import re
 import unicodedata
@@ -388,6 +390,7 @@ class AudioTranscriber:
             or os.environ.get("LLM_API_KEY")
             or ""
         )
+        self._http_local = threading.local()
 
     def transcribe(self, file_path: str, prompt: str = "") -> str:
         """Transcribe un archivo de audio (.mp3, .wav, .m4a, .ogg, .webm).
@@ -549,13 +552,30 @@ class AudioTranscriber:
         body.write(f"--{boundary}--\r\n".encode("utf-8"))
         payload = body.getvalue()
 
+        timeout = int(os.environ.get("VOICE_TIMEOUT", "60"))
+        reuse_conn = os.environ.get("VOICE_REUSE_CONNECTION", "0").lower() in ("1", "true", "yes")
+
+        if reuse_conn:
+            headers = {
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+                "User-Agent": "Yunta/2.5.0 Client",
+                "Connection": "keep-alive",
+            }
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+            resp_body = self._post_multipart_reuse(endpoint, payload, headers, timeout)
+            data = json.loads(resp_body)
+            text = data.get("text")
+            if text is None and isinstance(data.get("result"), dict):
+                text = data.get("result", {}).get("text")
+            return (text or "").strip()
+
         req = urllib.request.Request(endpoint, data=payload, method="POST")
         req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
         req.add_header("User-Agent", "Yunta/2.5.0 Client")
         if self.api_key:
             req.add_header("Authorization", f"Bearer {self.api_key}")
 
-        timeout = int(os.environ.get("VOICE_TIMEOUT", "60"))
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
@@ -584,6 +604,109 @@ class AudioTranscriber:
         except Exception as err:
             # Errores de red (timeout, DNS, conexión): reintentables
             raise _TranscribeError(f"{type(err).__name__}: {err}", None, "") from err
+
+    def _get_http_connection(self, endpoint: str, timeout: float) -> http.client.HTTPConnection:
+        """Obtiene o crea una conexion HTTP/HTTPS reutilizable por hilo para el endpoint dado."""
+        parsed = urllib.parse.urlparse(endpoint)
+        is_https = parsed.scheme == "https"
+        host = parsed.hostname or "localhost"
+        port = parsed.port or (443 if is_https else 80)
+
+        conn = getattr(self._http_local, "conn", None)
+        conn_target = getattr(self._http_local, "conn_target", None)
+
+        if conn is None or conn_target != (is_https, host, port):
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            if is_https:
+                conn = http.client.HTTPSConnection(host, port, timeout=timeout)
+            else:
+                conn = http.client.HTTPConnection(host, port, timeout=timeout)
+            self._http_local.conn = conn
+            self._http_local.conn_target = (is_https, host, port)
+        return conn
+
+    def _post_multipart_reuse(
+        self, endpoint: str, payload: bytes, headers: dict[str, str], timeout: float
+    ) -> str:
+        """Envia la peticion multipart reutilizando conexion HTTP persistente (Keep-Alive).
+
+        Si la conexion fue cerrada remotamente por inactividad o error de socket,
+        reconecta automaticamente una vez.
+        """
+        parsed = urllib.parse.urlparse(endpoint)
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+
+        for attempt in range(2):
+            conn = self._get_http_connection(endpoint, timeout)
+            try:
+                conn.request("POST", path, body=payload, headers=headers)
+                resp = conn.getresponse()
+                status = resp.status
+                resp_headers = resp.headers
+                resp_body = resp.read().decode("utf-8", errors="replace")
+
+                if 200 <= status < 300:
+                    return resp_body
+
+                retry_after = None
+                try:
+                    ra = resp_headers.get("Retry-After") if resp_headers else None
+                    if ra is not None:
+                        retry_after = float(ra)
+                except (TypeError, ValueError):
+                    retry_after = None
+
+                detail = resp_body[:200]
+                raise _TranscribeError(
+                    f"HTTP {status}: {detail}",
+                    status,
+                    detail,
+                    retry_after=retry_after,
+                )
+            except (
+                http.client.CannotSendRequest,
+                http.client.RemoteDisconnected,
+                http.client.ResponseNotReady,
+                BrokenPipeError,
+                ConnectionResetError,
+            ) as conn_err:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                self._http_local.conn = None
+                if attempt == 1:
+                    raise _TranscribeError(
+                        f"Conexion cerrada tras reintento Keep-Alive: {conn_err}", None, ""
+                    ) from conn_err
+            except _TranscribeError:
+                raise
+            except Exception as err:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                self._http_local.conn = None
+                raise _TranscribeError(f"{type(err).__name__}: {err}", None, "") from err
+        raise _TranscribeError("Fallo inesperado de conexion Keep-Alive", None, "")
+
+    def close(self) -> None:
+        """Cierra la conexion HTTP persistente si existe."""
+        conn = getattr(self._http_local, "conn", None)
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            self._http_local.conn = None
+            self._http_local.conn_target = None
+
 
     def transcribe_offline_local(self, file_path: str) -> str:
         """Transcribe audio localmente mediante contenedor Whisper Docker en localhost:8000 o speech_recognition."""
@@ -1047,6 +1170,11 @@ class AudioChunker:
         except Exception:
             pass
 
+        try:
+            self.transcriber.close()
+        except Exception:
+            pass
+
         entries = [t for t in transcripts if t is not None]
         if not entries:
             return ""
@@ -1181,6 +1309,10 @@ class AudioChunker:
                 except OSError:
                     pass
         return transcripts, completed
+
+    def close(self) -> None:
+        """Cierra conexiones persistentes del transcriptor asociado."""
+        self.transcriber.close()
 
     @staticmethod
     def _estimate_bitrate_bps(file_path: str) -> int:

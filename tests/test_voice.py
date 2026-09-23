@@ -1720,3 +1720,206 @@ def test_transcribe_large_audio_reports_hallucinations_filtered_count(tmp_path, 
 
     _, kwargs = recorded.call_args
     assert kwargs["hallucinations_filtered"] == 2
+
+
+# ============================================================================
+# V7-3 (docs/PLAN.md, 2026-09-22): Reutilización de conexión HTTP (Keep-Alive)
+# ============================================================================
+
+def test_post_transcription_default_uses_urllib(monkeypatch, tmp_path):
+    """Por defecto (VOICE_REUSE_CONNECTION no seteado o '0'), _post_transcription
+    utiliza urllib.request.urlopen para total retrocompatibilidad."""
+    import urllib.request
+    from yunta.voice import AudioTranscriber
+
+    f = tmp_path / "chunk.mp3"
+    f.write_bytes(b"audio-content")
+
+    called_urlopen = False
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def read(self):
+            return b'{"text": "transcripcion urllib"}'
+
+    def fake_urlopen(req, timeout=60):
+        nonlocal called_urlopen
+        called_urlopen = True
+        return FakeResponse()
+
+    monkeypatch.delenv("VOICE_REUSE_CONNECTION", raising=False)
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    transcriber = AudioTranscriber(api_base="https://api.example.com/v1")
+    text = transcriber._post_transcription(f)
+
+    assert called_urlopen is True
+    assert text == "transcripcion urllib"
+
+
+def test_post_transcription_reuse_opt_in_dispatches_to_post_multipart_reuse(monkeypatch, tmp_path):
+    """Con VOICE_REUSE_CONNECTION='1', _post_transcription despacha a través de _post_multipart_reuse."""
+    from yunta.voice import AudioTranscriber
+
+    f = tmp_path / "chunk.mp3"
+    f.write_bytes(b"audio-content")
+
+    monkeypatch.setenv("VOICE_REUSE_CONNECTION", "1")
+
+    transcriber = AudioTranscriber(api_base="https://api.example.com/v1")
+    dispatched = []
+
+    def fake_reuse(endpoint, payload, headers, timeout):
+        dispatched.append((endpoint, headers, timeout))
+        return '{"text": "transcripcion keep-alive"}'
+
+    monkeypatch.setattr(transcriber, "_post_multipart_reuse", fake_reuse)
+
+    text = transcriber._post_transcription(f)
+
+    assert len(dispatched) == 1
+    assert "https://api.example.com/v1/audio/transcriptions" in dispatched[0][0]
+    assert dispatched[0][1].get("Connection") == "keep-alive"
+    assert text == "transcripcion keep-alive"
+
+
+def test_http_connection_reuse_same_host_port():
+    """_get_http_connection devuelve la misma instancia de conexion para llamadas consecutivas al mismo endpoint."""
+    from yunta.voice import AudioTranscriber
+
+    transcriber = AudioTranscriber()
+    conn1 = transcriber._get_http_connection("https://api.cloudflare.com/v1/audio/transcriptions", timeout=30)
+    conn2 = transcriber._get_http_connection("https://api.cloudflare.com/v1/audio/transcriptions", timeout=30)
+
+    assert conn1 is conn2
+
+    # Si cambia el host o puerto, cierra la anterior y abre una nueva
+    conn3 = transcriber._get_http_connection("http://localhost:8000/v1/audio/transcriptions", timeout=30)
+    assert conn3 is not conn1
+    assert transcriber._http_local.conn_target == (False, "localhost", 8000)
+
+    transcriber.close()
+    assert getattr(transcriber._http_local, "conn", None) is None
+
+
+def test_post_multipart_reuse_success():
+    """_post_multipart_reuse realiza el request y lee la respuesta exitosa (200 OK)."""
+    import http.client
+    from unittest.mock import MagicMock
+    from yunta.voice import AudioTranscriber
+
+    transcriber = AudioTranscriber()
+
+    fake_conn = MagicMock()
+    fake_resp = MagicMock()
+    fake_resp.status = 200
+    fake_resp.headers = {"Content-Type": "application/json"}
+    fake_resp.read.return_value = b'{"text": "hola mundo keepalive"}'
+    fake_conn.getresponse.return_value = fake_resp
+
+    transcriber._get_http_connection = lambda endpoint, timeout: fake_conn
+
+    res = transcriber._post_multipart_reuse(
+        "https://api.example.com/v1/audio", b"payload", {"User-Agent": "test"}, 15.0
+    )
+
+    assert res == '{"text": "hola mundo keepalive"}'
+    fake_conn.request.assert_called_once_with("POST", "/v1/audio", body=b"payload", headers={"User-Agent": "test"})
+
+
+def test_post_multipart_reuse_reconnects_on_socket_disconnect():
+    """Si la conexion persistente fue cortada por el servidor (RemoteDisconnected), reconecta y reintenta."""
+    import http.client
+    from unittest.mock import MagicMock
+    from yunta.voice import AudioTranscriber
+
+    transcriber = AudioTranscriber()
+
+    conn1 = MagicMock()
+    conn1.request.side_effect = http.client.RemoteDisconnected("Remote end closed connection")
+
+    conn2 = MagicMock()
+    fake_resp = MagicMock()
+    fake_resp.status = 200
+    fake_resp.headers = {}
+    fake_resp.read.return_value = b'{"text": "reconectado con exito"}'
+    conn2.getresponse.return_value = fake_resp
+
+    connections = [conn1, conn2]
+    transcriber._get_http_connection = lambda endpoint, timeout: connections.pop(0)
+
+    res = transcriber._post_multipart_reuse("https://api.example.com/v1", b"body", {}, 10.0)
+
+    assert res == '{"text": "reconectado con exito"}'
+    conn1.close.assert_called_once()
+    conn2.request.assert_called_once()
+
+
+def test_post_multipart_reuse_raises_transcribe_error_with_retry_after():
+    """Si el servidor responde 429 con Retry-After, lanza _TranscribeError preservando el wait_time."""
+    from unittest.mock import MagicMock
+    from yunta.voice import AudioTranscriber, _TranscribeError
+
+    transcriber = AudioTranscriber()
+
+    fake_conn = MagicMock()
+    fake_resp = MagicMock()
+    fake_resp.status = 429
+    fake_resp.headers = {"Retry-After": "15"}
+    fake_resp.read.return_value = b'{"error": "rate limit exceeded"}'
+    fake_conn.getresponse.return_value = fake_resp
+
+    transcriber._get_http_connection = lambda endpoint, timeout: fake_conn
+
+    import pytest
+    with pytest.raises(_TranscribeError) as exc_info:
+        transcriber._post_multipart_reuse("https://api.example.com/v1", b"body", {}, 10.0)
+
+    err = exc_info.value
+    assert err.code == 429
+    assert err.retryable is True
+    assert err.retry_after == 15.0
+
+
+def test_transcriber_and_chunker_close():
+    """AudioChunker.close() propaga el cierre al AudioTranscriber correspondiente."""
+    from unittest.mock import MagicMock
+    from yunta.voice import AudioChunker, AudioTranscriber
+
+    transcriber = AudioTranscriber()
+    fake_conn = MagicMock()
+    transcriber._http_local.conn = fake_conn
+    transcriber._http_local.conn_target = (True, "host", 443)
+
+    chunker = AudioChunker(transcriber)
+    chunker.close()
+
+    fake_conn.close.assert_called_once()
+    assert getattr(transcriber._http_local, "conn", None) is None
+
+
+def test_multithreading_http_connection_isolation():
+    """Cada hilo en AudioTranscriber mantiene su propia conexion HTTP separada."""
+    import threading
+    from yunta.voice import AudioTranscriber
+
+    transcriber = AudioTranscriber()
+    connections = []
+
+    def worker():
+        conn = transcriber._get_http_connection("https://api.example.com/v1", timeout=30)
+        connections.append(conn)
+
+    t1 = threading.Thread(target=worker)
+    t2 = threading.Thread(target=worker)
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    assert len(connections) == 2
+    assert connections[0] is not connections[1]
+

@@ -6,6 +6,17 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.14.24] — 2026-09-22
+
+- **`yunta/voice.py`, `tests/test_voice.py` — V7-3: Reutilización de conexión HTTP persistente (Keep-Alive)**: en transcripciones de audios largos con decenas o cientos de fragmentos (ej. 184 fragmentos en cátedras reales), abrir una conexión TLS/TCP nueva por fragmento añadía una penalización fija acumulada de handshake (~250-350 ms por fragmento, ~45-65s totales de latencia pura).
+  - Implementación con biblioteca estándar pura de Python (`http.client.HTTPSConnection` / `HTTPConnection`), sin añadir ninguna dependencia externa (`requests`/`urllib3`), respetando estrictamente las Reglas 1 y 3 de `AGENTS.md`.
+  - Aislamiento seguro entre hilos mediante `self._http_local = threading.local()` en `AudioTranscriber`: cada worker en ejecución paralela (`VOICE_PARALLEL_WORKERS > 1`) dispone de su propia conexión persistente aislada, eliminando riesgos de contención de socket o condiciones de carrera concurrentes.
+  - Tolerancia y reconexión automática transparente ante cortes por inactividad (`RemoteDisconnected`, `CannotSendRequest`, `BrokenPipeError`, `ConnectionResetError`), común en balanceadores de carga como Cloudflare Workers AI.
+  - Preservación íntegra de semántica de errores y retry: propagación exacta de `_TranscribeError`, código HTTP, extracto y header `Retry-After`.
+  - Método `close()` tanto en `AudioTranscriber` como en `AudioChunker` para liberar sockets al terminar la transcripción completa de archivos grandes.
+  - Opt-in estricto mediante variable de entorno `VOICE_REUSE_CONNECTION` (default `"0"`): cuando está desactivado o ausente, delega transparentemente en `urllib.request.urlopen` preservando retrocompatibilidad absoluta con la suite existente.
+  - 8 tests unitarios nuevos en `tests/test_voice.py` (de 425 a 433 tests totales, 100% pasando limpios): despacho condicional, reutilización de socket por host/puerto, reconexión automática ante corte remoto, propagación de `_TranscribeError` con `Retry-After`, aislamiento en multithreading y método `close()`.
+
 ## [2.14.23] — 2026-09-22
 
 - **`AGENTS.md` — Regla 7: protocolo de trabajo concurrente real vía `git worktree`**: el punto "un agente a la vez" de la Regla 7 evita que dos agentes se pisen, pero también impide que trabajen genuinamente en paralelo — obliga a esperar turno incluso cuando las tareas no se solapan (justo la situación de esta sesión: Claude Code con las Fases 6/7/10/11, Antigravity con las Fases 8/9, ambas sobre `yunta/voice.py`).
