@@ -6,6 +6,19 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.14.20] — 2026-09-22
+
+- **`yunta/voice.py`, `yunta/voice_telemetry.py`, `yunta/cli.py` — V7-2: instrumentación fina por fragmento (network_wait vs processing)**: la Corrida 2 quedó con una anomalía sin explicar (~91s de diferencia en STT no atribuibles a overhead medido) porque la única telemetría existente era un agregado ciego por transcripción completa — no había forma de saber si una demora era de red/endpoint o del lado cliente.
+  - `AudioTranscriber.transcribe_with_meta` ahora mide `network_wait_secs` (tiempo dentro de `_post_transcription`, acumulado a través de reintentos — cada reintento es un round-trip real) y `total_secs` (tiempo total del método), agregados a la metadata que ya devolvía (`source`, `cloud_attempted`, `cloud_failed`).
+  - `AudioChunker._record_telemetry` colecciona estos valores por fragmento en `_telem_network_wait`/`_telem_processing` (processing = total − network_wait; incluye deliberadamente la espera de backoff entre reintentos, que es una pausa del cliente, no medición perfecta de cada micro-etapa sino la distinción que importa: red/endpoint vs cliente).
+  - `yunta/voice_telemetry.py`: nueva `percentile(values, pct)` (interpolación lineal, sin dependencias); `VoiceSnapshot`/`record_voice_snapshot` ganan `network_wait_p50/p95/max`, `processing_p50/p95/max` y `workers_used`, todos con default (compatible con snapshots viejos); `aggregate_voice` promedia estos percentiles entre sesiones, tolerando snapshots sin los campos nuevos (aportan 0.0).
+  - `yunta health --voice` muestra los nuevos percentiles.
+  - `workers_used` refleja el modo de ejecución REAL (no solo la variable de entorno configurada): con un solo fragmento, `VOICE_PARALLEL_WORKERS>1` igual cae al camino secuencial, y así se reporta.
+  - Overhead de instrumentar: unas pocas llamadas a `time.monotonic()` (nanosegundos) por fragmento frente a segundos de I/O de red — despreciable por diseño, no requiere medición aislada adicional.
+  - 12 tests nuevos entre `tests/test_voice.py` y `tests/test_voice_telemetry.py` (401 → 413 tests totales): percentiles (vacío, un valor, conocidos), roundtrip y defaults de los campos nuevos, promedio entre sesiones y tolerancia a snapshots viejos, acumulación de `network_wait` a través de reintentos, `_record_telemetry` con y sin campos de timing, integración completa (percentiles reales pasados a `record_voice_snapshot`) y `workers_used` reflejando el modo real de ejecución; se corrigieron 3 tests existentes que comparaban el dict de metadata por igualdad exacta (ahora tiene 2 campos más).
+  - **Resultado de esta fase**: la próxima corrida real sobre el archivo de prueba va a producir percentiles interpretables de red vs procesamiento — reemplaza la especulación de la Corrida 2 por datos, no la explica todavía (eso requiere correr la Fase 8/9 con esto ya en pie).
+  - Fase 7 de un plan conjunto con Antigravity (ver `.claude/plans/genera-un-plan-de-concurrent-cook.md`, no versionado en este repo) — desbloquea la validación empírica de las Fases 8 (keep-alive) y 9 (paralelismo), a cargo de Antigravity.
+
 ## [2.14.19] — 2026-09-22
 
 - **`yunta/voice.py` — V7-1: calibración de bitrate universal (no solo MP3)**: `_calibrate_chunk_minutes` (Fase 4, v2.14.4) solo podía leer bitrate real vía sniffing de frame MP3 — para cualquier otro contenedor (`.m4a`, `.ogg`, `.wav`) siempre daba 0 y la función se rendía directo al `floor` de 0.33 min. **Esto significaba que la calibración de bitrate nunca tuvo efecto en ninguna de las 3 corridas empíricas reales de esta sesión**, porque el archivo de prueba es `.m4a` — hallazgo encontrado en una segunda revisión independiente del trabajo de las corridas 1-3.

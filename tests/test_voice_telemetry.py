@@ -3,7 +3,89 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from yunta.voice_telemetry import aggregate_voice, record_voice_snapshot
+from yunta.voice_telemetry import aggregate_voice, percentile, record_voice_snapshot
+
+
+# ==================== V7-2: percentiles y desglose red/procesamiento ====================
+
+def test_percentile_empty_list_returns_zero():
+    assert percentile([], 50) == 0.0
+
+
+def test_percentile_single_value():
+    assert percentile([7.5], 50) == 7.5
+    assert percentile([7.5], 95) == 7.5
+
+
+def test_percentile_known_values():
+    values = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
+    assert percentile(values, 50) == 5.5
+    assert percentile(values, 0) == 1.0
+    assert percentile(values, 100) == 10.0
+
+
+def test_record_voice_snapshot_includes_network_percentiles(tmp_path):
+    path = tmp_path / "voice_health.jsonl"
+    record_voice_snapshot(
+        total_fragments=5, cloud_fragments=5, local_fragments=0,
+        errors_handled=0, breaker_trips=0, elapsed_secs=50.0,
+        audio_duration_secs=100.0, outcome="completed",
+        network_wait_p50=2.0, network_wait_p95=4.0, network_wait_max=5.0,
+        processing_p50=0.5, processing_p95=1.0, processing_max=1.5,
+        workers_used=3, path=path,
+    )
+    entry = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+    assert entry["network_wait_p50"] == 2.0
+    assert entry["network_wait_p95"] == 4.0
+    assert entry["network_wait_max"] == 5.0
+    assert entry["processing_p50"] == 0.5
+    assert entry["workers_used"] == 3
+
+
+def test_record_voice_snapshot_network_fields_default_to_zero(tmp_path):
+    """Llamador que no pasa los campos nuevos (compatibilidad hacia atrás)."""
+    path = tmp_path / "voice_health.jsonl"
+    record_voice_snapshot(
+        total_fragments=1, cloud_fragments=1, local_fragments=0,
+        errors_handled=0, breaker_trips=0, elapsed_secs=10.0,
+        audio_duration_secs=10.0, path=path,
+    )
+    entry = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+    assert entry["network_wait_p50"] == 0.0
+    assert entry["workers_used"] == 1
+
+
+def test_aggregate_voice_averages_network_percentiles_across_sessions(tmp_path):
+    path = tmp_path / "voice_health.jsonl"
+    record_voice_snapshot(
+        total_fragments=1, cloud_fragments=1, local_fragments=0,
+        errors_handled=0, breaker_trips=0, elapsed_secs=10.0, audio_duration_secs=10.0,
+        network_wait_p50=2.0, network_wait_p95=3.0, network_wait_max=4.0, path=path,
+    )
+    record_voice_snapshot(
+        total_fragments=1, cloud_fragments=1, local_fragments=0,
+        errors_handled=0, breaker_trips=0, elapsed_secs=10.0, audio_duration_secs=10.0,
+        network_wait_p50=6.0, network_wait_p95=7.0, network_wait_max=8.0, path=path,
+    )
+    stats = aggregate_voice(path)
+    assert stats["avg_network_wait_p50"] == 4.0
+    assert stats["avg_network_wait_p95"] == 5.0
+    assert stats["max_network_wait"] == 8.0
+
+
+def test_aggregate_voice_tolerates_old_snapshots_without_new_fields(tmp_path):
+    """Snapshots grabados antes de V7-2 no tienen los campos nuevos — el
+    agregado no debe romperse, deben aportar 0.0."""
+    path = tmp_path / "voice_health.jsonl"
+    old_snapshot = {
+        "timestamp": 1.0, "total_fragments": 1, "cloud_fragments": 1,
+        "local_fragments": 0, "errors_handled": 0, "breaker_trips": 0,
+        "elapsed_secs": 10.0, "audio_duration_secs": 10.0, "rtf": 1.0, "outcome": "completed",
+    }
+    path.write_text(json.dumps(old_snapshot) + "\n", encoding="utf-8")
+    stats = aggregate_voice(path)
+    assert stats["avg_network_wait_p50"] == 0.0
+    assert stats["sessions"] == 1
 
 
 def test_record_and_aggregate_voice_snapshot_roundtrip(tmp_path):

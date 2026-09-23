@@ -16,6 +16,22 @@ from pathlib import Path
 DEFAULT_VOICE_HEALTH_PATH = Path(".yunta") / "voice_health.jsonl"
 
 
+def percentile(values: list[float], pct: float) -> float:
+    """Percentil por interpolación lineal, sin dependencias (V7-2,
+    2026-09-22). `pct` en [0, 100]. 0.0 con lista vacía."""
+    if not values:
+        return 0.0
+    s = sorted(values)
+    if len(s) == 1:
+        return s[0]
+    k = (len(s) - 1) * (pct / 100)
+    f = int(k)
+    c = min(f + 1, len(s) - 1)
+    if f == c:
+        return s[f]
+    return s[f] + (s[c] - s[f]) * (k - f)
+
+
 @dataclass
 class VoiceSnapshot:
     timestamp: float
@@ -28,6 +44,18 @@ class VoiceSnapshot:
     audio_duration_secs: float
     rtf: float  # audio_duration_secs / elapsed_secs (>1 = más rápido que tiempo real)
     outcome: str = ""
+    # V7-2 (2026-09-22): desglose de tiempo por fragmento — network_wait
+    # (esperando al servidor, dentro de `_post_transcription`) vs processing
+    # (todo lo demás en `transcribe_with_meta`, incluido el backoff entre
+    # reintentos). Convierte en dato medible si una demora es de red/endpoint
+    # o del lado cliente, en vez de solo un tiempo total agregado.
+    network_wait_p50: float = 0.0
+    network_wait_p95: float = 0.0
+    network_wait_max: float = 0.0
+    processing_p50: float = 0.0
+    processing_p95: float = 0.0
+    processing_max: float = 0.0
+    workers_used: int = 1
 
 
 def record_voice_snapshot(
@@ -39,6 +67,13 @@ def record_voice_snapshot(
     elapsed_secs: float,
     audio_duration_secs: float,
     outcome: str = "",
+    network_wait_p50: float = 0.0,
+    network_wait_p95: float = 0.0,
+    network_wait_max: float = 0.0,
+    processing_p50: float = 0.0,
+    processing_p95: float = 0.0,
+    processing_max: float = 0.0,
+    workers_used: int = 1,
     path: Path | str = DEFAULT_VOICE_HEALTH_PATH,
 ) -> None:
     """Append-only: una snapshot JSON por transcripción de audio grande."""
@@ -54,6 +89,13 @@ def record_voice_snapshot(
         audio_duration_secs=audio_duration_secs,
         rtf=rtf,
         outcome=outcome,
+        network_wait_p50=network_wait_p50,
+        network_wait_p95=network_wait_p95,
+        network_wait_max=network_wait_max,
+        processing_p50=processing_p50,
+        processing_p95=processing_p95,
+        processing_max=processing_max,
+        workers_used=workers_used,
     )
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -98,6 +140,17 @@ def aggregate_voice(path: Path | str = DEFAULT_VOICE_HEALTH_PATH, limit: int | N
     cloud_ratio = (total_cloud / total_fragments) if total_fragments else 0.0
     errors_per_fragment = (total_errors / total_fragments) if total_fragments else 0.0
 
+    # V7-2: promedio entre sesiones de los percentiles ya calculados por
+    # sesión (no se guardan los tiempos crudos por fragmento en el JSONL,
+    # solo el resumen p50/p95/max de cada corrida) — snapshots viejos sin
+    # estos campos aportan 0.0 sin romper el promedio.
+    avg_network_wait_p50 = sum(s.get("network_wait_p50", 0.0) for s in snapshots) / n
+    avg_network_wait_p95 = sum(s.get("network_wait_p95", 0.0) for s in snapshots) / n
+    max_network_wait = max((s.get("network_wait_max", 0.0) for s in snapshots), default=0.0)
+    avg_processing_p50 = sum(s.get("processing_p50", 0.0) for s in snapshots) / n
+    avg_processing_p95 = sum(s.get("processing_p95", 0.0) for s in snapshots) / n
+    max_processing = max((s.get("processing_max", 0.0) for s in snapshots), default=0.0)
+
     return {
         "sessions": n,
         "total_fragments": total_fragments,
@@ -108,4 +161,10 @@ def aggregate_voice(path: Path | str = DEFAULT_VOICE_HEALTH_PATH, limit: int | N
         "avg_rtf": round(avg_rtf, 3),
         "cloud_ratio": round(cloud_ratio, 4),
         "errors_per_fragment": round(errors_per_fragment, 4),
+        "avg_network_wait_p50": round(avg_network_wait_p50, 3),
+        "avg_network_wait_p95": round(avg_network_wait_p95, 3),
+        "max_network_wait": round(max_network_wait, 3),
+        "avg_processing_p50": round(avg_processing_p50, 3),
+        "avg_processing_p95": round(avg_processing_p95, 3),
+        "max_processing": round(max_processing, 3),
     }

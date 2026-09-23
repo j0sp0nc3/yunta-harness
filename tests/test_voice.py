@@ -90,7 +90,12 @@ def test_transcribe_with_meta_reports_cloud_source_on_success(mock_urlopen, tmp_
     transcriber = AudioTranscriber(api_key="test")
     text, meta = transcriber.transcribe_with_meta(str(audio_file))
     assert text == "hola"
-    assert meta == {"source": "cloud", "cloud_attempted": True, "cloud_failed": False}
+    assert meta["source"] == "cloud"
+    assert meta["cloud_attempted"] is True
+    assert meta["cloud_failed"] is False
+    # V7-2: desglose de tiempo (red vs procesamiento) por fragmento
+    assert meta["network_wait_secs"] >= 0
+    assert meta["total_secs"] >= meta["network_wait_secs"]
 
     # transcribe() público no cambia de comportamiento
     assert transcriber.transcribe(str(audio_file)) == "hola"
@@ -170,7 +175,10 @@ def test_transcribe_with_meta_skip_cloud_goes_straight_to_local(tmp_path, monkey
 
     text, meta = transcriber.transcribe_with_meta(str(audio_file), skip_cloud=True)
     assert text == "texto local"
-    assert meta == {"source": "local", "cloud_attempted": False, "cloud_failed": False}
+    assert meta["source"] == "local"
+    assert meta["cloud_attempted"] is False
+    assert meta["cloud_failed"] is False
+    assert meta["network_wait_secs"] == 0.0  # skip_cloud nunca llama a la red
     assert calls["urlopen"] == 0  # nunca tocó la red
 
 
@@ -966,7 +974,9 @@ def test_transcribe_with_meta_filters_hallucinated_cloud_success(monkeypatch, tm
     text, meta = transcriber.transcribe_with_meta(str(f))
 
     assert text == ""
-    assert meta == {"source": "cloud", "cloud_attempted": True, "cloud_failed": False}
+    assert meta["source"] == "cloud"
+    assert meta["cloud_attempted"] is True
+    assert meta["cloud_failed"] is False
 
 
 def test_transcribe_with_meta_filters_hallucinated_local_fallback(monkeypatch, tmp_path):
@@ -1483,3 +1493,130 @@ def test_split_audio_falls_back_to_segment_time_without_silence_data(tmp_path, m
 
     assert "-segment_time" in captured["cmd"]
     assert "-segment_times" not in captured["cmd"]
+
+
+# ==================== V7-2: instrumentación fina por fragmento (red vs procesamiento) ====================
+
+def test_transcribe_with_meta_reports_network_wait_across_retries(monkeypatch, tmp_path):
+    """network_wait_secs acumula el tiempo de TODOS los intentos (no solo el
+    exitoso) — cada reintento es un round-trip real, no gratis."""
+    from yunta.voice import AudioTranscriber, _TranscribeError
+
+    transcriber = AudioTranscriber(api_base="http://fake-endpoint.test/v1")
+    monkeypatch.setattr("yunta.voice.time.sleep", lambda s: None)  # sin esperar el backoff real
+
+    calls = {"n": 0}
+
+    def fake_post(path, prompt=""):
+        calls["n"] += 1
+        if calls["n"] < 2:
+            raise _TranscribeError("fail", 500, "server error")
+        return "ok"
+
+    monkeypatch.setattr(transcriber, "_post_transcription", fake_post)
+    f = tmp_path / "a.mp3"
+    f.write_bytes(b"x" * 100)
+    text, meta = transcriber.transcribe_with_meta(str(f))
+
+    assert text == "ok"
+    assert calls["n"] == 2
+    assert meta["network_wait_secs"] >= 0
+    assert meta["total_secs"] >= meta["network_wait_secs"]
+
+
+def test_record_telemetry_collects_network_wait_and_processing(tmp_path):
+    from yunta.voice import AudioChunker, AudioTranscriber
+
+    chunker = AudioChunker(AudioTranscriber())
+    chunker._record_telemetry({
+        "source": "cloud", "cloud_attempted": True, "cloud_failed": False,
+        "network_wait_secs": 2.0, "total_secs": 3.0,
+    })
+    chunker._record_telemetry({
+        "source": "cloud", "cloud_attempted": True, "cloud_failed": False,
+        "network_wait_secs": 1.0, "total_secs": 1.5,
+    })
+    assert chunker._telem_network_wait == [2.0, 1.0]
+    assert chunker._telem_processing == [1.0, 0.5]
+
+
+def test_record_telemetry_ignores_meta_without_timing_fields(tmp_path):
+    """Meta de estilo viejo (sin network_wait_secs/total_secs, p.ej. de un
+    FakeTranscriber de un test que no las provee) no rompe nada — solo no
+    aporta a las listas de timing."""
+    from yunta.voice import AudioChunker, AudioTranscriber
+
+    chunker = AudioChunker(AudioTranscriber())
+    chunker._record_telemetry({"source": "cloud", "cloud_attempted": True, "cloud_failed": False})
+    assert chunker._telem_network_wait == []
+    assert chunker._telem_processing == []
+    assert chunker._telem_cloud == 1
+
+
+def test_transcribe_large_audio_passes_timing_percentiles_to_telemetry(tmp_path, monkeypatch):
+    """Integración: transcribe_large_audio calcula p50/p95/max reales de
+    network_wait/processing de los fragmentos y se los pasa a
+    record_voice_snapshot, en vez de un agregado ciego de tiempo total."""
+    monkeypatch.chdir(tmp_path)
+    from yunta.voice import AudioChunker, AudioTranscriber
+
+    chunks = [str(tmp_path / f"c{i}.mp3") for i in range(3)]
+    for c in chunks:
+        Path(c).write_bytes(b"\xff\xfb\x90\x00" + b"x" * 512)
+
+    network_waits = [1.0, 2.0, 3.0]
+
+    class MetaTranscriber(AudioTranscriber):
+        def __init__(self):
+            super().__init__()
+            self._i = 0
+
+        def transcribe_with_meta(self, file_path, prompt="", skip_cloud=False):
+            nw = network_waits[self._i]
+            self._i += 1
+            return "ok", {
+                "source": "cloud", "cloud_attempted": True, "cloud_failed": False,
+                "network_wait_secs": nw, "total_secs": nw + 0.5,
+            }
+
+    chunker = AudioChunker(MetaTranscriber())
+    chunker.split_audio_by_silence = lambda fp, *a, **k: chunks
+
+    recorded = MagicMock()
+    monkeypatch.setattr("yunta.voice_telemetry.record_voice_snapshot", recorded)
+
+    chunker.transcribe_large_audio("audio.mp3")
+
+    recorded.assert_called_once()
+    _, kwargs = recorded.call_args
+    assert kwargs["network_wait_p50"] == 2.0
+    assert kwargs["network_wait_max"] == 3.0
+    assert kwargs["processing_p50"] == pytest.approx(0.5, abs=0.001)
+    assert kwargs["workers_used"] == 1
+
+
+def test_transcribe_large_audio_reports_actual_workers_used(tmp_path, monkeypatch):
+    """workers_used refleja el modo de ejecucion REAL, no solo la variable de
+    entorno configurada: con un solo chunk, VOICE_PARALLEL_WORKERS>1 igual
+    cae al camino secuencial (ver transcribe_large_audio)."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("VOICE_PARALLEL_WORKERS", "4")
+    from yunta.voice import AudioChunker, AudioTranscriber
+
+    chunks = [str(tmp_path / "c0.mp3")]
+    Path(chunks[0]).write_bytes(b"\xff\xfb\x90\x00" + b"x" * 512)
+
+    class MetaTranscriber(AudioTranscriber):
+        def transcribe_with_meta(self, file_path, prompt="", skip_cloud=False):
+            return "ok", {"source": "cloud", "cloud_attempted": True, "cloud_failed": False}
+
+    chunker = AudioChunker(MetaTranscriber())
+    chunker.split_audio_by_silence = lambda fp, *a, **k: chunks
+
+    recorded = MagicMock()
+    monkeypatch.setattr("yunta.voice_telemetry.record_voice_snapshot", recorded)
+
+    chunker.transcribe_large_audio("audio.mp3")
+
+    _, kwargs = recorded.call_args
+    assert kwargs["workers_used"] == 1

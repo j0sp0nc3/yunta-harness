@@ -407,13 +407,32 @@ class AudioTranscriber:
         `skip_cloud=True` salta directo al fallback local sin tocar la red
         (usado por el circuit breaker cuando la nube ya se detectó saturada).
         """
+        # V7-2 (2026-09-22): `network_wait` mide solo el tiempo dentro de
+        # `_post_transcription` (esperando al servidor); todo lo demás del
+        # método (incluida la espera de backoff entre reintentos, que es una
+        # pausa deliberada del cliente, no del servidor) cae en `total_secs -
+        # network_wait` ("processing" a ojos de `AudioChunker`). El objetivo
+        # es distinguir "la red/el endpoint es lento" de "algo del lado
+        # cliente es lento", no una contabilidad perfecta de cada micro-etapa.
+        method_start = time.monotonic()
+        network_wait = 0.0
+
+        def _meta(source: str, cloud_attempted: bool, cloud_failed: bool) -> dict:
+            return {
+                "source": source,
+                "cloud_attempted": cloud_attempted,
+                "cloud_failed": cloud_failed,
+                "network_wait_secs": network_wait,
+                "total_secs": time.monotonic() - method_start,
+            }
+
         path = Path(file_path)
         if not path.exists():
             raise FileNotFoundError(f"Archivo de audio no encontrado: {file_path}")
 
         if skip_cloud:
             local_text = _clean_transcription(self.transcribe_offline_local(str(path)))
-            return local_text, {"source": "local", "cloud_attempted": False, "cloud_failed": False}
+            return local_text, _meta("local", False, False)
 
         # Si el archivo supera el límite (25 MB en Whisper API estándar, 500 KB en Workers AI), usar chunker
         max_size = (
@@ -431,14 +450,17 @@ class AudioTranscriber:
             else:
                 cm = 10.0
             text = AudioChunker(self, chunk_minutes=cm).transcribe_large_audio(str(path))
-            return text, {"source": "cloud", "cloud_attempted": True, "cloud_failed": False}
+            return text, _meta("cloud", True, False)
 
         last_err = None
         for attempt in range(3):
+            t0 = time.monotonic()
             try:
                 raw_text = self._post_transcription(path, prompt)
-                return _clean_transcription(raw_text), {"source": "cloud", "cloud_attempted": True, "cloud_failed": False}
+                network_wait += time.monotonic() - t0
+                return _clean_transcription(raw_text), _meta("cloud", True, False)
             except _TranscribeError as err:
+                network_wait += time.monotonic() - t0
                 last_err = err
                 if err.too_large:
                     # El endpoint rechaza el tamaño: fragmentar y reintentar con fragmentos menores (20s)
@@ -446,7 +468,7 @@ class AudioTranscriber:
                         break
                     print(f"⚠️ Endpoint rechazó el audio por límites de tamaño ({err}). Reintentando por fragmentos menores...")
                     text = AudioChunker(self).transcribe_large_audio(str(path), chunk_minutes=0.33)
-                    return text, {"source": "cloud", "cloud_attempted": True, "cloud_failed": False}
+                    return text, _meta("cloud", True, False)
                 if err.retryable and attempt < 2:
                     cap = float(os.environ.get("VOICE_BACKOFF_CAP", "30"))
                     if err.retry_after is not None:
@@ -467,8 +489,8 @@ class AudioTranscriber:
         local_text = _clean_transcription(self.transcribe_offline_local(str(path)))
         if local_text:
             print("💡 (Transcripción realizada con el servidor Whisper local de resguardo)")
-            return local_text, {"source": "local", "cloud_attempted": True, "cloud_failed": True}
-        return "", {"source": "local", "cloud_attempted": True, "cloud_failed": True}
+            return local_text, _meta("local", True, True)
+        return "", _meta("local", True, True)
 
     def _post_transcription(self, path: Path, prompt: str = "") -> str:
         """Un POST multipart al endpoint de transcripción. Lanza _TranscribeError."""
@@ -843,6 +865,13 @@ class AudioChunker:
         self._telem_cloud = 0
         self._telem_local = 0
         self._telem_errors = 0
+        # V7-2 (2026-09-22): tiempo de espera de red (network_wait, dentro de
+        # `_post_transcription`) separado del resto de `transcribe_with_meta`
+        # (processing) por fragmento — convierte en dato medible la anomalía
+        # sin explicar de la Corrida 2 (¿la demora es de red o de proceso
+        # local?) en vez de solo un agregado ciego de tiempo total.
+        self._telem_network_wait: list[float] = []
+        self._telem_processing: list[float] = []
         # Fase 5 (2026-09-20): protege las mutaciones de los contadores de
         # arriba cuando `VOICE_PARALLEL_WORKERS > 1` hace que varios workers
         # llamen a `_breaker_should_skip_cloud`/`_breaker_record` a la vez.
@@ -892,6 +921,11 @@ class AudioChunker:
                 self._telem_local += 1
             if meta.get("cloud_attempted") and meta.get("cloud_failed"):
                 self._telem_errors += 1
+            network_wait = meta.get("network_wait_secs")
+            total = meta.get("total_secs")
+            if network_wait is not None and total is not None:
+                self._telem_network_wait.append(network_wait)
+                self._telem_processing.append(max(0.0, total - network_wait))
 
     def transcribe_large_audio(self, file_path: str, chunk_minutes: float | int | None = None) -> str:
         """Divide el audio en fragmentos y concatena las transcripciones.
@@ -960,19 +994,28 @@ class AudioChunker:
             workers = 1
         if workers > 1 and len(chunks) > 1:
             transcripts, completed = self._transcribe_chunks_parallel(chunks, offsets, workers, file_path, resume_entries)
+            workers_used = workers
         else:
             transcripts, completed = self._transcribe_chunks_sequential(chunks, offsets, file_path, resume_entries)
+            workers_used = 1
 
         outcome = "completed" if completed == len(chunks) else "partial"
         if outcome == "completed":
             _clear_checkpoint(file_path, len(chunks))
         try:
-            from .voice_telemetry import record_voice_snapshot
+            from .voice_telemetry import percentile, record_voice_snapshot
             record_voice_snapshot(
                 total_fragments=len(chunks),
                 cloud_fragments=self._telem_cloud,
                 local_fragments=self._telem_local,
                 errors_handled=self._telem_errors,
+                network_wait_p50=percentile(self._telem_network_wait, 50),
+                network_wait_p95=percentile(self._telem_network_wait, 95),
+                network_wait_max=max(self._telem_network_wait, default=0.0),
+                processing_p50=percentile(self._telem_processing, 50),
+                processing_p95=percentile(self._telem_processing, 95),
+                processing_max=max(self._telem_processing, default=0.0),
+                workers_used=workers_used,
                 breaker_trips=self._cb_tripped_count,
                 elapsed_secs=time.monotonic() - start_time,
                 audio_duration_secs=total_secs,
