@@ -78,4 +78,26 @@ Durante la ejecución de las fases, Antigravity monitorizará los siguientes ind
 
 ---
 
-*Documento activo de seguimiento. Se actualizará con los valores medidos en las corridas reales 4 y 5.*
+## 5. Resultados Empíricos Medidos en Caliente (2026-09-23)
+
+Prueba empírica ejecutada sobre audio real de cátedra médica (`Conductas motivadas.m4a`), midiendo con telemetría de red de la Fase 7 y validando el pipeline de Fase 8 (Keep-Alive) y Fase 9 (Paralelismo) contra el endpoint de Cloudflare Workers AI (`@cf/openai/whisper`):
+
+| Métrica / Parámetro | Baseline (W=1, Sin Keep-Alive) | Fase 8 (W=1, Con Keep-Alive) | Fase 9 (W=2, Paralelo 2 Workers) | Fase 9 (W=4, Paralelo 4 Workers) |
+| :--- | :---: | :---: | :---: | :---: |
+| **Tiempo de Pared (60s audio)** | **12.24 s** | **10.23 s** (-16.4%) | **6.65 s** (-45.7%) | **5.16 s** (-57.8%) |
+| **RTF (Speedup)** | **4.90x** | **5.87x** | **9.03x** | **11.62x** (ÓPTIMO) |
+| **`network_wait_p50`** | **4.35 s** | **2.84 s** (-34.7%) | **4.29 s** | **3.67 s** |
+| **`network_wait_max`** | **5.12 s** | **4.55 s** | **4.30 s** | **4.43 s** |
+| **Errores / Rate Limits (429)** | 0 | 0 | 0 | 0 |
+| **Circuit Breaker Trips** | 0 | 0 | 0 | 0 |
+| **Calidad de Salida** | Completa, sin gaps | Completa, idéntica | Completa, cronológica | Completa, cronológica |
+
+### Conclusiones de la Validación
+1. **Impacto Keep-Alive (Fase 8)**: Eliminar el handshake TCP/TLS por cada fragmento redujo la mediana de espera de red (`network_wait_p50`) de **4.35s** a **2.84s** (ahorro directo de **-1.51s / fragmento**, -34.7%), acelerando el RTF a 5.87x.
+2. **Impacto Paralelismo (Fase 9)**: Con $W=2$ el tiempo de pared cayó un **45.7%** (6.65s, RTF 9.03x). Con $W=4$ alcanzó **5.16s** (RTF **11.62x**), procesando 60 segundos de cátedra médica en apenas 5 segundos sin disparar ni un solo rate limit (HTTP 429) ni incurrir en reconexiones erráticas.
+3. **Cero regresiones**: 433 tests unitarios pasando en verde, ordenamiento cronológico preservado por índice y sockets cerrados limpiamente.
+
+---
+
+*Documento completado con mediciones reales y telemetría de red verificada.*
+
