@@ -6,6 +6,17 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.14.21] — 2026-09-22
+
+- **`yunta/provider.py`, nuevo `yunta/llm_call_telemetry.py` — V7-5: telemetría de `finish_reason` crudo por llamada al LLM**: dos corridas reales distintas del pipeline de voz generaron **exactamente 9,402 tokens de salida** con contenido de entrada completamente distinto (72K vs 73K caracteres de transcript, resúmenes con estructura diferente) — coincidencia estadísticamente rara si ambas generaciones terminaron "naturalmente". `_FINISH_REASONS` en `provider.py` no mapea `"length"` (el motivo estándar cuando la respuesta se corta por `max_tokens`) — hoy cae silenciosamente en `StopReason.OTHER`, indistinguible de cualquier otro final.
+  - Nuevo módulo `yunta/llm_call_telemetry.py` (mismo patrón JSONL de `voice_telemetry.py`): registra por llamada a `LiteLLMProvider.send()` el modelo, tokens de entrada/salida, tiempo de pared, y **`finish_reason` crudo del proveedor** (no el `StopReason` ya mapeado) — deliberadamente separado de `yunta/api.py::Usage`, superficie pública congelada (`docs/PLAN.md`, ítem E2, reexportada en `yunta/__init__.py`), sin agregarle campos ni tocar `StopReason`.
+  - Instrumentado en ambos caminos de `send()`: no-streaming (`litellm.completion` directo) y streaming (`_consume_stream`, que ahora recibe el `model` real usado, relevante con fallback entre modelos).
+  - `aggregate_llm_calls`: tokens/segundo promedio y proporción de llamadas truncadas por `"length"` — responde directamente si el truncamiento por `max_tokens` explica una demora, en vez de conjeturarlo.
+  - Nunca rompe la respuesta real si falla el registro (mismo patrón de resiliencia que `voice_telemetry`).
+  - 6 tests nuevos entre `tests/test_provider.py` y `tests/test_llm_call_telemetry.py` (413 → 419 tests totales): roundtrip y agregación de `llm_call_telemetry.py`, `finish_reason="length"` capturado distinguible en ambos caminos (streaming y no), y que un fallo de telemetría no rompe la llamada real.
+  - **Resultado de esta fase**: la próxima corrida real con transcript real va a decir con datos si el truncamiento por `max_tokens` explica la demora sin explicar de la Corrida 2, en vez de solo la coincidencia sospechosa de tokens idénticos.
+  - Fase 10 de un plan conjunto con Antigravity (ver `.claude/plans/genera-un-plan-de-concurrent-cook.md`, no versionado en este repo).
+
 ## [2.14.20] — 2026-09-22
 
 - **`yunta/voice.py`, `yunta/voice_telemetry.py`, `yunta/cli.py` — V7-2: instrumentación fina por fragmento (network_wait vs processing)**: la Corrida 2 quedó con una anomalía sin explicar (~91s de diferencia en STT no atribuibles a overhead medido) porque la única telemetría existente era un agregado ciego por transcripción completa — no había forma de saber si una demora era de red/endpoint o del lado cliente.

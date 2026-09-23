@@ -1,5 +1,6 @@
 import json
 import os
+import time
 
 import litellm
 
@@ -139,10 +140,9 @@ class LiteLLMProvider(Provider):
                 if on_text is not None:
                     kwargs["stream"] = True
                     kwargs["stream_options"] = {"include_usage": True}
-                    import time
                     for attempt in range(5):
                         try:
-                            return self._consume_stream(litellm.completion(**kwargs), on_text, messages=messages)
+                            return self._consume_stream(litellm.completion(**kwargs), on_text, messages=messages, model=current_model)
                         except Exception as e:
                             err_str = str(e).lower()
                             err_name = type(e).__name__
@@ -150,7 +150,7 @@ class LiteLLMProvider(Provider):
                             if "stream_options" in err_str or "stream_options" in str(e):
                                 kwargs.pop("stream_options", None)
                                 try:
-                                    return self._consume_stream(litellm.completion(**kwargs), on_text, messages=messages)
+                                    return self._consume_stream(litellm.completion(**kwargs), on_text, messages=messages, model=current_model)
                                 except Exception as inner_e:
                                     err_str = str(inner_e).lower()
                                     err_name = type(inner_e).__name__
@@ -169,7 +169,9 @@ class LiteLLMProvider(Provider):
                                 continue
                             raise
 
+                t0 = time.monotonic()
                 resp = litellm.completion(**kwargs)
+                elapsed = time.monotonic() - t0
                 choice = resp.choices[0]
 
                 out = Response(stop_reason=_FINISH_REASONS.get(choice.finish_reason, StopReason.OTHER))
@@ -187,6 +189,10 @@ class LiteLLMProvider(Provider):
 
                 out.usage = self._extract_usage(getattr(resp, "usage", None), messages, out.content)
                 self.total_usage = self.total_usage.add(out.usage)
+                self._record_llm_call(
+                    current_model, out.usage, elapsed, choice.finish_reason,
+                    streaming=False, tool_calls_count=len(choice.message.tool_calls or []),
+                )
                 return out
 
             except Exception as e:
@@ -213,6 +219,28 @@ class LiteLLMProvider(Provider):
                     print(f"\n[Fallback Router: error en {old_m} ({err_name}), conmutando automáticamente a: {new_m}]")
                     continue
                 raise
+
+    def _record_llm_call(
+        self, model: str, usage: Usage, elapsed_secs: float, finish_reason_raw: str | None,
+        streaming: bool, tool_calls_count: int,
+    ) -> None:
+        """V7-5 (2026-09-22): registra el `finish_reason` crudo del proveedor
+        (no el `StopReason` mapeado, que colapsa `"length"` en `OTHER`) para
+        poder confirmar o descartar truncamiento por `max_tokens` — nunca
+        rompe la llamada real si falla (mismo patrón que `voice_telemetry`)."""
+        try:
+            from .llm_call_telemetry import record_llm_call
+            record_llm_call(
+                model=model,
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                elapsed_secs=elapsed_secs,
+                finish_reason_raw=finish_reason_raw or "",
+                streaming=streaming,
+                tool_calls=tool_calls_count,
+            )
+        except Exception:
+            pass
 
     def _extract_usage(
         self,
@@ -301,11 +329,12 @@ class LiteLLMProvider(Provider):
             cached_tokens=int(cached_tok),
         )
 
-    def _consume_stream(self, stream, on_text, messages: list[Message] | None = None) -> Response:
+    def _consume_stream(self, stream, on_text, messages: list[Message] | None = None, model: str | None = None) -> Response:
         text: list[str] = []
         calls: dict = {}
         finish_reason = None
         usage = None
+        t0 = time.monotonic()
         for chunk in stream:
             if getattr(chunk, "usage", None) is not None:
                 usage = chunk.usage
@@ -352,6 +381,10 @@ class LiteLLMProvider(Provider):
             )
         out.usage = self._extract_usage(usage, messages, out.content)
         self.total_usage = self.total_usage.add(out.usage)
+        self._record_llm_call(
+            model or self.model(), out.usage, time.monotonic() - t0, finish_reason,
+            streaming=True, tool_calls_count=len(calls),
+        )
         return out
 
     def _to_litellm(self, messages: list[Message]) -> list[dict]:

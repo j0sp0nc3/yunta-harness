@@ -387,3 +387,77 @@ def test_reasoning_and_thinking_params(monkeypatch):
     monkeypatch.delenv("LLM_THINKING_BUDGET", raising=False)
 
 
+# ==================== V7-5: telemetría de finish_reason crudo ====================
+
+def test_send_records_raw_finish_reason_length_non_streaming(monkeypatch):
+    """finish_reason="length" (truncamiento por max_tokens) hoy cae
+    silenciosamente en StopReason.OTHER — la telemetría debe conservarlo
+    distinguible en vez de perderlo."""
+    os.environ["LLM_MODEL"] = "openai/glm-4.7"
+
+    def fake_completion_length(**kwargs):
+        choice = SimpleNamespace(
+            message=SimpleNamespace(content="texto truncado", tool_calls=None),
+            finish_reason="length",
+        )
+        return SimpleNamespace(
+            choices=[choice], usage=SimpleNamespace(prompt_tokens=1000, completion_tokens=9402)
+        )
+
+    litellm.completion = fake_completion_length
+
+    recorded = {}
+    def fake_record(**kwargs):
+        recorded.update(kwargs)
+    monkeypatch.setattr("yunta.llm_call_telemetry.record_llm_call", fake_record)
+
+    p = LiteLLMProvider(system="sys")
+    r = p.send(MSGS, tools=[])
+
+    assert r.stop_reason.value == "other"  # el StopReason mapeado sigue colapsando en OTHER
+    assert recorded["finish_reason_raw"] == "length"  # pero la telemetria cruda no
+    assert recorded["output_tokens"] == 9402
+    assert recorded["streaming"] is False
+
+
+def test_consume_stream_records_raw_finish_reason(monkeypatch):
+    os.environ["LLM_MODEL"] = "openai/glm-4.7"
+    stream_chunks = [
+        SimpleNamespace(
+            choices=[SimpleNamespace(delta=SimpleNamespace(content="hola", tool_calls=None), finish_reason=None)],
+            usage=None,
+        ),
+        SimpleNamespace(
+            choices=[SimpleNamespace(delta=None, finish_reason="length")],
+            usage=SimpleNamespace(prompt_tokens=50, completion_tokens=9402),
+        ),
+    ]
+    litellm.completion = lambda **kwargs: stream_chunks
+
+    recorded = {}
+    def fake_record(**kwargs):
+        recorded.update(kwargs)
+    monkeypatch.setattr("yunta.llm_call_telemetry.record_llm_call", fake_record)
+
+    p = LiteLLMProvider(system="sys")
+    p.send(MSGS[:1], tools=[], on_text=lambda t: None)
+
+    assert recorded["finish_reason_raw"] == "length"
+    assert recorded["streaming"] is True
+    assert recorded["output_tokens"] == 9402
+
+
+def test_llm_call_telemetry_failure_does_not_break_send(monkeypatch):
+    """Si grabar la telemetria falla (disco lleno, etc.), la respuesta real
+    del LLM no se pierde — mismo patron de resiliencia que voice_telemetry."""
+    os.environ["LLM_MODEL"] = "openai/glm-4.7"
+    litellm.completion = fake_completion
+    monkeypatch.setattr(
+        "yunta.llm_call_telemetry.record_llm_call",
+        lambda **kwargs: (_ for _ in ()).throw(Exception("disco lleno")),
+    )
+    p = LiteLLMProvider(system="sys")
+    r = p.send(MSGS, tools=[])
+    assert r.content[0].text == "ok"
+
+
