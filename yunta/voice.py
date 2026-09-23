@@ -647,10 +647,17 @@ def _calibrate_chunk_minutes(
     conservador (30s por defecto) porque el límite real de Workers AI es
     CPU-por-invocación, no solo tamaño de payload — no se busca maximizar
     el tamaño de fragmento, solo evitar fragmentar más fino de lo necesario.
-    Si no se puede leer el bitrate (formato no MP3, archivo dañado), cae al
-    `floor` — comportamiento idéntico al valor fijo previo, sin regresión.
+    Si no se puede leer el bitrate ni por sniffing de frame MP3 ni por
+    `ffprobe` (formato desconocido, archivo dañado, `ffprobe` ausente), cae
+    al `floor` — comportamiento idéntico al valor fijo previo, sin regresión.
+
+    V7-1 (2026-09-22): `_estimate_bitrate_bps` solo lee bitrate de frames
+    MP3 — para cualquier otro contenedor (`.m4a`, `.ogg`, `.wav`) siempre
+    daba 0 y esta función jamás calibraba nada, cayendo siempre al `floor`.
+    Se agrega `_ffprobe_bitrate_bps` como segundo intento (cualquier
+    formato que `ffprobe` entienda) antes de rendirse al `floor`.
     """
-    bitrate = _estimate_bitrate_bps(file_path)
+    bitrate = _estimate_bitrate_bps(file_path) or _ffprobe_bitrate_bps(file_path)
     if not bitrate:
         return floor
     bytes_per_sec = bitrate / 8
@@ -730,6 +737,31 @@ def _ffprobe_duration_secs(file_path: str) -> float:
         if _ffprobe_available is None:
             _ffprobe_available = False
         return 0.0
+
+
+def _ffprobe_bitrate_bps(file_path: str) -> int:
+    """Bitrate real (bps) vía `ffprobe`, para cuando `_estimate_bitrate_bps`
+    (sniffing de frame MP3, solo `.mp3`) da 0 — p.ej. `.m4a`, `.ogg`, `.wav`
+    (V7-1, 2026-09-22: la calibración de chunk por bitrate real nunca tuvo
+    efecto en las 3 corridas empíricas de esta sesión porque el archivo de
+    prueba era `.m4a`). 0 si `ffprobe` no está disponible o falla — el
+    caller cae al `floor` de `_calibrate_chunk_minutes`, sin regresión.
+    Comparte el flag `_ffprobe_available` con `_ffprobe_duration_secs`."""
+    global _ffprobe_available
+    if _ffprobe_available is False:
+        return 0
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=bit_rate",
+             "-of", "default=noprint_wrappers=1:nokey=1", file_path],
+            capture_output=True, text=True, timeout=10,
+        )
+        _ffprobe_available = True
+        return int(float(out.stdout.strip()))
+    except Exception:
+        if _ffprobe_available is None:
+            _ffprobe_available = False
+        return 0
 
 
 # V6-5 (docs/PLAN.md): cortar cada fragmento en la pausa de silencio más

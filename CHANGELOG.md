@@ -6,6 +6,16 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.14.19] — 2026-09-22
+
+- **`yunta/voice.py` — V7-1: calibración de bitrate universal (no solo MP3)**: `_calibrate_chunk_minutes` (Fase 4, v2.14.4) solo podía leer bitrate real vía sniffing de frame MP3 — para cualquier otro contenedor (`.m4a`, `.ogg`, `.wav`) siempre daba 0 y la función se rendía directo al `floor` de 0.33 min. **Esto significaba que la calibración de bitrate nunca tuvo efecto en ninguna de las 3 corridas empíricas reales de esta sesión**, porque el archivo de prueba es `.m4a` — hallazgo encontrado en una segunda revisión independiente del trabajo de las corridas 1-3.
+  - Nueva `_ffprobe_bitrate_bps(file_path)`: mismo patrón defensivo que `_ffprobe_duration_secs` (try/except, timeout, comparte el flag `_ffprobe_available` — si uno detecta el binario ausente, el otro no reintenta), pero para bitrate vía `ffprobe -show_entries format=bit_rate`, funcionando con cualquier formato que `ffprobe` entienda.
+  - `_calibrate_chunk_minutes` ahora intenta `_estimate_bitrate_bps` (rápido, sin subproceso, solo MP3) y si da 0, intenta `_ffprobe_bitrate_bps` antes de rendirse al `floor` — sin regresión si ambos fallan.
+  - **Validado con el archivo real de la sesión** (81.78 min, `.m4a`): bitrate detectado 130,564 bps (130.6 kbps), `chunk_minutes` calibrado de 0.33 min (20s) fijo a 0.4444 min (26.7s) — proyección de 248 a 184 fragmentos (**-25.7%**), coincide casi exacto con la proyección de la revisión independiente (~0.44min, -25%).
+  - 4 tests nuevos en `tests/test_voice.py` (397 → 401 tests totales): parseo de `_ffprobe_bitrate_bps`, desactivación tras binario ausente, flag compartido entre `_ffprobe_bitrate_bps`/`_ffprobe_duration_secs`, calibración real para `.m4a` con ffprobe mockeado; se actualizó un test existente (`test_calibrate_chunk_minutes_falls_back_to_floor_without_bitrate`) para mockear explícitamente `ffprobe` ausente en vez de depender implícitamente de que el binario real no pudiera parsear un archivo de bytes basura.
+  - **Pendiente**: falta la corrida empírica completa (fragmentos totales reales, tasa de errores, ritmo por fragmento) — la calibración standalone ya está verificada, pero el efecto de punta a punta en una transcripción real todavía no.
+  - Fase 6 de un plan conjunto con Antigravity (ver `.claude/plans/genera-un-plan-de-concurrent-cook.md` — no versionado en este repo) tras contrastar y resolver dos rondas de revisión cruzada sobre cómo seguir optimizando el pipeline de voz post-v2.14.18.
+
 ## [2.14.18] — 2026-09-20
 
 - **`yunta/voice.py` — corrección de regresión: elimina 259 llamadas redundantes a `ffprobe`**: la segunda corrida real de auditoría (mismo audio de 81 min, después de v2.14.12-17) salió **más lenta** que la primera (STT: 2265.7s vs 2127.8s; total: 50m40s vs 43m46s) — el objetivo de estas fases era mejorar, no empeorar, y el resultado neto no lo cumplió.

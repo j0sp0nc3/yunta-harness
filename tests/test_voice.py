@@ -547,9 +547,13 @@ def test_calibrate_chunk_minutes_clamps_to_floor_for_high_bitrate(tmp_path):
     assert cm == 0.33
 
 
-def test_calibrate_chunk_minutes_falls_back_to_floor_without_bitrate(tmp_path):
-    """Sin bitrate legible (formato no MP3), se mantiene el comportamiento
-    previo (0.33 fijo) — sin regresión."""
+def test_calibrate_chunk_minutes_falls_back_to_floor_without_bitrate(tmp_path, monkeypatch):
+    """Sin bitrate legible por ninguna vía (ni sniffing de frame MP3 ni
+    ffprobe), se mantiene el comportamiento previo (0.33 fijo) — sin
+    regresión. ffprobe mockeado explícitamente ausente para que el test no
+    dependa de si el binario real está instalado en la máquina."""
+    import yunta.voice as voice_module
+    monkeypatch.setattr(voice_module, "_ffprobe_bitrate_bps", lambda p: 0)
     f = tmp_path / "audio.m4a"
     f.write_bytes(b"x" * (1024 * 1024))
     assert AudioChunker._calibrate_chunk_minutes(str(f), max_bytes=500 * 1024) == 0.33
@@ -1156,6 +1160,69 @@ def test_ffprobe_duration_secs_bad_file_does_not_disable_binary(monkeypatch):
     monkeypatch.setattr(voice_module.subprocess, "run", lambda *a, **k: FakeCompleted())
     assert voice_module._ffprobe_duration_secs("corrupto.mp3") == 0.0
     assert voice_module._ffprobe_available is True
+
+
+# ==================== V7-1: calibración de bitrate universal (ffprobe) ====================
+
+def test_ffprobe_bitrate_bps_parses_output(monkeypatch):
+    import yunta.voice as voice_module
+    monkeypatch.setattr(voice_module, "_ffprobe_available", None)
+
+    class FakeCompleted:
+        stdout = "130500\n"
+
+    monkeypatch.setattr(voice_module.subprocess, "run", lambda *a, **k: FakeCompleted())
+    assert voice_module._ffprobe_bitrate_bps("clase.m4a") == 130500
+    assert voice_module._ffprobe_available is True
+
+
+def test_ffprobe_bitrate_bps_disables_after_binary_missing(monkeypatch):
+    import yunta.voice as voice_module
+    monkeypatch.setattr(voice_module, "_ffprobe_available", None)
+
+    calls = []
+
+    def fake_run(*a, **k):
+        calls.append(1)
+        raise FileNotFoundError("ffprobe no encontrado")
+
+    monkeypatch.setattr(voice_module.subprocess, "run", fake_run)
+    assert voice_module._ffprobe_bitrate_bps("clase.m4a") == 0
+    assert voice_module._ffprobe_available is False
+    assert voice_module._ffprobe_bitrate_bps("otro.m4a") == 0
+    assert len(calls) == 1
+
+
+def test_ffprobe_bitrate_and_duration_share_availability_flag(monkeypatch):
+    """Las dos funciones de ffprobe comparten `_ffprobe_available`: si una
+    detecta que el binario falta, la otra tampoco debe reintentarlo."""
+    import yunta.voice as voice_module
+    monkeypatch.setattr(voice_module, "_ffprobe_available", None)
+
+    def fake_run(*a, **k):
+        raise FileNotFoundError("ffprobe no encontrado")
+
+    monkeypatch.setattr(voice_module.subprocess, "run", fake_run)
+    assert voice_module._ffprobe_duration_secs("a.mp3") == 0.0
+    assert voice_module._ffprobe_available is False
+
+    calls = []
+    monkeypatch.setattr(voice_module.subprocess, "run", lambda *a, **k: calls.append(1))
+    assert voice_module._ffprobe_bitrate_bps("b.m4a") == 0
+    assert calls == []  # no debió ni intentar llamar al subprocess
+
+
+def test_calibrate_chunk_minutes_uses_ffprobe_for_non_mp3(tmp_path, monkeypatch):
+    """V7-1: para .m4a (u otro contenedor no-MP3), el sniffing de frame
+    siempre da 0 — ahora cae a ffprobe en vez de rendirse directo al floor."""
+    import yunta.voice as voice_module
+
+    f = tmp_path / "clase.m4a"
+    f.write_bytes(b"x" * (1024 * 1024))
+    monkeypatch.setattr(voice_module, "_ffprobe_bitrate_bps", lambda p: 130500)
+
+    cm = AudioChunker._calibrate_chunk_minutes(str(f), max_bytes=500 * 1024)
+    assert cm == pytest.approx(0.4446, abs=0.001)
 
 
 def test_transcribe_large_audio_uses_ffprobe_real_durations_for_offsets(tmp_path, monkeypatch):
