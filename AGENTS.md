@@ -49,9 +49,36 @@ trabajar.
      El complemento narrativo (decisiones, prioridades, próximos pasos) debe residir
      en el buzón canónico **`.yunta/HANDOFF.md`** (evitando `scratch/`, que se reserva
      para archivos temporales u offload).
-   - **Coordinación estricta (un agente a la vez)**: nunca deben operar dos agentes
-     simultáneamente sobre el mismo working tree. Si otro agente tiene trabajo en curso,
-     esperar a que concluya o formalice su relevo antes de iniciar modificaciones.
+   - **Coordinación estricta sobre el working tree compartido (un agente a la vez)**:
+     nunca deben operar dos agentes simultáneamente sobre el **mismo directorio de
+     trabajo**. Si otro agente tiene trabajo en curso ahí, esperar a que concluya o
+     formalice su relevo antes de iniciar modificaciones. Esto sigue siendo el modo
+     por defecto para cambios chicos o de un solo agente a la vez.
+   - **Trabajo concurrente real (git worktrees), para cuando varios agentes
+     necesitan avanzar al mismo tiempo** (2026-09-22): el punto anterior evita
+     pisarse, pero no permite paralelismo genuino — obliga a esperar turno incluso
+     cuando las tareas no se solapan. Para eso, cada agente que vaya a trabajar en
+     paralelo con otro usa su **propio `git worktree` en su propia rama**, derivada
+     de la punta de la rama de integración vigente (hoy `feat/v2.5.0-voice-roi-extractors`;
+     si el proyecto define una rama de integración distinta más adelante, reemplaza
+     a esta como base):
+     - **Nombre de rama**: `<rama-integración>--<agente>-<tarea-o-fase>` (ej.
+       `feat/v2.5.0-voice-roi-extractors--antigravity-fase8-9`).
+     - Cada agente trabaja, testea y commitea en su propio worktree sin tocar el
+       directorio de los demás — cero riesgo de corrupción cruzada mientras ambos
+       avanzan a la vez, sin importar si tocan los mismos archivos.
+     - **Al terminar**, el agente abre PR contra la rama de integración (o hace
+       rebase/merge si el flujo del repo no usa PRs) y corre la suite completa
+       *después* de integrar, no solo antes — los conflictos de merge, si los hay,
+       los resuelve git de la forma estándar, no una convención informal de "avisar
+       antes de tocar tal función".
+     - **`HANDOFF.md` cambia de rol**: en modo worktree deja de ser el semáforo de
+       "quién tiene el control del único directorio" y pasa a listar qué rama/worktree
+       tiene cada agente y en qué fase está, para evitar trabajo duplicado — ya no es
+       un cuello de botella de turnos.
+     - Si una tarea es chica o un solo agente está activo, seguir usando el working
+       tree compartido (punto anterior) es más simple — los worktrees son para cuando
+       la concurrencia real aporta valor, no un reemplazo universal del flujo actual.
    - **Prohibición de trabajo fantasma**: si una tarea queda incompleta por
      agotamiento de cuota o relevo inminente, registrar un commit `wip: <qué
      falta y qué tests están pendientes>` en vez de dejar el working tree

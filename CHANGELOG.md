@@ -6,6 +6,14 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.14.23] — 2026-09-22
+
+- **`AGENTS.md` — Regla 7: protocolo de trabajo concurrente real vía `git worktree`**: el punto "un agente a la vez" de la Regla 7 evita que dos agentes se pisen, pero también impide que trabajen genuinamente en paralelo — obliga a esperar turno incluso cuando las tareas no se solapan (justo la situación de esta sesión: Claude Code con las Fases 6/7/10/11, Antigravity con las Fases 8/9, ambas sobre `yunta/voice.py`).
+  - Nuevo mecanismo, opt-in según convenga: cada agente que trabaje en paralelo con otro usa su propio `git worktree` en una rama derivada de la rama de integración (`<rama-integración>--<agente>-<tarea>`), commitea de forma independiente, y al terminar abre PR o hace rebase/merge contra la rama de integración — los conflictos, si los hay, los resuelve git de forma estándar en vez de una convención informal de "avisar antes de tocar tal función".
+  - `.yunta/HANDOFF.md` cambia de rol en este modo: de "semáforo de quién tiene el único directorio" a "registro de qué rama/worktree tiene cada agente".
+  - El modo secuencial existente (working tree compartido, un agente a la vez) sigue siendo el default para cambios chicos o cuando solo hay un agente activo — el worktree es para cuando la concurrencia real aporta valor, no un reemplazo universal.
+  - Motivado directamente por esta sesión: coordinar Fases 6-11 (mías) con Fases 8-9 (Antigravity) mediante buzón secuencial funcionó, pero con fricción evitable si ambos bloques hubieran podido avanzar a la vez.
+
 ## [2.14.22] — 2026-09-22
 
 - **`yunta/voice.py`, `yunta/voice_telemetry.py`, `yunta/cli.py` — V7-6: telemetría del filtro de alucinaciones (V6-4)**: desde que se agregó el filtro de frases de relleno conocidas (v2.14.12), no había forma de saber cuántas veces disparó en una corrida real — un punto ciego identificado explícitamente al auditar las 2 primeras corridas empíricas de esta sesión.
