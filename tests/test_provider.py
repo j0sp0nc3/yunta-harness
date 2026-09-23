@@ -4,6 +4,7 @@ import sys
 from types import SimpleNamespace
 
 import litellm
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -12,6 +13,19 @@ import yunta.tools.files  # noqa: F401,E402
 from yunta.api import Block, BlockType, Message, Role, Usage  # noqa: E402
 from yunta.provider import LiteLLMProvider  # noqa: E402
 from yunta.tools import registry  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _isolate_llm_call_telemetry(tmp_path, monkeypatch):
+    """V7-5 (2026-09-22): `LiteLLMProvider.send()` graba telemetría por
+    llamada a `.yunta/llm_calls.jsonl` — una ruta RELATIVA, o sea resuelta
+    contra el directorio de trabajo. Sin aislar, cada corrida de esta suite
+    escribía ~154 entradas sintéticas (out=10 tokens, elapsed≈0s) al archivo
+    real del repo, enterrando las llamadas reales que ese archivo existe
+    para medir. Mismo tipo de contaminación ya corregido para
+    `voice_health.jsonl` en v2.14.13."""
+    monkeypatch.chdir(tmp_path)
+
 
 captured = {}
 

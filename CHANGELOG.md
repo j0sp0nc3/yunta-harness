@@ -6,6 +6,14 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.14.25] — 2026-09-23
+
+- **`tests/test_provider.py` — corrección de regresión propia: los tests contaminaban `.yunta/llm_calls.jsonl`**: la telemetría agregada en v2.14.21 (V7-5) graba a una ruta **relativa** (`.yunta/llm_calls.jsonl`), o sea resuelta contra el directorio de trabajo. Los 17 tests preexistentes de `test_provider.py` llaman a `LiteLLMProvider.send()` con un `litellm.completion` falso y **sin mockear la telemetría**, así que cada corrida de la suite escribía ~154 entradas sintéticas (`out=10` tokens, `elapsed≈0s`, 59K tokens/seg) al archivo real del repo — enterrando exactamente las llamadas reales que ese archivo existe para medir.
+  - Detectado al intentar usar el archivo para su propósito: verificar si el resumen de voz se trunca por `max_tokens` (`finish_reason == "length"`). Las 154 entradas eran 100% ruido de tests, 0 llamadas reales.
+  - Es el **mismo tipo de contaminación ya corregido para `voice_health.jsonl`** en v2.14.13, reintroducido con el módulo nuevo. Nota para futuras telemetrías con ruta relativa: aislar el directorio de trabajo en los tests es parte del diseño, no un detalle posterior.
+  - Fix: fixture `autouse` a nivel de módulo en `tests/test_provider.py` que hace `monkeypatch.chdir(tmp_path)` — contenido a ese archivo, sin un `conftest.py` global (que rompería los 8 archivos de test que sí dependen del CWD del repo: gobernanza, handoff, sandbox, bestof).
+  - Verificado empíricamente: 20/20 tests de `test_provider.py` en verde y el archivo real **no crece** (154 → 154 líneas antes de limpiarlo). Archivo purgado de las 154 entradas sintéticas (backup en el scratchpad de la sesión); `.yunta/` está gitignored, así que la purga es mantenimiento local.
+
 ## [2.14.24] — 2026-09-22
 
 - **`yunta/voice.py`, `tests/test_voice.py` — V7-3: Reutilización de conexión HTTP persistente (Keep-Alive)**: en transcripciones de audios largos con decenas o cientos de fragmentos (ej. 184 fragmentos en cátedras reales), abrir una conexión TLS/TCP nueva por fragmento añadía una penalización fija acumulada de handshake (~250-350 ms por fragmento, ~45-65s totales de latencia pura).
