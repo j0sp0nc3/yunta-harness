@@ -73,6 +73,26 @@ def test_aggregate_voice_averages_network_percentiles_across_sessions(tmp_path):
     assert stats["max_network_wait"] == 8.0
 
 
+def test_record_and_aggregate_hallucinations_filtered(tmp_path):
+    path = tmp_path / "voice_health.jsonl"
+    record_voice_snapshot(
+        total_fragments=10, cloud_fragments=10, local_fragments=0,
+        errors_handled=0, breaker_trips=0, elapsed_secs=10.0, audio_duration_secs=10.0,
+        hallucinations_filtered=3, path=path,
+    )
+    record_voice_snapshot(
+        total_fragments=10, cloud_fragments=10, local_fragments=0,
+        errors_handled=0, breaker_trips=0, elapsed_secs=10.0, audio_duration_secs=10.0,
+        hallucinations_filtered=1, path=path,
+    )
+    entry = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+    assert entry["hallucinations_filtered"] == 3
+
+    stats = aggregate_voice(path)
+    assert stats["total_hallucinations_filtered"] == 4
+    assert stats["hallucinations_per_fragment"] == round(4 / 20, 4)
+
+
 def test_aggregate_voice_tolerates_old_snapshots_without_new_fields(tmp_path):
     """Snapshots grabados antes de V7-2 no tienen los campos nuevos — el
     agregado no debe romperse, deben aportar 0.0."""
@@ -85,6 +105,7 @@ def test_aggregate_voice_tolerates_old_snapshots_without_new_fields(tmp_path):
     path.write_text(json.dumps(old_snapshot) + "\n", encoding="utf-8")
     stats = aggregate_voice(path)
     assert stats["avg_network_wait_p50"] == 0.0
+    assert stats["total_hallucinations_filtered"] == 0
     assert stats["sessions"] == 1
 
 

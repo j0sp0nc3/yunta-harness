@@ -417,22 +417,36 @@ class AudioTranscriber:
         method_start = time.monotonic()
         network_wait = 0.0
 
-        def _meta(source: str, cloud_attempted: bool, cloud_failed: bool) -> dict:
+        def _meta(source: str, cloud_attempted: bool, cloud_failed: bool, hallucination_filtered: bool = False) -> dict:
             return {
                 "source": source,
                 "cloud_attempted": cloud_attempted,
                 "cloud_failed": cloud_failed,
                 "network_wait_secs": network_wait,
                 "total_secs": time.monotonic() - method_start,
+                "hallucination_filtered": hallucination_filtered,
             }
+
+        # V7-6 (2026-09-22): detecta si `_clean_transcription` descartó el
+        # fragmento entero por ser una frase de relleno conocida (V6-4), para
+        # que `AudioChunker` pueda contar cuántos fragmentos reales caen en
+        # ese caso — hoy no hay forma de saber si el filtro ayudó en una
+        # corrida real. `_dedup_whisper_repetition` nunca reduce texto no
+        # vacío a "" (solo colapsa repeticiones), así que "entrada no vacía →
+        # salida vacía" solo puede deberse al filtro de alucinaciones.
+        def _clean_and_flag(raw: str) -> tuple[str, bool]:
+            cleaned = _clean_transcription(raw)
+            filtered = bool(raw and raw.strip()) and not cleaned
+            return cleaned, filtered
 
         path = Path(file_path)
         if not path.exists():
             raise FileNotFoundError(f"Archivo de audio no encontrado: {file_path}")
 
         if skip_cloud:
-            local_text = _clean_transcription(self.transcribe_offline_local(str(path)))
-            return local_text, _meta("local", False, False)
+            raw_local = self.transcribe_offline_local(str(path))
+            local_text, filtered = _clean_and_flag(raw_local)
+            return local_text, _meta("local", False, False, filtered)
 
         # Si el archivo supera el límite (25 MB en Whisper API estándar, 500 KB en Workers AI), usar chunker
         max_size = (
@@ -458,7 +472,8 @@ class AudioTranscriber:
             try:
                 raw_text = self._post_transcription(path, prompt)
                 network_wait += time.monotonic() - t0
-                return _clean_transcription(raw_text), _meta("cloud", True, False)
+                cleaned, filtered = _clean_and_flag(raw_text)
+                return cleaned, _meta("cloud", True, False, filtered)
             except _TranscribeError as err:
                 network_wait += time.monotonic() - t0
                 last_err = err
@@ -486,11 +501,12 @@ class AudioTranscriber:
         if last_err is not None:
             print(f"⚠️ Error de transcripción con {self.api_base}: {last_err}")
         # Fallback: servidor Whisper local (Docker) en localhost:8000, si no era la URL principal
-        local_text = _clean_transcription(self.transcribe_offline_local(str(path)))
+        raw_local = self.transcribe_offline_local(str(path))
+        local_text, filtered = _clean_and_flag(raw_local)
         if local_text:
             print("💡 (Transcripción realizada con el servidor Whisper local de resguardo)")
-            return local_text, _meta("local", True, True)
-        return "", _meta("local", True, True)
+            return local_text, _meta("local", True, True, filtered)
+        return "", _meta("local", True, True, filtered)
 
     def _post_transcription(self, path: Path, prompt: str = "") -> str:
         """Un POST multipart al endpoint de transcripción. Lanza _TranscribeError."""
@@ -872,6 +888,10 @@ class AudioChunker:
         # local?) en vez de solo un agregado ciego de tiempo total.
         self._telem_network_wait: list[float] = []
         self._telem_processing: list[float] = []
+        # V7-6 (2026-09-22): cuántos fragmentos se descartaron enteros por
+        # ser una frase de relleno conocida de Whisper (V6-4) — antes no
+        # había forma de saber si ese filtro ayudó en una corrida real.
+        self._telem_hallucinations_filtered = 0
         # Fase 5 (2026-09-20): protege las mutaciones de los contadores de
         # arriba cuando `VOICE_PARALLEL_WORKERS > 1` hace que varios workers
         # llamen a `_breaker_should_skip_cloud`/`_breaker_record` a la vez.
@@ -926,6 +946,8 @@ class AudioChunker:
             if network_wait is not None and total is not None:
                 self._telem_network_wait.append(network_wait)
                 self._telem_processing.append(max(0.0, total - network_wait))
+            if meta.get("hallucination_filtered"):
+                self._telem_hallucinations_filtered += 1
 
     def transcribe_large_audio(self, file_path: str, chunk_minutes: float | int | None = None) -> str:
         """Divide el audio en fragmentos y concatena las transcripciones.
@@ -1016,6 +1038,7 @@ class AudioChunker:
                 processing_p95=percentile(self._telem_processing, 95),
                 processing_max=max(self._telem_processing, default=0.0),
                 workers_used=workers_used,
+                hallucinations_filtered=self._telem_hallucinations_filtered,
                 breaker_trips=self._cb_tripped_count,
                 elapsed_secs=time.monotonic() - start_time,
                 audio_duration_secs=total_secs,

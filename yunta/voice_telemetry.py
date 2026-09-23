@@ -56,6 +56,10 @@ class VoiceSnapshot:
     processing_p95: float = 0.0
     processing_max: float = 0.0
     workers_used: int = 1
+    # V7-6 (2026-09-22): fragmentos descartados enteros por ser una frase de
+    # relleno conocida de Whisper (V6-4) — antes no había forma de saber si
+    # ese filtro ayudó en una corrida real.
+    hallucinations_filtered: int = 0
 
 
 def record_voice_snapshot(
@@ -74,6 +78,7 @@ def record_voice_snapshot(
     processing_p95: float = 0.0,
     processing_max: float = 0.0,
     workers_used: int = 1,
+    hallucinations_filtered: int = 0,
     path: Path | str = DEFAULT_VOICE_HEALTH_PATH,
 ) -> None:
     """Append-only: una snapshot JSON por transcripción de audio grande."""
@@ -96,6 +101,7 @@ def record_voice_snapshot(
         processing_p95=processing_p95,
         processing_max=processing_max,
         workers_used=workers_used,
+        hallucinations_filtered=hallucinations_filtered,
     )
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -135,10 +141,12 @@ def aggregate_voice(path: Path | str = DEFAULT_VOICE_HEALTH_PATH, limit: int | N
     total_local = sum(s.get("local_fragments", 0) for s in snapshots)
     total_errors = sum(s.get("errors_handled", 0) for s in snapshots)
     total_trips = sum(s.get("breaker_trips", 0) for s in snapshots)
+    total_hallucinations_filtered = sum(s.get("hallucinations_filtered", 0) for s in snapshots)
     avg_rtf = sum(s.get("rtf", 0.0) for s in snapshots) / n
 
     cloud_ratio = (total_cloud / total_fragments) if total_fragments else 0.0
     errors_per_fragment = (total_errors / total_fragments) if total_fragments else 0.0
+    hallucinations_per_fragment = (total_hallucinations_filtered / total_fragments) if total_fragments else 0.0
 
     # V7-2: promedio entre sesiones de los percentiles ya calculados por
     # sesión (no se guardan los tiempos crudos por fragmento en el JSONL,
@@ -158,9 +166,11 @@ def aggregate_voice(path: Path | str = DEFAULT_VOICE_HEALTH_PATH, limit: int | N
         "total_local_fragments": total_local,
         "total_errors_handled": total_errors,
         "total_breaker_trips": total_trips,
+        "total_hallucinations_filtered": total_hallucinations_filtered,
         "avg_rtf": round(avg_rtf, 3),
         "cloud_ratio": round(cloud_ratio, 4),
         "errors_per_fragment": round(errors_per_fragment, 4),
+        "hallucinations_per_fragment": round(hallucinations_per_fragment, 4),
         "avg_network_wait_p50": round(avg_network_wait_p50, 3),
         "avg_network_wait_p95": round(avg_network_wait_p95, 3),
         "max_network_wait": round(max_network_wait, 3),

@@ -1620,3 +1620,103 @@ def test_transcribe_large_audio_reports_actual_workers_used(tmp_path, monkeypatc
 
     _, kwargs = recorded.call_args
     assert kwargs["workers_used"] == 1
+
+
+# ==================== V7-6: telemetría del filtro de alucinaciones ====================
+
+def test_transcribe_with_meta_flags_hallucination_filtered_on_exact_match(monkeypatch, tmp_path):
+    from yunta.voice import AudioTranscriber
+
+    transcriber = AudioTranscriber(api_base="http://fake-endpoint.test/v1")
+    monkeypatch.setattr(transcriber, "_post_transcription", lambda path, prompt="": "Gracias por ver el video.")
+
+    f = tmp_path / "a.mp3"
+    f.write_bytes(b"x" * 100)
+    text, meta = transcriber.transcribe_with_meta(str(f))
+
+    assert text == ""
+    assert meta["hallucination_filtered"] is True
+
+
+def test_transcribe_with_meta_does_not_flag_partial_mentions(monkeypatch, tmp_path):
+    """La frase conocida mencionada de pasada dentro de contenido real no
+    cuenta como alucinación filtrada — el filtro no la recorta."""
+    from yunta.voice import AudioTranscriber
+
+    transcriber = AudioTranscriber(api_base="http://fake-endpoint.test/v1")
+    monkeypatch.setattr(
+        transcriber, "_post_transcription",
+        lambda path, prompt="": "Como decía, gracias por ver el video no es lo que buscamos hoy.",
+    )
+
+    f = tmp_path / "a.mp3"
+    f.write_bytes(b"x" * 100)
+    text, meta = transcriber.transcribe_with_meta(str(f))
+
+    assert text != ""
+    assert meta["hallucination_filtered"] is False
+
+
+def test_transcribe_with_meta_does_not_flag_genuinely_empty_transcription(monkeypatch, tmp_path):
+    """Un fragmento genuinamente vacío (silencio real) no es una alucinación
+    filtrada — no hay nada que el filtro haya descartado."""
+    from yunta.voice import AudioTranscriber
+
+    transcriber = AudioTranscriber(api_base="http://fake-endpoint.test/v1")
+    monkeypatch.setattr(transcriber, "_post_transcription", lambda path, prompt="": "")
+
+    f = tmp_path / "a.mp3"
+    f.write_bytes(b"x" * 100)
+    text, meta = transcriber.transcribe_with_meta(str(f))
+
+    assert text == ""
+    assert meta["hallucination_filtered"] is False
+
+
+def test_record_telemetry_counts_hallucinations_filtered(tmp_path):
+    from yunta.voice import AudioChunker, AudioTranscriber
+
+    chunker = AudioChunker(AudioTranscriber())
+    chunker._record_telemetry({"source": "cloud", "cloud_attempted": True, "cloud_failed": False, "hallucination_filtered": True})
+    chunker._record_telemetry({"source": "cloud", "cloud_attempted": True, "cloud_failed": False, "hallucination_filtered": False})
+    chunker._record_telemetry({"source": "cloud", "cloud_attempted": True, "cloud_failed": False})  # meta vieja sin el campo
+    assert chunker._telem_hallucinations_filtered == 1
+
+
+def test_transcribe_large_audio_reports_hallucinations_filtered_count(tmp_path, monkeypatch):
+    """Integración: transcribe_large_audio propaga el conteo real de
+    fragmentos filtrados por alucinación a record_voice_snapshot."""
+    monkeypatch.chdir(tmp_path)
+    from yunta.voice import AudioChunker, AudioTranscriber
+
+    chunks = [str(tmp_path / f"c{i}.mp3") for i in range(3)]
+    for c in chunks:
+        Path(c).write_bytes(b"\xff\xfb\x90\x00" + b"x" * 512)
+
+    results = ["Gracias por ver el video.", "contenido real de la clase", "Suscríbete al canal"]
+
+    class MetaTranscriber(AudioTranscriber):
+        def __init__(self):
+            super().__init__()
+            self._i = 0
+
+        def transcribe_with_meta(self, file_path, prompt="", skip_cloud=False):
+            raw = results[self._i]
+            self._i += 1
+            from yunta.voice import _clean_transcription
+            cleaned = _clean_transcription(raw)
+            return cleaned, {
+                "source": "cloud", "cloud_attempted": True, "cloud_failed": False,
+                "hallucination_filtered": bool(raw) and not cleaned,
+            }
+
+    chunker = AudioChunker(MetaTranscriber())
+    chunker.split_audio_by_silence = lambda fp, *a, **k: chunks
+
+    recorded = MagicMock()
+    monkeypatch.setattr("yunta.voice_telemetry.record_voice_snapshot", recorded)
+
+    chunker.transcribe_large_audio("audio.mp3")
+
+    _, kwargs = recorded.call_args
+    assert kwargs["hallucinations_filtered"] == 2

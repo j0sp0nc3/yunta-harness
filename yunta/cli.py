@@ -374,6 +374,8 @@ def run_health(as_json: bool = False, voice: bool = False) -> None:
         # 0.0 en sesiones registradas antes de esta fase (campo ausente).
         print(f"│ 🌐 Espera de red p50/p95/max (seg):  {stats.get('avg_network_wait_p50', 0.0):>5.2f}/{stats.get('avg_network_wait_p95', 0.0):>5.2f}/{stats.get('max_network_wait', 0.0):>5.2f}   │")
         print(f"│ ⚙️  Procesamiento p50/p95/max (seg): {stats.get('avg_processing_p50', 0.0):>5.2f}/{stats.get('avg_processing_p95', 0.0):>5.2f}/{stats.get('max_processing', 0.0):>5.2f}   │")
+        # V7-6 (2026-09-22): 0.0 en sesiones registradas antes de esta fase.
+        print(f"│ 🗑️  Fragmentos descartados (alucinación): {stats.get('total_hallucinations_filtered', 0):>6}             │")
         print("└────────────────────────────────────────────────────────┘\n")
         return
 

@@ -6,6 +6,14 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.14.22] — 2026-09-22
+
+- **`yunta/voice.py`, `yunta/voice_telemetry.py`, `yunta/cli.py` — V7-6: telemetría del filtro de alucinaciones (V6-4)**: desde que se agregó el filtro de frases de relleno conocidas (v2.14.12), no había forma de saber cuántas veces disparó en una corrida real — un punto ciego identificado explícitamente al auditar las 2 primeras corridas empíricas de esta sesión.
+  - `AudioTranscriber.transcribe_with_meta` detecta si `_clean_transcription` descartó el fragmento entero (texto crudo no vacío → resultado vacío) y lo agrega a la metadata como `hallucination_filtered`. No se cambió la firma de `_clean_transcription` (sigue devolviendo solo el string, usada en un test unitario directo) — se aprovecha que `_dedup_whisper_repetition` nunca reduce texto no vacío a `""` (solo colapsa repeticiones), así que "entrada no vacía → salida vacía" solo puede deberse al filtro de alucinaciones (V6-4).
+  - `AudioChunker._telem_hallucinations_filtered` cuenta estos fragmentos; `transcribe_large_audio` lo pasa a `record_voice_snapshot`. `VoiceSnapshot`/`aggregate_voice` ganan `hallucinations_filtered`/`total_hallucinations_filtered`/`hallucinations_per_fragment`, con default 0 (compatible con snapshots viejos). `yunta health --voice` lo muestra.
+  - 6 tests nuevos entre `tests/test_voice.py` y `tests/test_voice_telemetry.py` (419 → 425 tests totales): el contador solo sube con coincidencia exacta (no con menciones parciales ni con silencio genuinamente vacío), roundtrip y agregación en telemetría, y propagación correcta en una transcripción completa simulada.
+  - Con esto, el bloque de Claude Code del plan conjunto con Antigravity (Fases 6, 7, 10, 11) queda completo — desbloquea formalmente las Fases 8 (keep-alive) y 9 (paralelismo), a cargo de Antigravity.
+
 ## [2.14.21] — 2026-09-22
 
 - **`yunta/provider.py`, nuevo `yunta/llm_call_telemetry.py` — V7-5: telemetría de `finish_reason` crudo por llamada al LLM**: dos corridas reales distintas del pipeline de voz generaron **exactamente 9,402 tokens de salida** con contenido de entrada completamente distinto (72K vs 73K caracteres de transcript, resúmenes con estructura diferente) — coincidencia estadísticamente rara si ambas generaciones terminaron "naturalmente". `_FINISH_REASONS` en `provider.py` no mapea `"length"` (el motivo estándar cuando la respuesta se corta por `max_tokens`) — hoy cae silenciosamente en `StopReason.OTHER`, indistinguible de cualquier otro final.
