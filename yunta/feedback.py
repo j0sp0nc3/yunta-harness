@@ -55,8 +55,8 @@ class FeedbackStore:
         Best-effort: cualquier fallo se ignora silenciosamente."""
         try:
             resp = provider.send(
-                [Message(role=Role.USER, content=[Block(type=BlockType.TEXT, text=LESSON_PROMPT)])]
-                + messages,
+                messages
+                + [Message(role=Role.USER, content=[Block(type=BlockType.TEXT, text=LESSON_PROMPT)])],
                 [],
             )
             text = {b.type: b.text for b in resp.content if b.type == BlockType.TEXT}

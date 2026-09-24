@@ -51,7 +51,8 @@ def delegate_research(raw: str) -> str:
     if fast_model:
         try:
             sub_provider = LiteLLMProvider(model=fast_model, system=system_prompt)
-        except Exception:
+        except Exception as e:
+            print(f"[delegate] LLM_FAST_MODEL={fast_model!r} falló ({e}); usando el provider principal.")
             sub_provider = _provider
     else:
         sub_provider = _provider

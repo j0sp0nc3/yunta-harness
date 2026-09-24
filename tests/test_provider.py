@@ -4,6 +4,7 @@ import sys
 from types import SimpleNamespace
 
 import litellm
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -12,6 +13,19 @@ import yunta.tools.files  # noqa: F401,E402
 from yunta.api import Block, BlockType, Message, Role, Usage  # noqa: E402
 from yunta.provider import LiteLLMProvider  # noqa: E402
 from yunta.tools import registry  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _isolate_llm_call_telemetry(tmp_path, monkeypatch):
+    """V7-5 (2026-09-22): `LiteLLMProvider.send()` graba telemetría por
+    llamada a `.yunta/llm_calls.jsonl` — una ruta RELATIVA, o sea resuelta
+    contra el directorio de trabajo. Sin aislar, cada corrida de esta suite
+    escribía ~154 entradas sintéticas (out=10 tokens, elapsed≈0s) al archivo
+    real del repo, enterrando las llamadas reales que ese archivo existe
+    para medir. Mismo tipo de contaminación ya corregido para
+    `voice_health.jsonl` en v2.14.13."""
+    monkeypatch.chdir(tmp_path)
+
 
 captured = {}
 
@@ -64,7 +78,7 @@ def test_openai_translation():
     assert lm[1] == {"role": "user", "content": "hola"}
     assert lm[2]["tool_calls"][0]["function"]["name"] == "read_file"
     assert lm[3] == {"role": "tool", "tool_call_id": "t1", "content": "contenido"}
-    assert captured["tools"][0]["function"]["name"] == "bash"
+    assert any(t["function"]["name"] == "bash" for t in captured["tools"])
     assert r.usage.input_tokens == 10
     assert p.total_usage.output_tokens == 5
 
@@ -84,12 +98,65 @@ def test_custom_base_url():
     assert captured["api_base"] == "http://localhost:11434/v1"
 
 
+def test_model_param_overrides_env_lookup():
+    """B1: LiteLLMProvider(model=...) debe ganarle a LLM_MODEL/LLM_MODELS de
+    entorno en vez de lanzar TypeError (regresión del bug que dejaba
+    LLM_FAST_MODEL completamente inoperante en delegate.py)."""
+    os.environ["LLM_MODEL"] = "openai/gpt-4o"
+    p = LiteLLMProvider(system="sys", model="anthropic/claude-sonnet-4-5")
+    assert p.model() == "anthropic/claude-sonnet-4-5"
+    p.send(MSGS[:1], tools=[])
+    assert captured["model"] == "anthropic/claude-sonnet-4-5"
+
+
+def test_set_model_override_used_for_next_call():
+    """Feature 6: set_model_override fuerza el modelo del próximo send()
+    sin tocar la posición de la cascada normal (.model())."""
+    os.environ["LLM_MODEL"] = "openai/gpt-4o"
+    p = LiteLLMProvider(system="sys")
+    p.set_model_override("openai/gpt-4o-mini")
+    p.send(MSGS[:1], tools=[])
+    assert captured["model"] == "openai/gpt-4o-mini"
+    assert p.model() == "openai/gpt-4o"  # la cascada no se movió
+
+    p.set_model_override(None)
+    p.send(MSGS[:1], tools=[])
+    assert captured["model"] == "openai/gpt-4o"
+
+
+def test_override_failure_falls_back_to_cascade_without_advancing_idx():
+    """Feature 6: si el modelo económico falla, se descarta el override y
+    se reintenta con la cascada normal SIN avanzar _model_idx (no es un
+    fallo del modelo principal)."""
+    os.environ.update(LLM_MODEL="openai/gpt-4o", LLM_MODELS="")
+    calls = []
+
+    def flaky_completion(**kwargs):
+        calls.append(kwargs["model"])
+        if kwargs["model"] == "openai/gpt-4o-mini":
+            raise Exception("RateLimitError: 429 too many requests")
+        return fake_completion(**kwargs)
+
+    litellm.completion = flaky_completion
+    p = LiteLLMProvider(system="sys")
+    p.set_model_override("openai/gpt-4o-mini")
+    p.send(MSGS[:1], tools=[])
+
+    assert calls == ["openai/gpt-4o-mini", "openai/gpt-4o"]
+    assert p._override_model is None
+    assert p.model() == "openai/gpt-4o"
+
+
 def test_missing_model_fails_clearly():
+    env = dict(os.environ)
+    env["LLM_MODEL"] = ""
+    env["LLM_MODELS"] = ""
+    env["YUNTA_NO_DOTENV"] = "1"
     r = subprocess.run(
         [sys.executable, "-c", "from yunta.provider import LiteLLMProvider; LiteLLMProvider(system='s')"],
         capture_output=True,
         text=True,
-        env={k: v for k, v in os.environ.items() if k != "LLM_MODEL"},
+        env=env,
     )
     assert r.returncode != 0
     assert "LLM_MODEL" in r.stderr
@@ -320,4 +387,218 @@ def test_startup_tax_calculation(monkeypatch):
     assert tax > 0
 
     assert p.startup_tax > 0
+
+
+def test_reasoning_and_thinking_params(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "openai/o3-mini")
+    monkeypatch.setenv("LLM_REASONING_EFFORT", "high")
+    monkeypatch.setenv("LLM_THINKING_BUDGET", "4096")
+    p = LiteLLMProvider(system="sys")
+    p.send(MSGS, tools=[])
+    assert captured.get("reasoning_effort") == "high"
+    assert captured.get("thinking") == {"type": "enabled", "budget_tokens": 4096}
+    monkeypatch.delenv("LLM_REASONING_EFFORT", raising=False)
+    monkeypatch.delenv("LLM_THINKING_BUDGET", raising=False)
+
+
+# ==================== V7-5: telemetría de finish_reason crudo ====================
+
+def test_send_records_raw_finish_reason_length_non_streaming(monkeypatch):
+    """finish_reason="length" (truncamiento por max_tokens) hoy cae
+    silenciosamente en StopReason.OTHER — la telemetría debe conservarlo
+    distinguible en vez de perderlo."""
+    os.environ["LLM_MODEL"] = "openai/glm-4.7"
+
+    def fake_completion_length(**kwargs):
+        choice = SimpleNamespace(
+            message=SimpleNamespace(content="texto truncado", tool_calls=None),
+            finish_reason="length",
+        )
+        return SimpleNamespace(
+            choices=[choice], usage=SimpleNamespace(prompt_tokens=1000, completion_tokens=9402)
+        )
+
+    litellm.completion = fake_completion_length
+
+    recorded = {}
+    def fake_record(**kwargs):
+        recorded.update(kwargs)
+    monkeypatch.setattr("yunta.llm_call_telemetry.record_llm_call", fake_record)
+
+    p = LiteLLMProvider(system="sys")
+    r = p.send(MSGS, tools=[])
+
+    assert r.stop_reason.value == "other"  # el StopReason mapeado sigue colapsando en OTHER
+    assert recorded["finish_reason_raw"] == "length"  # pero la telemetria cruda no
+    assert recorded["output_tokens"] == 9402
+    assert recorded["streaming"] is False
+
+
+def test_consume_stream_records_raw_finish_reason(monkeypatch):
+    os.environ["LLM_MODEL"] = "openai/glm-4.7"
+    stream_chunks = [
+        SimpleNamespace(
+            choices=[SimpleNamespace(delta=SimpleNamespace(content="hola", tool_calls=None), finish_reason=None)],
+            usage=None,
+        ),
+        SimpleNamespace(
+            choices=[SimpleNamespace(delta=None, finish_reason="length")],
+            usage=SimpleNamespace(prompt_tokens=50, completion_tokens=9402),
+        ),
+    ]
+    litellm.completion = lambda **kwargs: stream_chunks
+
+    recorded = {}
+    def fake_record(**kwargs):
+        recorded.update(kwargs)
+    monkeypatch.setattr("yunta.llm_call_telemetry.record_llm_call", fake_record)
+
+    p = LiteLLMProvider(system="sys")
+    p.send(MSGS[:1], tools=[], on_text=lambda t: None)
+
+    assert recorded["finish_reason_raw"] == "length"
+    assert recorded["streaming"] is True
+    assert recorded["output_tokens"] == 9402
+
+
+def test_send_records_failed_calls_with_error(monkeypatch):
+    """V7-9: cuando la llamada al proveedor falla sin fallback disponible,
+    queda registrada con el tipo de error — antes el incidente era
+    completamente invisible en la telemetría."""
+    os.environ["LLM_MODEL"] = "openai/glm-4.7"
+
+    class FakeRateLimitError(Exception):
+        pass
+
+    def fake_completion_fails(**kwargs):
+        raise FakeRateLimitError("quota exceeded for this API key")
+
+    litellm.completion = fake_completion_fails
+
+    recorded = []
+    monkeypatch.setattr("yunta.llm_call_telemetry.record_llm_call", lambda **kw: recorded.append(kw))
+
+    p = LiteLLMProvider(system="sys")
+    try:
+        p.send(MSGS, tools=[])
+    except FakeRateLimitError:
+        pass
+
+    assert len(recorded) >= 1
+    assert recorded[0]["error"].startswith("FakeRateLimitError")
+    assert "quota exceeded" in recorded[0]["error"]
+    assert recorded[0]["finish_reason_raw"] == ""
+
+
+def test_llm_call_telemetry_failure_does_not_break_send(monkeypatch):
+    """Si grabar la telemetria falla (disco lleno, etc.), la respuesta real
+    del LLM no se pierde — mismo patron de resiliencia que voice_telemetry."""
+    os.environ["LLM_MODEL"] = "openai/glm-4.7"
+    litellm.completion = fake_completion
+    monkeypatch.setattr(
+        "yunta.llm_call_telemetry.record_llm_call",
+        lambda **kwargs: (_ for _ in ()).throw(Exception("disco lleno")),
+    )
+    p = LiteLLMProvider(system="sys")
+    r = p.send(MSGS, tools=[])
+    assert r.content[0].text == "ok"
+
+
+
+
+def test_send_retries_without_cache_control_when_tier_rejects_cache(monkeypatch):
+    """V7-10: el free tier de Gemini responde HTTP 429
+    `TotalCachedContentStorageTokensPerModelFreeTier limit=0` ante CUALQUIER
+    peticion con `cache_control`. Sin este self-heal el modelo no podia
+    responder NADA (todo mensaje lleva system prompt), que es exactamente lo
+    que bloqueo el resumen de la catedra el 2026-09-23."""
+    os.environ["LLM_MODEL"] = "gemini/gemini-3-flash-preview"
+    os.environ.pop("LLM_FALLBACK_MODEL", None)
+
+    class FakeRateLimitError(Exception):
+        pass
+
+    seen = []
+
+    def fake_completion_cache_rejected(**kwargs):
+        seen.append(kwargs["messages"])
+        if len(seen) == 1:
+            raise FakeRateLimitError(
+                "VertexAIException - Quota exceeded for quota metric "
+                "'TotalCachedContentStorageTokensPerModelFreeTier' limit=0"
+            )
+        return fake_completion(**kwargs)
+
+    litellm.completion = fake_completion_cache_rejected
+
+    p = LiteLLMProvider(system="sys")
+    r = p.send(MSGS, tools=[])
+
+    assert r.content[0].text == "ok"
+    assert len(seen) == 2, "debe reintentar exactamente una vez"
+    assert "cache_control" in seen[0][0]["content"][0], "el primer intento SI pide cache"
+    assert "cache_control" not in seen[1][0]["content"][0], "el reintento NO pide cache"
+
+
+def test_cache_control_stays_enabled_for_providers_that_accept_it():
+    """El self-heal de V7-10 no debe sacrificar el cache preventivamente:
+    donde funciona ahorra dinero real (29.5% de hit medido en produccion)."""
+    os.environ["LLM_MODEL"] = "openai/glm-4.7"
+    litellm.completion = fake_completion
+
+    p = LiteLLMProvider(system="sys")
+    p.send(MSGS, tools=[])
+
+    assert p._disable_cache_control is False
+    assert "cache_control" in captured["messages"][0]["content"][0]
+
+
+def test_unsupported_reasoning_param_is_disabled_for_later_turns(monkeypatch):
+    """V7-11: `agent.py` pasa `reasoning_effort` explicito en cada turno y el
+    parametro gana sobre LLM_REASONING_EFFORT, asi que el self-heal anterior
+    se perdia entre llamadas: una corrida real de 6 llamadas utiles gasto 4
+    reintentos repitiendo el mismo descarte. Debe recordarse en la instancia."""
+    os.environ["LLM_MODEL"] = "gemini/gemini-3-flash-preview"
+    os.environ.pop("LLM_FALLBACK_MODEL", None)
+
+    class UnsupportedParamsError(Exception):
+        pass
+
+    attempts = []
+
+    def fake_completion_rejects_thinking(**kwargs):
+        attempts.append(kwargs)
+        if "thinking" in kwargs:
+            raise UnsupportedParamsError("model does not support parameter thinking")
+        return fake_completion(**kwargs)
+
+    litellm.completion = fake_completion_rejects_thinking
+
+    p = LiteLLMProvider(system="sys")
+    p.send(MSGS, tools=[], reasoning_effort="high")
+    assert len(attempts) == 2, "primer turno: un fallo + un reintento"
+
+    # Segundo turno: el caller vuelve a pedir "high" (como hace agent.py).
+    attempts.clear()
+    p.send(MSGS, tools=[], reasoning_effort="high")
+    assert len(attempts) == 1, "el descarte ya se aprendio; no debe reintentarse"
+    assert "thinking" not in attempts[0]
+
+
+def test_consecutive_user_messages_are_merged_for_strict_providers():
+    """Gemini y otros proveedores estrictos rechazan mensajes con turnos
+    consecutivos del mismo rol (ej. user seguido de user) con BadRequestError.
+    _to_litellm debe fusionarlos en un único mensaje de usuario."""
+    os.environ["LLM_MODEL"] = "gemini/gemini-3.6-flash"
+    litellm.completion = fake_completion
+
+    p = LiteLLMProvider()
+    msgs = [
+        Message(role=Role.USER, content=[Block(type=BlockType.TEXT, text="primera parte")]),
+        Message(role=Role.USER, content=[Block(type=BlockType.TEXT, text="segunda parte")]),
+    ]
+    p.send(msgs, tools=[])
+    user_msgs = [m for m in captured["messages"] if m["role"] == "user"]
+    assert len(user_msgs) == 1
+    assert "primera parte\n\nsegunda parte" in user_msgs[0]["content"]
 

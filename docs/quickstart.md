@@ -249,6 +249,84 @@ Cuando le pidas a Yunta realizar un cambio en el código:
 
 ---
 
+## Paso 6: Prompts por Voz, Dictado Manos Libres y Respuestas Rápidas
+
+Yunta incluye soporte nativo y agnóstico para **dictado por voz y procesamiento de audio** basado en la arquitectura neural **Whisper**.
+
+### 1. Modos de Operación por Voz
+
+#### A. Modo CLI Directo (`yunta voice` o `yunta --voice [archivo.mp3]`)
+- **Grabación en Vivo**: Ejecuta `yunta voice` y habla por el micrófono. Presiona `[ENTER]` cuando termines de hablar.
+- **Filtro Anti-Ruido Espectral (`trim_initial_noise_and_silence`)**: Elimina automáticamente chasquidos de teclado (150ms) y silencios iniciales antes de transcribir.
+- **Previsualización Interactiva**: Tras transcribir, Yunta muestra el texto capturado para su revisión:
+  ```text
+  🗣️ Transcripción capturada:
+     "Revisa los tests del proyecto yunta"
+
+  Opciones: [ENTER/s] Enviar al agente | [e] Editar texto | [c] Cancelar
+  > 
+  ```
+
+#### B. Modo REPL Interactivo (`/voice` o `/listen`)
+- **En la sesión interactiva**: Escribe `/voice` en el prompt `> ` para grabar una ráfaga de 5 segundos sin tocar teclas, o `/voice mi_clase.mp3` para transcribir un archivo.
+- **Despacho Inmediato**: La transcripción capturada se envía directamente al contexto conversacional activo para seguir iterando.
+
+---
+
+### 2. Normalizador de Respuestas Rápidas por Voz/Texto (`normalize_voice_response`)
+
+No necesitas escribir o pronunciar letras exactas (`s`, `c`, `e`). Yunta incluye un comparador determinista que traduce modismos fonéticos y coloquiales al instante:
+
+| Acción Deseada | Palabras / Modismos Soportados (Voz o Teclado) | Acción Canónica |
+| :--- | :--- | :--- |
+| **Aprobar / Enviar** | `"sí"`, `"si"`, `"aprobado"`, `"avanzar"`, `"abanzau"`, `"abanzau ok"`, `"ok"`, `"dale"`, `"listo"`, `"de acuerdo"` | **`s`** (Enviar) |
+| **Rechazar / Cancelar** | `"no"`, `"rechazado"`, `"cancelar"`, `"alto"`, `"stop"`, `"detener"`, `"abortar"` | **`c`** / **`n`** (Cancelar) |
+| **Editar Texto** | `"editar"`, `"modificar"`, `"cambiar"`, `"corregir"`, `"reescribir"` | **`e`** (Editar) |
+| **Aprobación Total** | `"sí a todo"`, `"siempre"`, `"para siempre"`, `"siempre si"`, `"aprobado a todo"` | **`siempre`** (Persistir) |
+
+> 💡 **Protección de Instrucciones**: Las tareas completas o frases largas (ej. *"Quiero que generes un archivo de prueba.txt"*) son detectadas como instrucciones de desarrollo y se envían intactas sin ser alteradas.
+
+---
+
+### 3. Configuración de Proveedores STT (Whisper Agnóstico)
+
+Yunta soporta cualquier servicio o contenedor compatible con la API HTTP de Whisper (`/v1/audio/transcriptions`):
+
+- **Cloudflare Workers AI (Serverless)**:
+  ```bash
+  export VOICE_API_BASE="https://tu-worker.workers.dev/v1"
+  export VOICE_MODEL="@cf/openai/whisper"
+  ```
+- **Groq Cloud (Súper Rápido)**:
+  ```bash
+  export VOICE_API_BASE="https://api.groq.com/openai/v1"
+  export VOICE_MODEL="groq/whisper-large-v3"
+  export VOICE_API_KEY="gsk_..."
+  ```
+- **Docker Local 100% Offline (0-Cloud / Privacidad)**:
+  Corre el contenedor `fedirz/faster-whisper-server` en tu puerto 8000. Yunta lo utilizará automáticamente como servidor local offline si falla la conexión en la nube.
+
+---
+
+### 4. Respuesta Hablada en Voz Alta (Text-to-Speech / TTS)
+
+Yunta incluye salida hablada de respuestas en voz alta de alto rendimiento y $0 costo:
+
+- **Modo CLI Directo (`yunta --speak` o `yunta -s`)**:
+  Al iniciar Yunta con `--speak`, cada respuesta redactada por el LLM se sintetizará y leerá en voz alta en español (`es-CL-CatalinaNeural`).
+- **Modo REPL Interactivo (`/speak [on|off]`)**:
+  En el prompt `> `, escribe `/speak on` para activar la lectura en voz alta o `/speak off` para desactivarla.
+- **Experiencia Manos Libres Completa**:
+  Combina dictado de entrada y respuesta hablada:
+  ```bash
+  python main.py -v "mi_audio.mp3" --speak
+  ```
+- **Resiliencia de 2 Niveles**:
+  1. *Primario:* Endpoint HTTP OpenAI `/v1/audio/speech` (Worker Cloudflare).
+  2. *Respaldo:* Microsoft Edge TTS (`edge-tts`) neuronal en español.
+
+---
+
 ## Paso 7: Comandos de Sesión y Control en el REPL
 
 Durante cualquier momento de tu sesión puedes utilizar los comandos de control:
@@ -258,6 +336,8 @@ Durante cualquier momento de tu sesión puedes utilizar los comandos de control:
 | **`/init [idea]`** | Scaffolding SDD | Inicializa o andamia el proyecto generando `SPEC.md`, `PLAN.md` y `AGENTS.md`. |
 | **`/sandbox [merge|discard]`** | Git Worktree Sandbox | Crea o gestiona un entorno aislado en Git Worktree para operaciones experimentales. |
 | **`/context`** | Estado de tokens | Muestra los mensajes, tokens estimados en contexto y el uso % del presupuesto (`YUNTA_MAX_TOKENS`). |
+| **`/speak [on|off]`** | Lectura hablada TTS | Activa o desactiva la lectura en voz alta de las respuestas del agente. |
+| **`/resume`** | Reanudar sesión | Reanuda la sesión anterior guardada desde `.yunta/session_state.json`. |
 | **`/undo`** | Time-Travel Undo | Restaura instantáneamente los archivos a su estado anterior a la última edición. |
 | **`/permissions [clear]`** | Permisos de sesión | Muestra los patrones autorizados con 'siempre' o los revoca (`/permissions clear`). |
 | **`/roi`** | Dashboard de valor | Muestra porcentaje de caché, tokens evitados y estimación de ahorro en USD. |

@@ -409,7 +409,7 @@ def test_session_permissions_always_skips_same_pattern(monkeypatch):
 
 
 def test_session_permissions_pattern_is_per_first_token(monkeypatch):
-    """Un comando distinto (otro primer token) SÍ vuelve a preguntar."""
+    """'siempre' aprueba la tool completa: un comando distinto NO vuelve a preguntar (V2.5.1)."""
     agent, _ = _approval_scenario(monkeypatch, ["siempre"])
     assert agent.session_permissions.allowed("bash", "rm temporal.txt")
 
@@ -426,7 +426,7 @@ def test_session_permissions_pattern_is_per_first_token(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda _p="": (prompts.append(_p), "s")[1])
     p2_agent = Agent(provider=p, system="s", auto_save=False, session_permissions=agent.session_permissions)
     p2_agent.send("usa curl")
-    assert prompts, "patrón distinto (curl) debió volver a preguntar"
+    assert prompts == [], "'siempre' debió aprobar cualquier comando de bash sin volver a preguntar"
 
 
 def test_session_permissions_grant_via_s_also_stores_pattern(monkeypatch):
@@ -477,7 +477,7 @@ def test_session_permissions_listing_has_entries(monkeypatch):
     """items() expone la lista para /permissions."""
     agent, _ = _approval_scenario(monkeypatch, ["siempre"])
     items = agent.session_permissions.items()
-    assert ("bash", "rm") in items
+    assert ("bash", "*") in items
 
 
 def test_long_output_offloaded_to_scratch_file(tmp_path, monkeypatch):
@@ -571,6 +571,57 @@ def test_doom_loop_detection_pause(tmp_path, monkeypatch):
     assert "user denied this tool call (doom-loop pause: 5 repeats)" in results[4].tool_result
 
 
+def test_llm_cheap_model_override_only_for_trivial_steps(tmp_path, monkeypatch):
+    """Feature 6: con LLM_CHEAP_MODEL seteado, el override se activa solo
+    cuando la ventana reciente es 100% de lectura, y se desactiva de
+    inmediato en cuanto aparece una tool mutante (regla dura, no heurística
+    blanda)."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LLM_CHEAP_MODEL", "openai/gpt-4o-mini")
+    (tmp_path / "a.txt").write_text("hola", encoding="utf-8")
+
+    class FakeProviderWithOverride(FakeProvider):
+        def __init__(self, responses):
+            super().__init__(responses)
+            self.override_calls = []
+
+        def set_model_override(self, model):
+            self.override_calls.append(model)
+
+    responses = [
+        Response(content=[tool_use("1", "read_file", '{"path":"a.txt"}')], stop_reason=StopReason.TOOL_USE),
+        Response(content=[tool_use("2", "write_file", '{"path":"a.txt","content":"x"}')], stop_reason=StopReason.TOOL_USE),
+        Response(content=[Block(type=BlockType.TEXT, text="listo")], stop_reason=StopReason.END_TURN),
+    ]
+    p = FakeProviderWithOverride(responses)
+    a = Agent(provider=p, system="s", auto_save=False, confirm=lambda n, d: True)
+    a.send("lee y luego escribe")
+
+    # Turno 1: sin historial todavía -> no trivial -> override None.
+    # Turno 2: tras read_file (solo lectura) -> trivial -> override al barato.
+    # Turno 3: tras write_file (mutante) -> nunca trivial -> override None.
+    assert p.override_calls == [None, "openai/gpt-4o-mini", None]
+
+
+def test_doom_loop_trigger_increments_counter_for_health_score(tmp_path, monkeypatch):
+    """Feature 5: cada disparo de force_prompt debe incrementar
+    _doom_loop_triggers, que luego persiste yunta/health.py entre sesiones."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "test.txt").write_text("hola", encoding="utf-8")
+
+    responses = [
+        Response(content=[tool_use(str(i), "read_file", '{"path":"test.txt"}')], stop_reason=StopReason.TOOL_USE)
+        for i in range(1, 6)
+    ]
+    responses.append(Response(content=[Block(type=BlockType.TEXT, text="listo")], stop_reason=StopReason.END_TURN))
+
+    p = FakeProvider(responses)
+    a = Agent(provider=p, system="s", auto_save=False, confirm=lambda n, d: True)
+    a.send("loop test")
+
+    assert a._doom_loop_triggers == 1
+
+
 def test_decision_point_reminder_injected_after_15_calls(tmp_path, monkeypatch):
     """Tras 15 ejecuciones de herramientas se inyecta un bloque TEXT de recordatorio en los mensajes del usuario (V3-5)."""
     monkeypatch.chdir(tmp_path)
@@ -592,6 +643,68 @@ def test_decision_point_reminder_injected_after_15_calls(tmp_path, monkeypatch):
     text_blocks = [b for b in last_user_blocks if b.type == BlockType.TEXT]
     assert len(text_blocks) == 1
     assert "[RECORDATORIO DE SISTEMA: Han transcurrido 15 ejecuciones de herramientas." in text_blocks[0].text
+
+
+def test_read_file_scratch_not_recursively_offloaded(tmp_path, monkeypatch):
+    """read_file sobre archivos scratch o con offset/limit NO se offloadea recursivamente."""
+    monkeypatch.chdir(tmp_path)
+    a = Agent(provider=FakeProvider([]), system="s", auto_save=False)
+    largo = "X" * 10000
+    res = a._maybe_offload_result("read_file", largo, raw_input='{"path":".yunta/scratch/output_123_test.txt"}')
+    assert res == largo, "no debió offloadear de nuevo el archivo scratch"
+
+
+def test_usage_delta():
+    from yunta.api import Usage
+    u1 = Usage(input_tokens=100, output_tokens=50, cached_tokens=20, tool_counts={"read_file": 2}, tool_errors=1, turns=1)
+    u2 = Usage(input_tokens=300, output_tokens=120, cached_tokens=50, tool_counts={"read_file": 5, "write_file": 1}, tool_errors=2, turns=3)
+
+    diff = u2.delta(u1)
+    assert diff.input_tokens == 200
+    assert diff.output_tokens == 70
+    assert diff.cached_tokens == 30
+    assert diff.tool_counts == {"read_file": 3, "write_file": 1}
+    assert diff.tool_errors == 1
+    assert diff.turns == 2
+
+
+def test_extract_usage_fallback_and_dict(monkeypatch):
+    from yunta.provider import LiteLLMProvider
+    from yunta.api import Message, Role, Block, BlockType, Usage
+    monkeypatch.setenv("LLM_MODEL", "openai/test")
+    provider = LiteLLMProvider(system="sys")
+
+    # Dict input
+    dict_u = {"prompt_tokens": 150, "completion_tokens": 40, "prompt_tokens_details": {"cached_tokens": 20}}
+    u_extracted = provider._extract_usage(dict_u)
+    assert u_extracted.input_tokens == 150
+    assert u_extracted.output_tokens == 40
+    assert u_extracted.cached_tokens == 20
+
+    # Fallback estimation when u is None or 0
+    msgs = [Message(role=Role.USER, content=[Block(type=BlockType.TEXT, text="Hola Yunta")])]
+    resp_blocks = [Block(type=BlockType.TEXT, text="Hola usuario")]
+    u_estimated = provider._extract_usage(None, messages=msgs, response_content=resp_blocks)
+    assert u_estimated.input_tokens > 0
+    assert u_estimated.output_tokens > 0
+
+
+def test_print_roi_footer(capsys):
+    from yunta.cli import print_roi_footer
+    from yunta.api import Usage
+
+    u_total = Usage(input_tokens=1000, output_tokens=200, cached_tokens=500, tool_counts={"read_file": 2}, turns=2)
+    u_turn = Usage(input_tokens=500, output_tokens=100, tool_counts={"read_file": 1}, turns=1)
+
+    print_roi_footer(u_total, turn_usage=u_turn)
+    out = capsys.readouterr().out
+
+    assert "ROI & Telemetría" in out
+    assert "Turno: +500 in, +100 out, 1 tools" in out
+    assert "Sesión: 1,500 tokens" in out
+    assert "Ahorro API" in out
+
+
 
 
 

@@ -158,3 +158,29 @@ def test_run_chunks_start_from_salta_lotes():
     run_chunks(p, subtasks, system="s", agent_cls=SpyAgent, start_from=1)
     assert len(prompts) == 1
     assert "Subtarea 2/2" in prompts[0]
+
+
+def test_run_chunks_with_voice_listener_sets_voice_approval():
+    p = FakeProvider([])
+    agents_created = []
+
+    class SpyAgent:
+        def __init__(self, provider=None, system="", max_turns=0, confirm=None, **k):
+            self.provider = provider
+            self.messages = []
+            self.voice_approval = None
+            agents_created.append(self)
+
+        def send(self, prompt):
+            return "ok"
+
+    class FakeListener:
+        def resume(self): pass
+        def pause(self): pass
+        def get(self, timeout=180): return "s"
+
+    subtasks = [Subtask("uno", ["a"])]
+    run_chunks(p, subtasks, system="s", agent_cls=SpyAgent, voice_listener=FakeListener())
+    assert len(agents_created) == 1
+    assert callable(agents_created[0].voice_approval)
+

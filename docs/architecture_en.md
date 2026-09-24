@@ -125,7 +125,56 @@ Yunta maintains a live model compatibility matrix in [`docs/PROVEEDORES.md`](PRO
 
 ---
 
-## 4. Design Philosophy: Spec-Driven Development (SDD)
+## 4. Context Window Management, Sessions, and Multi-Format Pipeline
+
+### 4.1. Context Window Manager and Token Control (`yunta/compact.py` & `yunta/budget.py`)
+To prevent memory collapse, lost-in-the-middle degradation, and excessive token waste, Yunta implements **4 context control strategies**:
+
+1. **Progressive Threshold Compaction (`TokenBudgetCompactor`)**:
+   - **70% of window**: Injects a system notice suggesting concise output.
+   - **80% of window**: Automatically masks old or long `tool_result` outputs.
+   - **85% of window**: Defensive pruning of old message blocks at safe boundaries (`role: user`).
+   - **99% of window**: Total synthetic summary and clean context window reset.
+2. **Subagent Decoupling (`delegate_subtask` and `delegate_research`)**:
+   - Heavy research or multi-file refactoring is delegated to a secondary subagent with its own clean context window (15 turns max), returning only the consolidated result.
+3. **Scratch File Offloading (`_maybe_offload_result`)**:
+   - Tool outputs exceeding 8,000 characters are dumped to `.yunta/scratch/output_<timestamp>.txt`, injecting only a 500-character preview and pointer.
+4. **Map-Reduce Processing for Large Files (`AudioChunker`)**:
+   - Silence-based VAD chunking for 2-4 hour audio or large files, processing chunks separately before merging summaries.
+
+### 4.2. Universal Session Identifier (`YUNTA_SESSION_ID`)
+- **Neutral Persistence**: Instead of relying on vendor-proprietary stateful APIs, Yunta maintains client conversation memory in `.yunta/session_state.json`.
+- **Metadata Injection**: Assigns a unique session ID (`yunta_sess_<uuid>`) and passes it in `user` and `metadata={"session_id": ...}` kwargs to LiteLLM, enabling telemetry proxies (Langfuse, Helicone, OpenRouter) and Prompt Caching to identify sessions univalently across any provider.
+
+### 4.3. Universal Local Text Extraction Pipeline (Stage 1 ➔ Stage 2)
+Strict 2-Stage Architecture:
+- **Stage 1 (100% Deterministic / Offline / Zero LLM)**: Concurrently converts any input format to Plain Text (Base Prompt) locally via light extractors (`yunta/extractors/`):
+  - **Audio & Voice**: `System.Speech` / Local Whisper / `record_microphone`.
+  - **Video**: Audio track extraction via `ffmpeg` ➔ Audio Extractor.
+  - **Documents & Tables**: `pypdf`, `python-docx`, `pandas`/`csv` ➔ Markdown Table.
+  - **Images & OCR**: `Windows.Media.Ocr` (WinRT native via PowerShell, 0 pip dependencies).
+  - **Web URLs & YouTube**: HTML plain text extraction and subtitles via `yt-dlp`.
+- **Stage 2 (LLM Reasoning & Execution)**: Consolidated plain text prompt is delivered to `Agent.send(prompt)`.
+
+### 4.4. Model-Agnostic STT Voice Architecture, Free Dictation, and Hybrid Fallback (`yunta/voice.py`)
+- **Model-Agnostic STT Design Requirement**: Yunta is strictly model and provider agnostic for voice STT. It seamlessly connects to any online HTTP API supporting the OpenAI `/v1/audio/transcriptions` standard via environment variables (`VOICE_API_BASE`, `VOICE_API_KEY`, `VOICE_MODEL`):
+  - **Online Mode (Serverless Cloud)**: Cloudflare Workers AI (`@cf/openai/whisper`), Groq Cloud (`whisper-large-v3`), OpenAI Whisper (`whisper-1`), or local Ollama.
+  - **Offline Mode (Local Resilient Fallback)**: Lazy loading import of `faster-whisper` in `transcribe_offline_local` for 0-cost local CPU transcription.
+- **Dynamic Dictation & Spectral Noise Gate Filter (`trim_initial_noise_and_silence`)**:
+  - Free-form live microphone recording (`duration=None`) stopped anytime by pressing `[ENTER]`.
+  - Initial noise gate trimming (*150ms*) and pre-speech silence suppression to eliminate keyboard click transients.
+  - Dynamic STT culture/language selection via `VOICE_LANGUAGE` / `VOICE_LANG` (e.g. `es-ES`, `es-MX`, `es-CL`).
+
+### 4.5. Spoken Text-to-Speech (TTS) Architecture and Resiliency (`yunta/tts.py`)
+- **Agnostic TTS Engine (`TTSProvider`)**: Implements $0 USD cost resilient audio output in two tiers:
+  1. **Primary HTTP Provider**: Queries OpenAI-compatible `/v1/audio/speech` endpoint exposed on Cloudflare Workers AI (`@cf/meta/mms-tts-spa`).
+  2. **Secondary Neural Fallback (`edge-tts`)**: High-fidelity neural spanish human voice synthesis (`es-CL-CatalinaNeural`) via WebSockets without API keys or costs.
+- **Sentence Chunking**: `chunk_text_by_sentences()` splits the LLM response by punctuation marks (`.`, `!`, `?`), allowing audio playback to start in `< 0.5s` without waiting for the full response to finish generating.
+- **CLI & REPL Controls**: `--speak` / `-s` flag and `/speak [on|off]` interactive command for runtime toggle.
+
+---
+
+## 5. Design Philosophy: Spec-Driven Development (SDD)
 
 Yunta formally implements the **Spec-Driven Development (SDD)** paradigm:
 - Project specifications (`AGENTS.md`) act as inviolable architectural contracts.
@@ -133,3 +182,4 @@ Yunta formally implements the **Spec-Driven Development (SDD)** paradigm:
 - Code edits are deterministic and surgical (`str_replace`), verified interactively with Git-style unified diffs.
 - Task completion is certified strictly through executable test oracles (`pytest`).
 - For a comprehensive presentation of the SDD architecture, read [Yunta & Spec-Driven Development (docs/sdd_en.md)](sdd_en.md).
+

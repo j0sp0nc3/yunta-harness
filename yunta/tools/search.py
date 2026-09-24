@@ -1,5 +1,8 @@
-import re
+import json
 from pathlib import Path
+import re
+import urllib.parse
+import urllib.request
 
 from . import _parse, registry
 
@@ -72,3 +75,42 @@ def glob(raw: str) -> str:
         raise FileNotFoundError(f"no existe el directorio: {base}")
     matches = sorted(p.as_posix() for p in base.glob(pattern))
     return "\n".join(matches)
+
+
+@registry.register(
+    "web_search",
+    "Busca información pública de referencia en la web (Wikipedia/APIs) y devuelve resúmenes en texto plano.",
+    {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Término o consulta de búsqueda"},
+        },
+        "required": ["query"],
+    },
+)
+def web_search(raw: str) -> str:
+    args = _parse(raw)
+    query = args.get("query", "").strip()
+    if not query:
+        raise ValueError("query es obligatorio")
+
+    url = (
+        "https://es.wikipedia.org/w/api.php?action=query&list=search&srsearch="
+        + urllib.parse.quote(query)
+        + "&format=json&utf8=1"
+    )
+    req = urllib.request.Request(url, headers={"User-Agent": "Yunta/2.5.0 Client"})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            results = data.get("query", {}).get("search", [])
+            if not results:
+                return f"No se encontraron resultados públicos para '{query}'."
+            output = []
+            for r in results[:5]:
+                title = r.get("title", "")
+                snippet = re.sub(r"<[^>]+>", "", r.get("snippet", ""))
+                output.append(f"- {title}: {snippet}")
+            return "\n".join(output)
+    except Exception as e:
+        return f"error al consultar búsqueda web: {e}"

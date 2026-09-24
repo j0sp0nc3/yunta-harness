@@ -282,6 +282,41 @@ Iniciativas planeadas para potenciar la precisión semántica, ejecución parale
 - **V4-4 ✅ (v2.1.0) Extensión gráfica nativa de IDE (`yunta-vscode-extension`)**: Desarrollo en el repositorio independiente [`yunta-vscode-extension`](file:///c:/Users/HP/.zcode/workspace/default/yunta-vscode-extension) de un cliente TS para `yunta serve-mcp` / `yunta serve-json` con paneles WebView para ROI, métricas de tokens, visor de diffs y confirmación de permisos. (3 tests 100% OK en `src/test/suite/extension.test.ts`).
 
 
+## Backlog v5 (Evolución de Voz y Manos Libres — 2026-09-13)
+
+Iniciativas candidatas para potenciar la interacción por voz, respuesta parlante y experiencia zero-typing:
+
+- **V5-1 ✅ (v2.7.0) Auto-Stop por Silencio VAD en Micrófono**: Implementado como `VoiceListener` (hilo daemon, `sounddevice` 16kHz): VAD por umbral RMS calibrado con 1s de ruido ambiental, frase cerrada tras 1.5s de silencio, gate de eco (micrófono pausado durante generación y TTS), aprobación de tools por voz (`Agent.voice_approval`) y router de palabras clave local (0 consultas LLM) con registro persistente `.yunta/voice_keywords.json`.
+- **V5-2 ✅ (v2.6.0) Síntesis de Respuesta Hablada — TTS Opcional `--speak`**: Módulo agnóstico de salida hablada compatible con endpoints HTTP `/v1/audio/speech` (OpenAI, ElevenLabs, Cartesia) y síntesis offline local (Piper TTS / `pyttsx3`) activable mediante `--speak` o `/speak`.
+- **V5-3 ✅ (v2.7.0) Fuzzy Matching Fonético en `normalize_voice_response`**: Levenshtein sin dependencias (≤1 para palabras ≤5 chars, ≤2 para largas) aplicado a palabras sueltas: *"aprobau"*→s, *"avansar"*→s, *"cancelal"*→c. Frases largas intactas.
+- **V5-4 (Palabra de Activación Local / Wake Word "Hey Yunta")**: Integración opcional con `openWakeWord` (motor local de 0-Cloud) para activar el micrófono en segundo plano mediante la voz sin tocar la terminal.
+- **V5-5 (Diarización de Hablantes en Audios Extensos)**: Soporte para identificación de hablantes (`[Hablante 1]`, `[Hablante 2]`) en `AudioChunker` y `transcribe_audio` para reuniones y cátedras universitarias.
+
+
+## Backlog v6 (Robustez del pipeline STT para audios largos — 2026-09-14)
+
+Iniciativas derivadas del análisis comparativo contra implementaciones de referencia (WhisperX, faster-whisper, OpenAI Cookbook Whisper guide). Client-side, sin nuevas dependencias salvo indicación:
+
+### Nivel 1 — alto impacto, ~60 líneas
+
+- **V6-1 ✅ (v2.14.14) Marcas de tiempo reales por chunk (ffprobe)**: `_ffprobe_duration_secs` mide la duración real de cada chunk; si `ffprobe` da duración real para todos los fragmentos, los offsets se calculan por duración acumulada real en vez de repartir proporcionalmente por bytes. Cae a la heurística anterior sin regresión si `ffprobe` no está disponible.
+- **V6-2 ✅ (v2.14.4) Retry por chunk con backoff**: 3 reintentos ante 429/5xx por fragmento con backoff adaptativo (`Retry-After` del servidor si está presente, exponencial con jitter si no) más circuit breaker cloud↔local tras fallos consecutivos (`AudioTranscriber.transcribe_with_meta`, `AudioChunker._breaker_*`). 8+ tests en `tests/test_voice.py`.
+- **V6-3 ✅ (v2.14.13) Checkpoint incremental de transcripción**: Cada fragmento completado se persiste a `.yunta/scratch/transcript_<audio>.n<total>.part<N>.txt`; relanzar el mismo archivo reanuda desde el último fragmento en vez de empezar de cero, en modo secuencial y paralelo. Los checkpoints se borran al completar la transcripción entera.
+- **V6-4 ✅ (v2.14.12) Filtro de alucinaciones de Whisper**: Descarta fragmentos cuyo contenido ENTERO coincide con una frase de relleno conocida ("Gracias por ver el video", "Suscríbete al canal", créditos de Amara.org, etc.) — no recorta contenido real que las mencione de pasada.
+
+### Nivel 2 — moderado, ~40 líneas
+
+- **V6-5 ✅ (v2.14.15) Corte de chunks en silencios**: `ffmpeg silencedetect` detecta pausas naturales; cada corte a tiempo fijo se ajusta al punto medio del silencio más cercano dentro de una tolerancia — elimina palabras partidas entre fragmentos. Cae al corte fijo original si `ffprobe`/`ffmpeg` no cooperan.
+- **V6-6 ✅ (v2.14.9) Chunks en paralelo (ThreadPool)**: Opt-in vía `VOICE_PARALLEL_WORKERS` (default `1` = secuencial, sin cambio de comportamiento), `ThreadPoolExecutor`/`as_completed`, reensamblado por índice, circuit breaker con `threading.Lock`. Pendiente de validación empírica con audio real bajo concurrencia (aún no se ha medido la mejora de velocidad ni si el endpoint tolera la carga).
+
+### Nivel 3 — server-side, cambio de stack (mediano plazo)
+
+- **V6-7 🟡 faster-whisper local con VAD Silero**: Imagen Docker en localhost:8000 (ya soportado por `AudioTranscriber` como fallback): ~4x realtime, sin límite de 25MB ni bloqueos de Cloudflare, y el VAD elimina alucinaciones de raíz. Opción correcta si la transcripción de cátedras es diaria.
+- **V6-8 🟢 Diarización pyannote**: Identificación de hablantes en cátedras/entrevistas (relacionado con V5-5); dependencia pesada (~2GB de modelos) — solo si el caso de uso lo exige.
+
+Referencias: [WhisperX](https://github.com/m-bain/whisperx), [faster-whisper VAD](https://github.com/SYSTRAN/faster-whisper/issues/183), [OpenAI Cookbook Whisper processing guide](https://developers.openai.com/cookbook/examples/whisper_processing_guide), [Long-form transcription guide](https://medium.com/@yoad/whisper-long-form-transcription-1924c94a9b86).
+
+
 ## Mejoras M-A a M-F — del análisis empírico del dogfooding (docs/LECCIONES-DOGFOODING.md)
 
 - **M-A 🔴 auto-feedback en single-shot**: summarize() al completar CLI -y.

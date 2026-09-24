@@ -6,3 +6,10 @@ build/
 .pytest_cache/
 .venv/
 .yunta/
+scratch/
+*.code-workspace
+.env
+.env.*
+!.env.example
+
+

@@ -70,6 +70,22 @@ class Usage:
             turns=self.turns + other.turns,
         )
 
+    def delta(self, other: "Usage") -> "Usage":
+        merged_tools = {}
+        for k, v in self.tool_counts.items():
+            diff = v - other.tool_counts.get(k, 0)
+            if diff > 0:
+                merged_tools[k] = diff
+        return Usage(
+            input_tokens=max(0, self.input_tokens - other.input_tokens),
+            output_tokens=max(0, self.output_tokens - other.output_tokens),
+            cached_tokens=max(0, self.cached_tokens - other.cached_tokens),
+            tool_counts=merged_tools,
+            tool_errors=max(0, self.tool_errors - other.tool_errors),
+            turns=max(0, self.turns - other.turns),
+        )
+
+
     @property
     def cache_rate(self) -> float:
         """Porcentaje de tokens de entrada que vinieron de caché."""

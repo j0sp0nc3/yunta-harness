@@ -125,7 +125,57 @@ Yunta mantiene una matriz viva de compatibilidad de modelos en [`docs/PROVEEDORE
 
 ---
 
-## 4. Filosofía y Enfoque: Spec-Driven Development (SDD)
+## 4. Gestión de Ventana de Contexto, Sesiones y Pipeline Multiformato
+
+### 4.1. Gestor de Ventana de Contexto y Control de Tokens (`yunta/compact.py` & `yunta/budget.py`)
+Para prevenir el colapso de la memoria, la degradación por sesgo central (*lost in the middle*) y el consumo excesivo de tokens, Yunta implementa **4 estrategias de control de contexto**:
+
+1. **Compactación Progresiva por Umbrales (`TokenBudgetCompactor`)**:
+   - **70% de la ventana**: Inyección de aviso sugerido para respuesta sintética.
+   - **80% de la ventana**: Enmascaramiento automático de `tool_result` antiguos o extensos.
+   - **85% de la ventana**: Poda (*pruning*) defensiva de bloques de mensajes antiguos en cortes seguros (`role: user`).
+   - **99% de la ventana**: Resumen sintético total y reinicio limpio de ventana de contexto.
+2. **Desacoplamiento por Subagentes (`delegate_subtask` y `delegate_research`)**:
+   - Las tareas pesadas de investigación o refactorización multi-archivo se delegan a un subagente secundario con contexto propio limpio (15 turnos max), devolviendo únicamente el resultado consolidado al hilo principal.
+3. **Offloading a Disco de Salidas Masivas (`_maybe_offload_result`)**:
+   - Salidas de herramientas o comandos que superen los 8,000 caracteres se vuelcan automáticamente a `.yunta/scratch/output_<timestamp>.txt`, inyectando solo un preview de 500 caracteres y su puntero.
+4. **Procesamiento Map-Reduce para Grandes Archivos (`AudioChunker`)**:
+   - Fragmentación basada en silencios (VAD) para audios o archivos grandes, procesando fragmentos por separado antes de consolidar resúmenes.
+
+### 4.2. Identificador Universal de Sesión (`YUNTA_SESSION_ID`)
+- **Persistencia Neutral**: En lugar de depender de APIs estatales propietarias, Yunta mantiene la memoria conversacional cliente en `.yunta/session_state.json`.
+- **Inyección de Metadatos**: Asigna un ID único de sesión (`yunta_sess_<uuid>`) y lo adjunta en los campos `user` y `metadata={"session_id": ...}` en LiteLLM. Esto permite que proxies corporativos, herramientas de telemetría (Langfuse, Helicone, OpenRouter) y sistemas de Prompt Caching identifiquen la sesión unívocamente sin acoplarse a un proveedor específico.
+
+### 4.3. Pipeline Universal de Extracción Local de Texto Multiformato (Etapa 1 ➔ Etapa 2)
+Arquitectura estricta en 2 Etapas:
+- **Etapa 1 (100% Determinista / Offline / 0 LLM)**: Convierte cualquier formato de entrada localmente a Texto Plano (Prompt Base) usando extractores livianos (`yunta/extractors/`):
+  - **Audio & Voz**: `System.Speech` / Whisper local / `record_microphone`.
+  - **Video**: Extracción de pista de audio con `ffmpeg` ➔ Extractor de Audio.
+  - **Documentos & Tablas**: `pypdf`, `python-docx`, `pandas`/`csv` ➔ Markdown Table.
+  - **Imágenes & OCR**: `Windows.Media.Ocr` (WinRT nativo vía PowerShell, 0 dependencias).
+  - **URLs Web & YouTube**: Extracción de HTML plano y subtítulos vía `yt-dlp`.
+- **Etapa 2 (Comprensión y Razonamiento LLM)**: El texto plano consolidado se entrega como Prompt Base único a `Agent.send(prompt)`.
+
+### 4.4. Arquitectura Agnóstica de Voz STT, Dictado Libre y Fallback Híbrido (`yunta/voice.py`)
+- **Agnosticismo Total a Servicios STT (Requisito de Diseño)**: Yunta es estrictamente agnóstico al modelo y proveedor de voz STT basado exclusivamente en la arquitectura neural **Whisper**. Soporta cualquier servicio en línea o contenedor local compatible con el estándar HTTP OpenAI `/v1/audio/transcriptions` mediante variables de entorno (`VOICE_API_BASE`, `VOICE_API_KEY`, `VOICE_MODEL`):
+  - **Modo Cloud Serverless**: Cloudflare Workers AI (`@cf/openai/whisper`), Groq Cloud (`whisper-large-v3`), OpenAI Whisper (`whisper-1`) u Ollama local.
+  - **Modo Respaldo Local (`faster-whisper`)**: Carga perezosa (*lazy import*) de `faster-whisper` en `transcribe_offline_local` para transcripción offline en CPU sin impacto de memoria en el arranque de Yunta.
+- **Dictado Dinámico y Filtro Anti-Ruido Espectral (`trim_initial_noise_and_silence`)**:
+  - Grabación del micrófono en vivo de duración libre (`duration=None`) finalizable con la tecla `[ENTER]`.
+  - Recorte de puerta de ruido (*noise gate = 150ms*) y supresión de silencios pre-voz para descartar picos de teclado o ruidos iniciales.
+- **Normalización y Comparación Fonética de Respuestas Rápidas (`normalize_voice_response`)**:
+  - Comparador determinista de respuestas frecuentes por voz o texto que machea variaciones fonéticas y coloquialismos de aprobación (`"sí"`, `"aprobado"`, `"avanzar"`, `"abanzau"`, `"ok"`, `"dale"`, `"listo"` ➔ `s`), rechazo/cancelación (`"no"`, `"rechazado"`, `"cancelar"`, `"alto"`, `"stop"` ➔ `c`), edición (`"editar"`, `"modificar"`, `"cambiar"` ➔ `e`) y aprobación permanente (`"siempre"`, `"para siempre"` ➔ `siempre`), acelerando la interacción sin requerir coincidencia exacta de caracteres.
+
+### 4.5. Arquitectura de Síntesis de Voz Hablada (TTS) y Resiliencia (`yunta/tts.py`)
+- **Motor Agnóstico TTS (`TTSProvider`)**: Implementa salida hablada con estrategia de resiliencia de costo $0 USD en dos niveles:
+  1. **Proveedor Primario HTTP**: Consulta al endpoint OpenAI-compatible `/v1/audio/speech` expuesto en el worker serverless de Cloudflare Workers AI (`@cf/meta/mms-tts-spa`).
+  2. **Respaldo Neuronal en Español (`edge-tts`)**: Síntesis de voz humana de alta calidad (`es-CL-CatalinaNeural`) vía WebSockets sin costo ni claves de API.
+- **Troceo por Oraciones (*Sentence Chunking*)**: `chunk_text_by_sentences()` fragmenta la respuesta del LLM por signos de puntuación (`.`, `!`, `?`), permitiendo enviar el primer fragmento de audio a los altavoces en `< 0.5s` sin esperar a que finalice la respuesta completa.
+- **Control en CLI y REPL**: Bandera `--speak` / `-s` y comando interactivo `/speak [on|off]` para activar y desactivar la lectura en voz alta en tiempo de ejecución.
+
+---
+
+## 5. Filosofía y Enfoque: Spec-Driven Development (SDD)
 
 Yunta adopta formalmente el paradigma de **Desarrollo Guiado por Especificaciones (Spec-Driven Development)**:
 - La especificación del proyecto (`AGENTS.md`) actúa como contrato inviolable que gobierna el comportamiento del agente.
@@ -133,3 +183,4 @@ Yunta adopta formalmente el paradigma de **Desarrollo Guiado por Especificacione
 - La modificación de código es determinista y quirúrgica (`str_replace`), auditada interactivamente con Diffs unificados.
 - El éxito se certifica exclusivamente mediante oráculos ejecutables (`pytest`).
 - Para una presentación completa y detallada de la arquitectura SDD, consulta [Yunta & Spec-Driven Development (docs/sdd.md)](sdd.md).
+

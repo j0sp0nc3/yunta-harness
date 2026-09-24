@@ -1,6 +1,7 @@
 import difflib
 import inspect
 import json
+import os
 import sys
 import threading
 import time
@@ -72,14 +73,30 @@ class SessionPermissions:
     def grant(self, tool: str, raw: str) -> None:
         self._granted.add(self._pattern(tool, raw))
 
+    def grant_tool(self, tool: str) -> None:
+        """'siempre' aprueba la tool completa: un comando distinto no vuelve a preguntar."""
+        self._granted.add((tool, "*"))
+
     def allowed(self, tool: str, raw: str) -> bool:
-        return self._pattern(tool, raw) in self._granted
+        return (tool, "*") in self._granted or self._pattern(tool, raw) in self._granted
 
     def revoke_all(self) -> None:
         self._granted.clear()
 
     def items(self) -> list[tuple[str, str]]:
         return sorted(self._granted)
+
+    def to_list(self) -> list[list[str]]:
+        """Serialización explícita para handoff.py — nunca se persiste sola."""
+        return [list(pair) for pair in self.items()]
+
+    @classmethod
+    def from_list(cls, data: list[list[str]] | None) -> "SessionPermissions":
+        sp = cls()
+        for pair in data or []:
+            if len(pair) == 2:
+                sp._granted.add((pair[0], pair[1]))
+        return sp
 
 
 class Agent:
@@ -112,9 +129,20 @@ class Agent:
         self.snapshots: list[dict[str, str | None]] = []
         self._recent_tool_calls: list[tuple[str, str]] = []
         self._tool_calls_since_reminder: int = 0
+        self._doom_loop_triggers: int = 0  # Feature 5: health score persistente
+        self.think_override: str | None = None
+        self.current_reasoning_effort: str = "off"
+        # V5-1: callback opcional de aprobación por voz (inyectado por el REPL
+        # con escucha continua). Si está seteado, reemplaza todo prompt de permiso.
+        self.voice_approval = None
+        self.voice_keywords = None
 
     def send(self, prompt: str) -> str:
+        from .intent import IntentClassifier
         self.usage.turns += 1
+        reasoning_level = IntentClassifier.evaluate_reasoning(prompt, self.think_override)
+        self.current_reasoning_effort = reasoning_level.value
+        self._last_user_prompt = prompt  # Feature 6: insumo de evaluate_triviality
         self.messages.append(
             Message(role=Role.USER, content=[Block(type=BlockType.TEXT, text=prompt)])
         )
@@ -136,21 +164,38 @@ class Agent:
                 if self.compactor:
                     self.messages = self.compactor.compact(self.messages)
 
+                # Feature 6: enrutamiento económico dinámico — usa un modelo
+                # barato para pasos triviales (solo lectura reciente), nunca
+                # para decisiones de edición (regla dura, no heurística blanda).
+                cheap_model = os.environ.get("LLM_CHEAP_MODEL")
+                if cheap_model and hasattr(self.provider, "set_model_override"):
+                    from .intent import IntentClassifier
+                    trivial = IntentClassifier.evaluate_triviality(
+                        self._recent_tool_calls, getattr(self, "_last_user_prompt", "")
+                    )
+                    self.provider.set_model_override(cheap_model if trivial else None)
+
                 try:
-                    supports_stream = (
-                        "on_text" in inspect.signature(self.provider.send).parameters
+                    sig_params = inspect.signature(self.provider.send).parameters
+                    supports_stream = "on_text" in sig_params
+                    supports_reasoning = "reasoning_effort" in sig_params or any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig_params.values()
                     )
                 except (TypeError, ValueError):
                     supports_stream = False
+                    supports_reasoning = False
                 self._streamed = False
-                self._spinner = Spinner("Pensando...")
+                spinner_label = "🧠 Razonamiento Profundo (Thinking)..." if self.current_reasoning_effort == "high" else "Pensando..."
+                self._spinner = Spinner(spinner_label)
                 self._spinner.start()
                 try:
                     try:
+                        send_kwargs = {}
                         if supports_stream:
-                            resp = self.provider.send(self.messages, self._definitions(), on_text=self._stream_text)
-                        else:
-                            resp = self.provider.send(self.messages, self._definitions())
+                            send_kwargs["on_text"] = self._stream_text
+                        if supports_reasoning:
+                            send_kwargs["reasoning_effort"] = self.current_reasoning_effort
+                        resp = self.provider.send(self.messages, self._definitions(), **send_kwargs)
                     except Exception as prov_err:
                         # P7: degradación progresiva ante cuota agotada
                         if should_save_state(prov_err):
@@ -181,16 +226,18 @@ class Agent:
                     self.usage = self.usage.add(resp.usage)
                 self.messages.append(Message(role=Role.ASSISTANT, content=resp.content))
 
-                has_tool_call = False
+                has_tool_call = any(b.type == BlockType.TOOL_USE for b in resp.content)
+                verbose = os.environ.get("YUNTA_VERBOSE", "0") == "1"
+
                 for b in resp.content:
                     if b.type == BlockType.TEXT and b.text:
-                        if self._streamed:
-                            print()
-                        else:
-                            print(b.text)
                         final_text.append(b.text)
+                        if not has_tool_call or verbose:
+                            if self._streamed:
+                                print()
+                            else:
+                                print(b.text)
                     elif b.type == BlockType.TOOL_USE:
-                        has_tool_call = True
                         result, is_err = self._execute_tool(b.tool_name, b.tool_input)
                         current_tool_results.append(
                             Block(
@@ -202,7 +249,7 @@ class Agent:
                         )
 
                 if resp.stop_reason != StopReason.TOOL_USE or not has_tool_call:
-                    return "\n".join(final_text).strip()
+                    break  # respuesta final: salir del bucle para pasar por auto_save
 
                 # V3-5: Recordatorios como role:user en punto de decisión (tras ~15 tool calls)
                 if self._tool_calls_since_reminder >= 15:
@@ -255,7 +302,7 @@ class Agent:
     def _save_session_state(self) -> None:
         try:
             model_name = getattr(self.provider, "model", lambda: "")()
-            save_session(self.messages, self.usage, model=model_name)
+            save_session(self.messages, self.total_usage, model=model_name)
         except Exception:
             pass
 
@@ -320,6 +367,7 @@ class Agent:
 
         detail = self._tool_detail(name, raw_input)
         if force_prompt:
+            self._doom_loop_triggers += 1
             detail = f"[PAUSA DOOM-LOOP: repetición x{repeat_count} de {name}] {detail}".strip()
 
         print(f"[tool] {name} {raw_input}")
@@ -346,7 +394,7 @@ class Agent:
             if sys.stdout.isatty():
                 sys.stdout.write("\033[K")
             print(f"[tool] {name} completado en {elapsed:.2f}s")
-            res = self._maybe_offload_result(name, res)
+            res = self._maybe_offload_result(name, res, raw_input=raw_input)
             if repeat_count >= 3:
                 res += f"\n\n[ADVERTENCIA DOOM-LOOP: La herramienta '{name}' con estos argumentos se ha ejecutado {repeat_count} veces recientemente. Evalúa cambiar de estrategia o revisar el error.]"
             return res, False
@@ -357,16 +405,20 @@ class Agent:
             print(f"[tool] {name} falló en {elapsed:.2f}s")
             self.usage.tool_errors += 1
             err_msg = f"{type(e).__name__}: {e}"
-            err_msg = self._maybe_offload_result(name, err_msg)
+            err_msg = self._maybe_offload_result(name, err_msg, raw_input=raw_input)
             err_msg += classify_tool_error(name, f"{type(e).__name__}: {e}")
             if repeat_count >= 3:
                 err_msg += f"\n\n[ADVERTENCIA DOOM-LOOP: La herramienta '{name}' con estos argumentos se ha ejecutado {repeat_count} veces recientemente. Evalúa cambiar de estrategia o revisar el error.]"
             return err_msg, True
 
-    def _maybe_offload_result(self, name: str, result: str) -> str:
+    def _maybe_offload_result(self, name: str, result: str, raw_input: str = "") -> str:
         """Si la salida excede 8.000 caracteres, la guarda en .yunta/scratch/ y retorna un preview de 500 chars (V3-3)."""
         if len(result) <= 8000:
             return result
+        # Prevención de bucle recursivo scratch: si se está leyendo un archivo dentro de scratch o read_file especifica offset/limit, no offloadear de nuevo
+        if name == "read_file":
+            if "scratch" in raw_input or "offset" in raw_input or "limit" in raw_input:
+                return result
         try:
             scratch_dir = Path(".yunta") / "scratch"
             scratch_dir.mkdir(parents=True, exist_ok=True)
@@ -419,11 +471,20 @@ class Agent:
     def _approve(
         self, name: str, detail: str = "", raw_input: str = "", force_prompt: bool = False
     ) -> bool:
+        # Fix chaos-testing 2026-09-19: los permisos persistentes ("siempre")
+        # deben ganarle a CUALQUIER canal de aprobación (voz, confirm callback
+        # o prompt de terminal), no solo al de terminal. Antes, voice_approval
+        # se consultaba incondicionalmente antes de mirar session_permissions,
+        # así que decir "siempre" en modo voz no evitaba que se volviera a
+        # preguntar en el siguiente comando de la misma tool.
+        if not force_prompt and raw_input and self.session_permissions.allowed(name, raw_input):
+            return True
+        # V5-1: en modo voz continua la aprobación es 100% hablada
+        if self.voice_approval is not None:
+            return self.voice_approval(name, detail)
         if not force_prompt:
             if self.confirm is not None:
                 return self.confirm(name, detail)
-            if raw_input and self.session_permissions.allowed(name, raw_input):
-                return True
         else:
             if self.confirm is not None:
                 return self.confirm(name, detail)
@@ -431,28 +492,37 @@ class Agent:
         if detail:
             print(detail, end="")
 
+        from .voice import normalize_voice_response
+
         while True:
-            ans = input(f"Aprobar {name}? [s/siempre/n]: ").strip().lower()
+            ans_raw = input(f"Aprobar {name}? [s/siempre/n]: ").strip()
+            ans = normalize_voice_response(ans_raw)
             if ans in ("s", "si", "y", "yes"):
                 return True
             if ans in ("siempre", "always"):
-                if raw_input:
-                    self.session_permissions.grant(name, raw_input)
+                # V2.5.1: 'siempre' aprueba la tool completa (antes solo memorizaba
+                # el primer token del comando y volvía a preguntar ante cada comando nuevo).
+                self.session_permissions.grant_tool(name)
                 return True
-            if ans in ("n", "no"):
+            if ans in ("c", "n", "no"):
                 return False
 
     @property
     def total_usage(self) -> Usage:
         p_usage = getattr(self.provider, "total_usage", None)
-        in_tok = p_usage.input_tokens if p_usage else self.usage.input_tokens
-        out_tok = p_usage.output_tokens if p_usage else self.usage.output_tokens
-        cached_tok = p_usage.cached_tokens if p_usage else self.usage.cached_tokens
+        p_in = p_usage.input_tokens if p_usage else 0
+        p_out = p_usage.output_tokens if p_usage else 0
+        p_cached = p_usage.cached_tokens if p_usage else 0
         return Usage(
-            input_tokens=in_tok,
-            output_tokens=out_tok,
-            cached_tokens=cached_tok,
+            input_tokens=p_in + self.usage.input_tokens,
+            output_tokens=p_out + self.usage.output_tokens,
+            cached_tokens=p_cached + self.usage.cached_tokens,
             tool_counts=dict(self.usage.tool_counts),
             tool_errors=self.usage.tool_errors,
             turns=self.usage.turns,
         )
+
+    @total_usage.setter
+    def total_usage(self, value: Usage) -> None:
+        """Restaura usage acumulado de una sesión previa (usado por /resume)."""
+        self.usage = value

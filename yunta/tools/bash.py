@@ -165,14 +165,22 @@ def bash(raw: str) -> str:
     if blocked:
         raise ValueError(f"{blocked} {MSG_SUFFIX}")
     command = _normalize_windows_command(command)
-    proc = subprocess.run(
-        command,
-        shell=True,
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    output = (proc.stdout + proc.stderr).strip()
-    if proc.returncode != 0:
-        output = f"[exit {proc.returncode}] {output}"
-    return _compact_output(output, proc.returncode)
+    try:
+        proc = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            timeout=60,
+        )
+        stdout_text = proc.stdout.decode("utf-8", errors="replace") if proc.stdout else ""
+        stderr_text = proc.stderr.decode("utf-8", errors="replace") if proc.stderr else ""
+        output = (stdout_text + stderr_text).strip()
+        if proc.returncode != 0:
+            output = f"[exit {proc.returncode}] {output}"
+        return _compact_output(output, proc.returncode)
+    except subprocess.TimeoutExpired as te:
+        stdout_text = te.stdout.decode("utf-8", errors="replace") if te.stdout else ""
+        stderr_text = te.stderr.decode("utf-8", errors="replace") if te.stderr else ""
+        partial = (stdout_text + stderr_text).strip()
+        return f"[TIMEOUT 60s] El comando excedió el tiempo límite de 60 segundos y fue cancelado.\nSalida parcial:\n{partial}"

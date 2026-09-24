@@ -33,6 +33,9 @@ def _run_cli_check(cmd_args: List[str], content: str, path: str) -> Optional[str
                 if (
                     "windows subsystem for linux" in err_lower
                     or "wsl.exe" in err_lower
+                    or "wsl (" in err_lower
+                    or "relay" in err_lower
+                    or "execvpe" in err_lower
                     or "not recognized as an internal" in err_lower
                     or "command not found" in err_lower
                 ):
@@ -621,7 +624,36 @@ class LanguageAdapterRegistry:
         return list(self._instances.keys())
 
 
-# Instancia singleton del registro de adaptadores
+# Instancia singleton del registro de adaptadores de lenguaje
 registry = LanguageAdapterRegistry()
+
+
+class InputAdapterRegistry:
+    """Registro con Carga Bajo Demanda (Lazy Loading) de adaptadores modales de entrada (Voz, Imagen)."""
+
+    def __init__(self):
+        self._instances: Dict[str, Any] = {}
+
+    def get_audio_adapter(self):
+        """Carga perezosa del módulo de voz únicamente al procesar audio/voz."""
+        if "AudioTranscriber" not in self._instances:
+            from .voice import AudioTranscriber
+            self._instances["AudioTranscriber"] = AudioTranscriber()
+        return self._instances["AudioTranscriber"]
+
+    def get_vision_adapter(self):
+        """Carga perezosa del módulo de visión únicamente al procesar imágenes."""
+        if "VisionAdapter" not in self._instances:
+            from .tools import vision
+            self._instances["VisionAdapter"] = vision
+        return self._instances["VisionAdapter"]
+
+    def loaded_modalities(self) -> List[str]:
+        return list(self._instances.keys())
+
+
+# Singleton de adaptadores modales de entrada
+input_registry = InputAdapterRegistry()
+
 
 

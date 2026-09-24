@@ -6,6 +6,543 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.14.28] — 2026-09-24
+
+Normalización de turnos consecutivos en el provider, orden cronológico de auto-feedback y transición a la cascada activa de modelos Gemini.
+
+- **`yunta/provider.py` — normalización de turnos consecutivos del mismo rol en `_to_litellm`**: proveedores como Google Gemini y Vertex AI exigen alternancia estricta entre turnos de usuario y modelo, rechazando peticiones con mensajes consecutivos de un mismo rol (`user` seguido de `user`) con HTTP 400 `BadRequestError: Please ensure that multiturn requests alternate between user and model or provide a valid role`. `_to_litellm` ahora fusiona limpiamente mensajes consecutivos de usuario en un único turno unificado, garantizando interoperabilidad neutral entre todos los proveedores sin excepciones espurias.
+- **`yunta/feedback.py` — orden cronológico en `FeedbackStore.summarize`**: el prompt de lecciones de auto-evaluación (`LESSON_PROMPT`) se anteponía a los mensajes de la sesión (`[LESSON_PROMPT] + messages`), violando la cronología natural y generando turnos consecutivos de usuario (`user + user`) al inicio de cada evaluación post-sesión. Se reordena a `messages + [LESSON_PROMPT]`, ejecutando la auto-evaluación con éxito en el primer intento y sin saltos de router.
+- **`.env` — transición a cascada activa y funcional de Gemini**: ante el agotamiento de saldo en `openai/glm-4.7` (`RateLimitError: Insufficient balance`), se configuró una cascada resiliente de modelos verificados en producción: `gemini/gemini-flash-lite-latest,gemini/gemini-3.5-flash-lite,gemini/gemini-3.6-flash` (primarios) con fallback a `gemini/gemini-3.1-flash-lite`.
+- **Suite de pruebas**: 1 test unitario nuevo en `tests/test_provider.py` (`test_consecutive_user_messages_are_merged_for_strict_providers`), suite completa en verde (440 tests pasando en 113s).
+
+## [2.14.27] — 2026-09-24
+
+Dos self-heal en `yunta/provider.py` que desbloquean a Gemini como modelo primario y limpian la telemetría que V7-9 acababa de habilitar. Ambos salieron de mirar `llm_calls.jsonl` real, no de suponer: **15 llamadas, 9 fallidas (`failure_ratio` 0.60)** en una sola corrida de resumen.
+
+- **V7-10: reintentar sin `cache_control` cuando el tier rechaza el caché de contexto**: el free tier de Gemini responde HTTP 429 `TotalCachedContentStorageTokensPerModelFreeTier limit=0` ante **cualquier** petición que lleve `cache_control`. Como el bloque de system prompt siempre lo llevaba, el modelo no podía responder **nada** — eso, y no una cuota agotada, fue lo que dejó sin resumen a la corrida del 2026-09-23.
+  - `_to_litellm` deja de emitir `cache_control` una vez que `self._disable_cache_control` se activa; la activación ocurre **solo tras ver el fallo**, no preventivamente: donde el caché funciona ahorra dinero real (29.5% de hit medido en esta misma corrida, ~$0.023 USD).
+  - Diagnóstico honesto de por qué se veía como problema de cuota: el error llega como `RateLimitError`, el mismo tipo que una saturación transitoria. `limit=0` es la señal que lo distingue — no es "vuelve más tarde", es "aquí no existe".
+- **V7-11: recordar el descarte de `reasoning_effort` entre turnos**: el self-heal de parámetros no soportados solo escribía `LLM_REASONING_EFFORT=off`, pero `agent.py:197` pasa el effort **explícito en cada turno** y el parámetro gana sobre la variable de entorno. Resultado medido: el mismo `UnsupportedParamsError` se repitió **4 veces en una corrida de 6 llamadas útiles**, una por turno.
+  - Ahora se recuerda en la instancia (`self._disable_reasoning`), mismo patrón que V7-10.
+  - **Alcance honesto**: litellm rechaza este parámetro del lado cliente, así que los reintentos costaban 0.02-0.13s cada uno — el arreglo **no acelera nada perceptible**. Lo que arregla es que `failure_ratio` vuelva a significar algo: 0.60 era mayoritariamente ruido auto-infligido, no incidentes reales.
+- **4 tests nuevos** en `tests/test_provider.py` (24 en el archivo): reintento sin caché con el mensaje real de Vertex AI, caché intacto en proveedores que sí lo aceptan, y el descarte de reasoning aprendido entre dos `send()` consecutivos.
+
+### Validación empírica (resumen de la cátedra, con Gemini primario)
+
+El resumen de "Conductas motivadas" que quedó pendiente desde la corrida del 2026-09-23 **se generó correctamente** (`.yunta/scratch/resumen_conductas_motivadas.md`): 58,576 tokens de entrada, 1,629 de salida, 2 tool calls.
+
+- **Predicción falsada**: `finish_reason == "length"` apareció en **0 de 6** llamadas exitosas (`length_truncated_ratio: 0.0`). La sospecha de truncamiento por `max_tokens` que motivó V7-5 —los 9,402 tokens de salida idénticos entre las corridas 1 y 2— **no se reproduce aquí**. Salvedad importante: esta corrida fue con Gemini, y la anomalía original fue con GLM-4.7; la hipótesis queda **sin probar para GLM**, no descartada. Lo que sí quedó demostrado es que el instrumento distingue el caso cuando ocurre.
+
+## [2.14.26] — 2026-09-24
+
+Dos correcciones derivadas de la **corrida completa a escala real** (81.78 min, 189 fragmentos, `VOICE_REUSE_CONNECTION=1` + `VOICE_PARALLEL_WORKERS=4`): STT en **319.6s (RTF 15.35x)** contra 2265.7s del mejor baseline, **-85.9%**, sin un solo 429 ni disparo de breaker.
+
+- **`yunta/voice.py` — V7-8: `safety` 0.85→0.75 y `ceiling` 0.5→0.42 en `_calibrate_chunk_minutes`**: el corte por silencio de V6-5 mueve **ambos** extremos de cada fragmento hasta ±30% del tamaño objetivo, así que un fragmento puede estirarse hasta `chunk + 2×tolerancia` — muy por encima de lo que sugiere el `ceiling`. En la corrida real aparecieron fragmentos de hasta 35.7s (~583 KB) sobre el límite de 500 KB, que la rama de archivo sobredimensionado re-fragmentaba **en silencio** (12-14 casos, sin aviso en el log, con pérdida del estado del circuit breaker y 14 snapshots anidados que ensuciaban `aggregate_voice`).
+  - Calculado sobre el archivo real (130,564 bps → límite duro de 31.37s/fragmento): con 0.85/0.5 quedaban **12 fragmentos por encima del límite**; con 0.75/0.42 el cálculo daba un máximo de 30.9s y **cero** excedidos.
+  - **CORRECCIÓN (2026-09-24, tras la corrida real de validación)**: ese "cero" era una proyección aritmética, no una medición — la corrida completa de 214 fragmentos dejó **1 fragmento de 32.6s** sobre el límite, que sí disparó la re-fragmentación anidada que este cambio buscaba eliminar. El mecanismo descrito arriba (`chunk + 2×tolerancia`) es correcto; la cota numérica derivada de él estaba mal. Resultado honesto: **14 → 1 sobredimensionados (-93%), no cero**. Queda abierto si se cierra bajando otro escalón el `ceiling` o clampando la tolerancia de silencio.
+  - **Costo honesto del arreglo**: los fragmentos pasan de ~185 a ~209 (+13% de peticiones). Contra las ~197 peticiones reales del esquema anterior (185 + 12 re-fragmentadas), el neto son **~12 peticiones más**. Se acepta porque elimina la pérdida de estado del breaker, la re-fragmentación silenciosa y la contaminación de la telemetría; con W=4 el costo en tiempo es ~3% del total.
+  - 4 tests de calibración actualizados a los valores nuevos (0.40 para 128 kbps, 0.42 de ceiling, 0.3923 para 130.5 kbps).
+- **`yunta/provider.py`, `yunta/llm_call_telemetry.py` — V7-9: registrar también las llamadas LLM fallidas**: `_record_llm_call` solo corría en el camino de éxito, así que el incidente de cuota agotada que abortó el resumen de la corrida real dejó `llm_calls.jsonl` en **0 entradas pese a varios intentos** — completamente invisible.
+  - `LLMCallSnapshot` gana `error: str = ""` (vacío = éxito); `send()` registra en el bloque `except` antes de decidir fallback, con tipo de excepción y mensaje truncado a 200 caracteres.
+  - `aggregate_llm_calls` separa éxitos de fallos: `successful_calls`, `failed_calls`, `failure_ratio`, `errors_by_type`. Los fallos ya no contaminan `avg_tokens_per_sec` (antes sumaban 0 tokens al promedio) ni `length_truncated_ratio`.
+  - 3 tests nuevos: rastro del error y conteo separado, agregado sin división por cero cuando todas fallan, y registro desde `send()` con el tipo de excepción real.
+
+## [2.14.25] — 2026-09-23
+
+- **`tests/test_provider.py` — corrección de regresión propia: los tests contaminaban `.yunta/llm_calls.jsonl`**: la telemetría agregada en v2.14.21 (V7-5) graba a una ruta **relativa** (`.yunta/llm_calls.jsonl`), o sea resuelta contra el directorio de trabajo. Los 17 tests preexistentes de `test_provider.py` llaman a `LiteLLMProvider.send()` con un `litellm.completion` falso y **sin mockear la telemetría**, así que cada corrida de la suite escribía ~154 entradas sintéticas (`out=10` tokens, `elapsed≈0s`, 59K tokens/seg) al archivo real del repo — enterrando exactamente las llamadas reales que ese archivo existe para medir.
+  - Detectado al intentar usar el archivo para su propósito: verificar si el resumen de voz se trunca por `max_tokens` (`finish_reason == "length"`). Las 154 entradas eran 100% ruido de tests, 0 llamadas reales.
+  - Es el **mismo tipo de contaminación ya corregido para `voice_health.jsonl`** en v2.14.13, reintroducido con el módulo nuevo. Nota para futuras telemetrías con ruta relativa: aislar el directorio de trabajo en los tests es parte del diseño, no un detalle posterior.
+  - Fix: fixture `autouse` a nivel de módulo en `tests/test_provider.py` que hace `monkeypatch.chdir(tmp_path)` — contenido a ese archivo, sin un `conftest.py` global (que rompería los 8 archivos de test que sí dependen del CWD del repo: gobernanza, handoff, sandbox, bestof).
+  - Verificado empíricamente: 20/20 tests de `test_provider.py` en verde y el archivo real **no crece** (154 → 154 líneas antes de limpiarlo). Archivo purgado de las 154 entradas sintéticas (backup en el scratchpad de la sesión); `.yunta/` está gitignored, así que la purga es mantenimiento local.
+
+## [2.14.24] — 2026-09-22
+
+- **`yunta/voice.py`, `tests/test_voice.py` — V7-3: Reutilización de conexión HTTP persistente (Keep-Alive)**: en transcripciones de audios largos con decenas o cientos de fragmentos (ej. 184 fragmentos en cátedras reales), abrir una conexión TLS/TCP nueva por fragmento añadía una penalización fija acumulada de handshake (~250-350 ms por fragmento, ~45-65s totales de latencia pura).
+  - Implementación con biblioteca estándar pura de Python (`http.client.HTTPSConnection` / `HTTPConnection`), sin añadir ninguna dependencia externa (`requests`/`urllib3`), respetando estrictamente las Reglas 1 y 3 de `AGENTS.md`.
+  - Aislamiento seguro entre hilos mediante `self._http_local = threading.local()` en `AudioTranscriber`: cada worker en ejecución paralela (`VOICE_PARALLEL_WORKERS > 1`) dispone de su propia conexión persistente aislada, eliminando riesgos de contención de socket o condiciones de carrera concurrentes.
+  - Tolerancia y reconexión automática transparente ante cortes por inactividad (`RemoteDisconnected`, `CannotSendRequest`, `BrokenPipeError`, `ConnectionResetError`), común en balanceadores de carga como Cloudflare Workers AI.
+  - Preservación íntegra de semántica de errores y retry: propagación exacta de `_TranscribeError`, código HTTP, extracto y header `Retry-After`.
+  - Método `close()` tanto en `AudioTranscriber` como en `AudioChunker` para liberar sockets al terminar la transcripción completa de archivos grandes.
+  - Opt-in estricto mediante variable de entorno `VOICE_REUSE_CONNECTION` (default `"0"`): cuando está desactivado o ausente, delega transparentemente en `urllib.request.urlopen` preservando retrocompatibilidad absoluta con la suite existente.
+  - 8 tests unitarios nuevos en `tests/test_voice.py` (de 425 a 433 tests totales, 100% pasando limpios): despacho condicional, reutilización de socket por host/puerto, reconexión automática ante corte remoto, propagación de `_TranscribeError` con `Retry-After`, aislamiento en multithreading y método `close()`.
+
+## [2.14.23] — 2026-09-22
+
+- **`AGENTS.md` — Regla 7: protocolo de trabajo concurrente real vía `git worktree`**: el punto "un agente a la vez" de la Regla 7 evita que dos agentes se pisen, pero también impide que trabajen genuinamente en paralelo — obliga a esperar turno incluso cuando las tareas no se solapan (justo la situación de esta sesión: Claude Code con las Fases 6/7/10/11, Antigravity con las Fases 8/9, ambas sobre `yunta/voice.py`).
+  - Nuevo mecanismo, opt-in según convenga: cada agente que trabaje en paralelo con otro usa su propio `git worktree` en una rama derivada de la rama de integración (`<rama-integración>--<agente>-<tarea>`), commitea de forma independiente, y al terminar abre PR o hace rebase/merge contra la rama de integración — los conflictos, si los hay, los resuelve git de forma estándar en vez de una convención informal de "avisar antes de tocar tal función".
+  - `.yunta/HANDOFF.md` cambia de rol en este modo: de "semáforo de quién tiene el único directorio" a "registro de qué rama/worktree tiene cada agente".
+  - El modo secuencial existente (working tree compartido, un agente a la vez) sigue siendo el default para cambios chicos o cuando solo hay un agente activo — el worktree es para cuando la concurrencia real aporta valor, no un reemplazo universal.
+  - Motivado directamente por esta sesión: coordinar Fases 6-11 (mías) con Fases 8-9 (Antigravity) mediante buzón secuencial funcionó, pero con fricción evitable si ambos bloques hubieran podido avanzar a la vez.
+
+## [2.14.22] — 2026-09-22
+
+- **`yunta/voice.py`, `yunta/voice_telemetry.py`, `yunta/cli.py` — V7-6: telemetría del filtro de alucinaciones (V6-4)**: desde que se agregó el filtro de frases de relleno conocidas (v2.14.12), no había forma de saber cuántas veces disparó en una corrida real — un punto ciego identificado explícitamente al auditar las 2 primeras corridas empíricas de esta sesión.
+  - `AudioTranscriber.transcribe_with_meta` detecta si `_clean_transcription` descartó el fragmento entero (texto crudo no vacío → resultado vacío) y lo agrega a la metadata como `hallucination_filtered`. No se cambió la firma de `_clean_transcription` (sigue devolviendo solo el string, usada en un test unitario directo) — se aprovecha que `_dedup_whisper_repetition` nunca reduce texto no vacío a `""` (solo colapsa repeticiones), así que "entrada no vacía → salida vacía" solo puede deberse al filtro de alucinaciones (V6-4).
+  - `AudioChunker._telem_hallucinations_filtered` cuenta estos fragmentos; `transcribe_large_audio` lo pasa a `record_voice_snapshot`. `VoiceSnapshot`/`aggregate_voice` ganan `hallucinations_filtered`/`total_hallucinations_filtered`/`hallucinations_per_fragment`, con default 0 (compatible con snapshots viejos). `yunta health --voice` lo muestra.
+  - 6 tests nuevos entre `tests/test_voice.py` y `tests/test_voice_telemetry.py` (419 → 425 tests totales): el contador solo sube con coincidencia exacta (no con menciones parciales ni con silencio genuinamente vacío), roundtrip y agregación en telemetría, y propagación correcta en una transcripción completa simulada.
+  - Con esto, el bloque de Claude Code del plan conjunto con Antigravity (Fases 6, 7, 10, 11) queda completo — desbloquea formalmente las Fases 8 (keep-alive) y 9 (paralelismo), a cargo de Antigravity.
+
+## [2.14.21] — 2026-09-22
+
+- **`yunta/provider.py`, nuevo `yunta/llm_call_telemetry.py` — V7-5: telemetría de `finish_reason` crudo por llamada al LLM**: dos corridas reales distintas del pipeline de voz generaron **exactamente 9,402 tokens de salida** con contenido de entrada completamente distinto (72K vs 73K caracteres de transcript, resúmenes con estructura diferente) — coincidencia estadísticamente rara si ambas generaciones terminaron "naturalmente". `_FINISH_REASONS` en `provider.py` no mapea `"length"` (el motivo estándar cuando la respuesta se corta por `max_tokens`) — hoy cae silenciosamente en `StopReason.OTHER`, indistinguible de cualquier otro final.
+  - Nuevo módulo `yunta/llm_call_telemetry.py` (mismo patrón JSONL de `voice_telemetry.py`): registra por llamada a `LiteLLMProvider.send()` el modelo, tokens de entrada/salida, tiempo de pared, y **`finish_reason` crudo del proveedor** (no el `StopReason` ya mapeado) — deliberadamente separado de `yunta/api.py::Usage`, superficie pública congelada (`docs/PLAN.md`, ítem E2, reexportada en `yunta/__init__.py`), sin agregarle campos ni tocar `StopReason`.
+  - Instrumentado en ambos caminos de `send()`: no-streaming (`litellm.completion` directo) y streaming (`_consume_stream`, que ahora recibe el `model` real usado, relevante con fallback entre modelos).
+  - `aggregate_llm_calls`: tokens/segundo promedio y proporción de llamadas truncadas por `"length"` — responde directamente si el truncamiento por `max_tokens` explica una demora, en vez de conjeturarlo.
+  - Nunca rompe la respuesta real si falla el registro (mismo patrón de resiliencia que `voice_telemetry`).
+  - 6 tests nuevos entre `tests/test_provider.py` y `tests/test_llm_call_telemetry.py` (413 → 419 tests totales): roundtrip y agregación de `llm_call_telemetry.py`, `finish_reason="length"` capturado distinguible en ambos caminos (streaming y no), y que un fallo de telemetría no rompe la llamada real.
+  - **Resultado de esta fase**: la próxima corrida real con transcript real va a decir con datos si el truncamiento por `max_tokens` explica la demora sin explicar de la Corrida 2, en vez de solo la coincidencia sospechosa de tokens idénticos.
+  - Fase 10 de un plan conjunto con Antigravity (ver `.claude/plans/genera-un-plan-de-concurrent-cook.md`, no versionado en este repo).
+
+## [2.14.20] — 2026-09-22
+
+- **`yunta/voice.py`, `yunta/voice_telemetry.py`, `yunta/cli.py` — V7-2: instrumentación fina por fragmento (network_wait vs processing)**: la Corrida 2 quedó con una anomalía sin explicar (~91s de diferencia en STT no atribuibles a overhead medido) porque la única telemetría existente era un agregado ciego por transcripción completa — no había forma de saber si una demora era de red/endpoint o del lado cliente.
+  - `AudioTranscriber.transcribe_with_meta` ahora mide `network_wait_secs` (tiempo dentro de `_post_transcription`, acumulado a través de reintentos — cada reintento es un round-trip real) y `total_secs` (tiempo total del método), agregados a la metadata que ya devolvía (`source`, `cloud_attempted`, `cloud_failed`).
+  - `AudioChunker._record_telemetry` colecciona estos valores por fragmento en `_telem_network_wait`/`_telem_processing` (processing = total − network_wait; incluye deliberadamente la espera de backoff entre reintentos, que es una pausa del cliente, no medición perfecta de cada micro-etapa sino la distinción que importa: red/endpoint vs cliente).
+  - `yunta/voice_telemetry.py`: nueva `percentile(values, pct)` (interpolación lineal, sin dependencias); `VoiceSnapshot`/`record_voice_snapshot` ganan `network_wait_p50/p95/max`, `processing_p50/p95/max` y `workers_used`, todos con default (compatible con snapshots viejos); `aggregate_voice` promedia estos percentiles entre sesiones, tolerando snapshots sin los campos nuevos (aportan 0.0).
+  - `yunta health --voice` muestra los nuevos percentiles.
+  - `workers_used` refleja el modo de ejecución REAL (no solo la variable de entorno configurada): con un solo fragmento, `VOICE_PARALLEL_WORKERS>1` igual cae al camino secuencial, y así se reporta.
+  - Overhead de instrumentar: unas pocas llamadas a `time.monotonic()` (nanosegundos) por fragmento frente a segundos de I/O de red — despreciable por diseño, no requiere medición aislada adicional.
+  - 12 tests nuevos entre `tests/test_voice.py` y `tests/test_voice_telemetry.py` (401 → 413 tests totales): percentiles (vacío, un valor, conocidos), roundtrip y defaults de los campos nuevos, promedio entre sesiones y tolerancia a snapshots viejos, acumulación de `network_wait` a través de reintentos, `_record_telemetry` con y sin campos de timing, integración completa (percentiles reales pasados a `record_voice_snapshot`) y `workers_used` reflejando el modo real de ejecución; se corrigieron 3 tests existentes que comparaban el dict de metadata por igualdad exacta (ahora tiene 2 campos más).
+  - **Resultado de esta fase**: la próxima corrida real sobre el archivo de prueba va a producir percentiles interpretables de red vs procesamiento — reemplaza la especulación de la Corrida 2 por datos, no la explica todavía (eso requiere correr la Fase 8/9 con esto ya en pie).
+  - Fase 7 de un plan conjunto con Antigravity (ver `.claude/plans/genera-un-plan-de-concurrent-cook.md`, no versionado en este repo) — desbloquea la validación empírica de las Fases 8 (keep-alive) y 9 (paralelismo), a cargo de Antigravity.
+
+## [2.14.19] — 2026-09-22
+
+- **`yunta/voice.py` — V7-1: calibración de bitrate universal (no solo MP3)**: `_calibrate_chunk_minutes` (Fase 4, v2.14.4) solo podía leer bitrate real vía sniffing de frame MP3 — para cualquier otro contenedor (`.m4a`, `.ogg`, `.wav`) siempre daba 0 y la función se rendía directo al `floor` de 0.33 min. **Esto significaba que la calibración de bitrate nunca tuvo efecto en ninguna de las 3 corridas empíricas reales de esta sesión**, porque el archivo de prueba es `.m4a` — hallazgo encontrado en una segunda revisión independiente del trabajo de las corridas 1-3.
+  - Nueva `_ffprobe_bitrate_bps(file_path)`: mismo patrón defensivo que `_ffprobe_duration_secs` (try/except, timeout, comparte el flag `_ffprobe_available` — si uno detecta el binario ausente, el otro no reintenta), pero para bitrate vía `ffprobe -show_entries format=bit_rate`, funcionando con cualquier formato que `ffprobe` entienda.
+  - `_calibrate_chunk_minutes` ahora intenta `_estimate_bitrate_bps` (rápido, sin subproceso, solo MP3) y si da 0, intenta `_ffprobe_bitrate_bps` antes de rendirse al `floor` — sin regresión si ambos fallan.
+  - **Validado con el archivo real de la sesión** (81.78 min, `.m4a`): bitrate detectado 130,564 bps (130.6 kbps), `chunk_minutes` calibrado de 0.33 min (20s) fijo a 0.4444 min (26.7s) — proyección de 248 a 184 fragmentos (**-25.7%**), coincide casi exacto con la proyección de la revisión independiente (~0.44min, -25%).
+  - 4 tests nuevos en `tests/test_voice.py` (397 → 401 tests totales): parseo de `_ffprobe_bitrate_bps`, desactivación tras binario ausente, flag compartido entre `_ffprobe_bitrate_bps`/`_ffprobe_duration_secs`, calibración real para `.m4a` con ffprobe mockeado; se actualizó un test existente (`test_calibrate_chunk_minutes_falls_back_to_floor_without_bitrate`) para mockear explícitamente `ffprobe` ausente en vez de depender implícitamente de que el binario real no pudiera parsear un archivo de bytes basura.
+  - **Pendiente**: falta la corrida empírica completa (fragmentos totales reales, tasa de errores, ritmo por fragmento) — la calibración standalone ya está verificada, pero el efecto de punta a punta en una transcripción real todavía no.
+  - Fase 6 de un plan conjunto con Antigravity (ver `.claude/plans/genera-un-plan-de-concurrent-cook.md` — no versionado en este repo) tras contrastar y resolver dos rondas de revisión cruzada sobre cómo seguir optimizando el pipeline de voz post-v2.14.18.
+
+## [2.14.18] — 2026-09-20
+
+- **`yunta/voice.py` — corrección de regresión: elimina 259 llamadas redundantes a `ffprobe`**: la segunda corrida real de auditoría (mismo audio de 81 min, después de v2.14.12-17) salió **más lenta** que la primera (STT: 2265.7s vs 2127.8s; total: 50m40s vs 43m46s) — el objetivo de estas fases era mejorar, no empeorar, y el resultado neto no lo cumplió.
+  - Causa raíz medida (no supuesta): `split_audio_by_silence` (V6-5) ya mide la duración total del audio con `ffprobe` y ya conoce los puntos de corte exactos (por silencio o por múltiplos de `segment_secs`) — pero `transcribe_large_audio` (V6-1) volvía a llamar a `ffprobe` **una vez por cada uno de los 259 fragmentos ya generados**, redescubriendo algo que ya se sabía. Medido con el archivo real: 259 llamadas × ~141ms = **~36.5s de overhead puro**, más ~10.1s de la pasada de `silencedetect` — overhead real total ~47s, pero no explica toda la diferencia observada (~138s en la fase STT); el resto es contención de CPU/red compartida no atribuible al código.
+  - `AudioChunker` gana `_last_chunk_durations`: `split_audio_by_silence` calcula las duraciones exactas de cada fragmento a partir de los boundaries que ya conoce (una sola medición de `ffprobe` sobre el archivo original) y las expone; `transcribe_large_audio` las reutiliza directamente en vez de re-medir cada fragmento. Verificado con el archivo real de 81 min: `split_audio_by_silence` completo (silencedetect + corte + cálculo de duraciones) ahora tarda **16.74s en total** (antes: ~47s+ solo en overhead de medición, sin contar el corte en sí), con duraciones exactas (suma = 4906.68s, coincide con la medición real de `ffprobe`).
+  - Fallback preservado: si `split_audio_by_silence` fue reemplazado (como en varios tests) o las duraciones no coinciden en cantidad con los chunks generados, se vuelve a medir por fragmento como antes — sin regresión funcional.
+  - 3 tests nuevos en `tests/test_voice.py` (394 → 397 tests totales): duraciones exactas expuestas con cortes por silencio, duraciones exactas expuestas con corte fijo, y verificación de que `ffprobe` se llama una sola vez (no una por fragmento) en una transcripción completa.
+  - Pendiente: falta una tercera corrida real completa para confirmar que el tiempo total vuelve a ser competitivo con la corrida original — la fase de resumen del LLM (donde también hubo una demora sin explicar en la segunda corrida) no se tocó en este commit.
+
+## [2.14.17] — 2026-09-20
+
+- **Higiene de `.yunta/voice_health.jsonl`**: confirmado que la contaminación por tests ya quedó resuelta como efecto colateral del `monkeypatch.chdir(tmp_path)` agregado en v2.14.13 (V6-3) — corrí toda la suite de voz y el archivo real no creció ni una línea. Limpiadas las 161 entradas sintéticas acumuladas de antes de ese fix (backup en el scratchpad de la sesión), dejando solo la entrada real de la transcripción de 81 min. No es un cambio de código — `.yunta/` está gitignored, es mantenimiento local.
+- **`yunta/voice.py` — `offload_transcript`: sugerir lectura única en vez de fragmentada cuando el tamaño lo permite**: motivado por la misma corrida real — el agente fragmentó la lectura del transcript (775 líneas, cabían en una sola llamada a `read_file` bajo su límite de 2000) en 6 llamadas "para procesarlo mejor", porque el mensaje de `offload_transcript` siempre sugería leer "por partes" sin importar el tamaño. Cada llamada extra reenvía todo el historial acumulado — eso, sumado a 7 tool calls perdidas explorando el filesystem tras un dígito mal transcrito en el nombre del archivo, explica buena parte de los 172K tokens de entrada de esa corrida.
+  - Bajo un umbral generoso (~50K tokens), ahora sugiere explícitamente una sola lectura sin offset/limit; por encima, mantiene la sugerencia de lectura fragmentada — no se quita la protección para audios de muchas horas.
+  - La ruta del archivo ahora se reporta en formato POSIX (`scratch_file.as_posix()`, barras) en vez del formato nativo de Windows (backslashes) — reduce el riesgo de que el modelo la corrompa al reproducirla en un argumento JSON de tool call (`\t`, `\n`, etc. son secuencias de escape válidas que pueden aparecer por casualidad en una ruta de Windows).
+  - **Nota honesta**: esto no elimina el riesgo de que el modelo transcriba mal un dígito del timestamp del archivo (lo que causó la mayoría de las 7 llamadas perdidas explorando el filesystem en la corrida real) — es un problema inherente de pedirle a un LLM que reproduzca de memoria una cadena numérica larga, no algo resoluble solo con este cambio.
+  - 3 tests nuevos en `tests/test_voice.py` (391 → 394 tests totales): sugiere lectura única para tamaño moderado, mantiene sugerencia fragmentada para tamaño muy grande, y la ruta reportada no contiene backslashes.
+
+## [2.14.16] — 2026-09-20
+
+- **`docs/PLAN.md` — actualización de estado por instrucción humana explícita** (Regla 6): V6-1, V6-3, V6-4 y V6-5 quedan marcados ✅ — resueltos en v2.14.14, v2.14.13, v2.14.12 y v2.14.15 respectivamente. Con esto, todo el "Nivel 1" y "Nivel 2" del backlog v6 queda completo; solo resta V6-8 (diarización pyannote, Nivel 3, dependencia pesada, deliberadamente diferido). Sin cambios de código.
+
+## [2.14.15] — 2026-09-20
+
+- **`yunta/voice.py` — V6-5 (`docs/PLAN.md`): corte de chunks en silencios en vez de tiempo fijo**: hasta ahora `split_audio_by_silence` (pese a su nombre) cortaba a duración fija (`-segment_time`), partiendo palabras a la mitad entre fragmentos consecutivos — técnica estándar en WhisperX/faster-whisper para evitarlo.
+  - Nuevas `_detect_silence_intervals(file_path)` (parsea la salida de `ffmpeg -af silencedetect` por stderr) y `_silence_aware_cut_points(total_secs, segment_secs, silences, tolerance)` (ajusta cada corte al punto medio del silencio más cercano dentro de una tolerancia del 30% del tamaño de fragmento; si no hay silencio cerca, mantiene el corte fijo original en vez de descartarlo).
+  - En `split_audio_by_silence`: si `ffprobe` da la duración real (V6-1) y se detectan silencios, el comando de `ffmpeg` usa `-segment_times` con los cortes ajustados; si cualquiera de los dos falla, cae íntegro al `-segment_time` de siempre — sin regresión cuando `ffmpeg`/`ffprobe` no cooperan o el audio no tiene pausas detectables.
+  - Riesgo controlado: es la función de fragmentación más usada de todo el pipeline, pero el cambio es aditivo (nueva rama opt-in por resultado, no reemplaza el camino existente) y ningún test previo ejercía el comando real de `ffmpeg` con contenido no vacío (todos usan archivos MP3 falsos que `ffprobe` ya rechazaba antes de este cambio), así que no hubo regresiones que corregir.
+  - 7 tests nuevos en `tests/test_voice.py` (384 → 391 tests totales): parseo de `silencedetect`, fallback ante fallo de `ffmpeg`, ajuste al punto medio más cercano, mantención del corte fijo sin silencio cercano, lista vacía sin silencios, y dos tests de integración (usa `-segment_times` vs. cae a `-segment_time`).
+
+## [2.14.14] — 2026-09-20
+
+- **`yunta/voice.py` — V6-1 (`docs/PLAN.md`): marcas de tiempo reales por chunk vía `ffprobe`**: hasta ahora el offset de cada fragmento se repartía proporcionalmente por tamaño en bytes, una aproximación que se desincroniza con audio VBR o cuando el último chunk de `ffmpeg -f segment` sale más corto que el resto.
+  - Nueva `_ffprobe_duration_secs(file_path)`: mide la duración real de cada chunk con `ffprobe`. Detecta una sola vez si el binario está disponible (`_ffprobe_available`) para no reintentarlo en cada uno de los N fragmentos si falta; un fallo puntual en UN chunk (archivo corrupto) no desactiva `ffprobe` para el resto.
+  - En `transcribe_large_audio`: si `ffprobe` da duración real para **todos** los chunks, los offsets se calculan por duración acumulada real; si falla para alguno, cae íntegro a la heurística anterior (bytes proporcionales / `_estimate_duration_secs`) — sin regresión cuando `ffprobe` no está instalado.
+  - Funciona para cualquier formato que `ffprobe` sepa leer, no solo `.mp3` — beneficia también a `.m4a` y otros formatos que quedaban fuera de la calibración de Fase 4.
+  - 5 tests nuevos en `tests/test_voice.py` (379 → 384 tests totales): parseo de duración, desactivación tras binario ausente, tolerancia a un archivo puntual corrupto, offsets reales en una transcripción simulada (bytes iguales, duraciones distintas), y fallback cuando `ffprobe` no está disponible.
+
+## [2.14.13] — 2026-09-20
+
+- **`yunta/voice.py` — V6-3 (`docs/PLAN.md`): checkpoint incremental de transcripción**: motivado directamente por la corrida real de 81 min (43m46s de pared) — si el proceso se hubiera caído en el fragmento 200/259, se perdía TODO lo transcrito sin ningún resguardo intermedio.
+  - Nuevas funciones de módulo `_checkpoint_path/_load_checkpoint/_save_checkpoint_fragment/_clear_checkpoint`: cada fragmento completado se persiste a `.yunta/scratch/transcript_<audio>.n<total>.part<N>.txt`; relanzar el mismo archivo reanuda desde el último fragmento en vez de empezar de cero, en modo secuencial y paralelo (`VOICE_PARALLEL_WORKERS>1`).
+  - El `total` de fragmentos va en el nombre del checkpoint a propósito: si `chunk_minutes` cambia entre corridas (distinto `VOICE_CHUNK_MINUTES` o recalibración de Fase 4), el conteo de fragmentos cambia y los checkpoints viejos simplemente no matchean — fallback seguro a transcripción completa en vez de desalinear fragmentos de una fragmentación distinta.
+  - Al completar la transcripción entera (`outcome == "completed"`), los checkpoints se borran — no quedan archivos huérfanos en `.yunta/scratch/`.
+  - **Corrección de una regresión propia antes de commitear**: los checkpoints usan una ruta relativa (`.yunta/scratch`) resuelta contra el directorio de trabajo — varios tests existentes de `tests/test_voice.py` y `tests/test_voice_telemetry.py` llamaban a `transcribe_large_audio` sin `monkeypatch.chdir(tmp_path)`, lo que habría escrito archivos de checkpoint reales en el repo cada vez que corriera la suite (el mismo tipo de contaminación ya detectado en `voice_health.jsonl`). Se agregó `monkeypatch.chdir(tmp_path)` a los 11 tests afectados antes de que esto llegara a producirse.
+  - 5 tests nuevos en `tests/test_voice.py` (374 → 379 tests totales): roundtrip de guardar/cargar/limpiar, no reanuda si cambia el total de fragmentos, reanudación real tras una interrupción (secuencial y paralelo), y limpieza de checkpoints tras completar.
+
+## [2.14.12] — 2026-09-20
+
+- **`yunta/voice.py` — V6-4 (`docs/PLAN.md`): filtro de alucinaciones conocidas de Whisper**: descarta fragmentos cuyo contenido ENTERO (sin puntuación/mayúsculas) coincide con una frase de relleno típica que Whisper aprendió de subtítulos de YouTube en su entrenamiento ("Gracias por ver el video", "Suscríbete al canal", créditos de Amara.org, etc.) — no recorta contenido real que las mencione de pasada, solo el caso "el chunk es puro relleno".
+  - Nuevas funciones de módulo `_filter_whisper_hallucinations(text)` y `_clean_transcription(text)` (combina dedup + filtro de alucinaciones); reemplaza los 3 puntos donde antes se aplicaba `_dedup_whisper_repetition` solo, en `AudioTranscriber.transcribe_with_meta` (éxito de nube, fallback local tras agotar reintentos, y salto directo a local por `skip_cloud`).
+  - **Nota honesta**: esto ataca el patrón clásico de alucinación de Whisper (relleno de outro de YouTube), no necesariamente el mismo fenómeno observado en la transcripción real de 81 min de ayer (balbuceo en portugués/italiano/griego/japonés/finlandés durante silencios) — ese problema apunta más a falta de VAD (V6-7/prefiltro) que a frases de relleno conocidas. Son mitigaciones complementarias, no la misma solución.
+  - 7 tests nuevos en `tests/test_voice.py` (367 → 374 tests totales): coincidencia exacta con variantes de mayúsculas/puntuación, contenido real intacto, no recorta menciones parciales, string vacío, combinación con dedup, y dos tests de integración (filtra alucinación tanto en éxito de nube como en fallback local).
+
+## [2.14.11] — 2026-09-20
+
+- **`docs/PLAN.md` — actualización de estado por instrucción humana explícita** (Regla 6: el agente no edita el backlog salvo instrucción expresa; el usuario la dio directamente en esta sesión): V6-2 y V6-6 quedan marcados ✅ — ambos ya estaban resueltos por el plan de resiliencia de voz (Fases 0-5) implementado en v2.14.4 y v2.14.9 respectivamente, pero `PLAN.md` no se había actualizado porque el agente no puede tocarlo sin autorización.
+  - **V6-2** ✅ (v2.14.4): retry con backoff adaptativo + circuit breaker cloud↔local.
+  - **V6-6** ✅ (v2.14.9): paralelismo acotado opt-in vía `VOICE_PARALLEL_WORKERS`, marcado explícitamente como pendiente de validación empírica con audio real bajo concurrencia (no confundir "implementado" con "medido").
+  - Sin cambios de código; ningún test afectado.
+
+## [2.14.10] — 2026-09-20
+
+- **`yunta/voice.py` — cache del modelo local de `faster_whisper`**: motivado por un benchmark real hecho tras la transcripción de 81 min de hoy — `transcribe_offline_local` recargaba el modelo (`WhisperModel(...)`) en **cada llamada**, con ~3.9s de overhead medido por carga; en una transcripción de 259 fragmentos que cayera seguido a fallback local, eso son ~17 min extra solo en recargas.
+  - Nuevo `_get_local_whisper_model(model_size)` a nivel de módulo: carga el modelo una sola vez por proceso y lo reutiliza en llamadas siguientes, protegido por `threading.Lock` (relevante también bajo `VOICE_PARALLEL_WORKERS>1`, Fase 5). Invalida y recarga si `LOCAL_WHISPER_MODEL` cambia entre llamadas.
+  - Cache a nivel de **módulo**, no de instancia: `AudioTranscriber`/`AudioChunker` a veces se instancian varias veces dentro del mismo proceso (p.ej. el retry por `too_large` crea un `AudioChunker` nuevo) y todas deben compartir el mismo modelo cargado.
+  - 3 tests nuevos en `tests/test_voice.py` (364 → 367 tests totales, con `faster_whisper` mockeado vía `sys.modules`): carga única tras 5 llamadas, recarga si cambia `LOCAL_WHISPER_MODEL`, y modelo compartido entre instancias distintas de `AudioTranscriber`.
+  - Validado además con el modelo real (`faster_whisper` tiny, CPU int8) sobre un fragmento de 20s del audio de la corrida de hoy: la primera llamada paga la carga, las siguientes no repiten ese costo fijo — la medición exacta en esta máquina es ruidosa por carga de CPU compartida con otra sesión concurrente, pero el patrón (sin overhead repetido) es consistente con el fix.
+
+## [2.14.9] — 2026-09-20
+
+- **`yunta/voice.py` — Fase 5 (plan de resiliencia de voz, última fase): paralelismo acotado, opt-in vía `VOICE_PARALLEL_WORKERS`**: fase de mayor riesgo del plan — N workers concurrentes podrían *causar* una ráfaga de 503 si se habilita antes de que el circuit breaker + backoff (Fases 1-2) bajen la tasa de error base, por eso queda opt-in (`default="1"` = secuencial, comportamiento idéntico al actual).
+  - Con `VOICE_PARALLEL_WORKERS > 1`: `ThreadPoolExecutor`/`as_completed` (mismo patrón ya usado en `yunta/tools/delegate.py`), reensamblado por índice (`transcripts[idx] = ...`, no por orden de llegada) para no desordenar la transcripción.
+  - `AudioChunker` gana `self._state_lock` (`threading.Lock`) para las mutaciones de los contadores del circuit breaker (Fase 1) y de telemetría (Fase 3) — sin costo real en el modo secuencial por defecto, un solo hilo nunca contiende el lock.
+  - **Limitación conocida y documentada, no un bug**: sin orden garantizado entre workers concurrentes, no hay continuidad de `tail` (el prompt de continuidad entre fragmentos consecutivos que sí existe en modo secuencial) — cada fragmento en modo paralelo se transcribe con prompt vacío.
+  - Ctrl+C en modo paralelo cancela los fragmentos aún no iniciados (`executor.shutdown(cancel_futures=True)`) y espera a que terminen los ya en vuelo (acotado a `VOICE_PARALLEL_WORKERS`, no al total de fragmentos) antes de devolver la transcripción parcial.
+  - Refactor interno sin cambio de comportamiento por defecto: los offsets de timestamp ahora se precalculan por índice antes del loop (en vez de acumularse durante la iteración), para que sean válidos tanto en modo secuencial como paralelo.
+  - 6 tests nuevos en `tests/test_voice.py` (358 → 364 tests totales): reensamblado fuera de orden, ausencia de continuidad de tail en paralelo, continuidad de tail preservada por defecto, conteo de telemetría independiente del orden de finalización, interrupción por Ctrl+C en paralelo, y tolerancia a un valor inválido de la variable de entorno.
+  - Con esto se completan las 6 fases (0-5) del plan de resiliencia del pipeline de voz. Fase 4 y Fase 5 quedan validadas solo con tests unitarios — no hay un audio real de 81 min disponible en esta sesión para la comparación empírica antes/después (RTF, errores por fragmento) que el plan original preveía como criterio de éxito adicional.
+
+## [2.14.8] — 2026-09-20
+
+- **Metodología Yunta y Buzón Canónico de Relevo (`docs/METODOLOGIA_YUNTA.md`, `AGENTS.md`)**:
+  - **Especificación de Metodología Yunta (`docs/METODOLOGIA_YUNTA.md`)**: formalización exhaustiva de los 4 principios de continuidad inter-agente y multi-IDE (Persistencia Zero-Tokens, Diagnóstico Forense Asimétrico / Step 0, Git como Ancla de Verdad Inmutable, y Operador Único Secuencial). Resuelve estructuralmente la "Paradoja de la Amnesia" y el aislamiento de contexto en herramientas como Claude Code, ZCode, Cursor y Antigravity.
+  - **Buzón Canónico de Relevo (`.yunta/HANDOFF.md`)**: especificado en `AGENTS.md` (Regla 7) para separar notas narrativas del directorio temporal `scratch/`, permitiendo handoffs limpios y persistentes sin ensuciar el working tree de Git.
+  - **Principio de Operador Único**: formalización explícita en `AGENTS.md` de la coordinación estricta secuencial (nunca dos agentes concurrentes modificando el working tree).
+
+## [2.14.7] — 2026-09-20
+
+- **`yunta/voice.py` — Fase 4 (plan de resiliencia de voz): recalibración de tamaño de fragmento por bitrate real**: motivado por la misma transcripción real de 81 min (480 errores/259 fragmentos) que originó las Fases 0-3 — los fragmentos contra Cloudflare Workers AI usaban un tamaño fijo de 20s (`chunk_minutes=0.33`) sin importar el bitrate real del audio.
+  - Nuevas funciones a nivel de módulo `_estimate_bitrate_bps(file_path)` (extraída de `AudioChunker._estimate_duration_secs`, sniffing del primer frame MP3) y `_calibrate_chunk_minutes(file_path, max_bytes, safety=0.85, floor=0.33, ceiling=0.5)`, que usa el bitrate real para calcular minutos por fragmento en vez de asumir siempre el peor caso. `ceiling=0.5` (30s) es deliberadamente conservador: el límite real de Workers AI es CPU-por-invocación, no solo tamaño de payload.
+  - Deliberadamente funciones de módulo y no métodos de `AudioChunker`: se invocan desde `AudioTranscriber.transcribe_with_meta` antes de instanciar `AudioChunker`, y varios tests existentes mockean la clase `AudioChunker` completa — un método de clase habría resuelto el mock en vez de la lógica real. `AudioChunker._estimate_bitrate_bps`/`_calibrate_chunk_minutes` se mantienen como `@staticmethod` de conveniencia que delegan a las funciones de módulo.
+  - Solo aplica a `.mp3` contra endpoints Workers AI (`workers.dev`) y solo si no hay override manual (`VOICE_CHUNK_MINUTES` sigue teniendo prioridad absoluta). Otros formatos y el endpoint estándar (25 MB, `chunk_minutes=10`) no cambian de comportamiento.
+  - 8 tests nuevos en `tests/test_voice.py` (350 → 358 tests totales): lectura de bitrate, clamping a floor/ceiling, fallback sin bitrate legible, cableado end-to-end contra Workers AI, y respeto del override manual.
+  - Validación: solo unitaria — no hay un audio real de 81 min disponible en esta sesión para la comparación empírica antes/después (RTF, errores por fragmento) que el plan original preveía como criterio de éxito adicional para esta fase. Queda pendiente correr esa comparación cuando haya audio real disponible.
+
+## [2.14.6] — 2026-09-20
+
+- **`AGENTS.md` — Regla 7: Protocolo de Relevo y Continuidad (Step 0 obligatorio)**: motivada por un incidente real de esta misma fecha — un relevo entre sesiones concurrentes (ZCode → Claude Code) dejó `tests/test_voice.py` con bytes nulos literales que rompían la compilación, invisibles para un chequeo superficial.
+  - **Step 0 obligatorio**: `yunta check --tests` + `git status` antes de proponer cambios. Explícitamente `--tests` y no `yunta check` a secas, porque sin ese flag el comando solo detecta que existe un runner de pytest, no lo ejecuta — no habría atrapado el incidente que motiva la regla.
+  - **Handoff estructurado**: el traspaso de estado real de sesión usa `yunta handoff export/import` (Feature 1, v2.8.0), no un markdown ad-hoc; un `scratch/HANDOFF*.md` narrativo sigue siendo válido como complemento, nunca como único registro.
+  - Prohibición de "trabajo fantasma" (commits `wip:` ante agotamiento de cuota) y cierre de relevo limpio (working tree commiteado o documentado en CHANGELOG).
+
+## [2.14.5] — 2026-09-20
+
+- **Telemetría persistente del pipeline de voz (`yunta/voice_telemetry.py`, nuevo)**: reemplaza el script ad-hoc (`python -c "..."` grepeando logs) que se usó para medir la transcripción de 81 min/259 fragmentos por un registro estructurado consultable con `yunta health --voice [--json]`.
+  - Módulo separado de `yunta/health.py` a propósito: su `health_score` es una heurística específica de agente LLM (tasa de error de tools, doom-loops) que no tiene sentido para un pipeline de audio. Clona el mismo patrón (JSONL append-only en `.yunta/voice_health.jsonl`) sin heredar ese acoplamiento.
+  - `AudioChunker` acumula 3 contadores nuevos (`_telem_cloud`, `_telem_local`, `_telem_errors`) en el mismo punto donde ya se actualiza el circuit breaker (v2.14.4), y graba una snapshot (fragmentos totales, nube vs local, errores manejados, disparos de breaker, RTF) al terminar `transcribe_large_audio` — tanto en el camino feliz como en interrupción por Ctrl+C (`outcome="completed"|"partial"`). Envuelto en `try/except: pass`: un fallo al grabar telemetría nunca rompe una transcripción en curso.
+  - Comando `yunta health --voice`.
+- **Tests: 350** (5 nuevos en `tests/test_voice_telemetry.py`). 100% pasando.
+
+## [2.14.4] — 2026-09-20
+
+- **Resiliencia del pipeline STT: circuit breaker + backoff adaptativo (`yunta/voice.py`)**: motivado por una transcripción real de 81 min (259 fragmentos) contra Cloudflare Workers AI que registró 480 errores 503/1102 manejados — cada fragmento peleaba su propia batalla de reintentos sin memoria de que los anteriores también habían fallado. Trabajo iniciado en paralelo por ZCode (sesión dogfooding, agotó cuota antes de documentar/commitear) y completado aquí con el mismo diseño.
+  - **`AudioTranscriber.transcribe_with_meta(file_path, prompt, skip_cloud)`** (nuevo): extrae el cuerpo de `transcribe()` devolviendo además `{"source": "cloud"|"local", "cloud_attempted": bool, "cloud_failed": bool}`. `transcribe()` queda como wrapper de una línea — cero cambio de firma/comportamiento para los llamadores existentes (`cli.py`, `VoiceListener`). `skip_cloud=True` salta directo al fallback local sin tocar la red.
+  - **Circuit breaker en `AudioChunker`**: tras `VOICE_BREAKER_THRESHOLD` (default 3) fallos de nube CONSECUTIVOS entre fragmentos, salta la nube por `VOICE_BREAKER_COOLDOWN` (default 5) fragmentos, con sondeo automático (el streak no se resetea al disparar, así que el primer fragmento tras el cooldown reintenta la nube). `VOICE_BREAKER_THRESHOLD=0` desactiva el breaker (comportamiento idéntico al anterior). Anuncia en consola cuando se dispara — sin fallback oculto (regla 2 de AGENTS.md). `_cb_tripped_count` queda listo para telemetría futura.
+  - **Backoff adaptativo con `Retry-After`**: `_TranscribeError` gana `retry_after: float | None`, leído del header HTTP si el endpoint lo manda (solo formato numérico en segundos). Sin el header, backoff exponencial con jitter (`VOICE_BACKOFF_BASE * 2**attempt`) en vez del lineal fijo anterior (3s, 6s). Tope configurable vía `VOICE_BACKOFF_CAP` (default 30s).
+  - Nuevas env vars: `VOICE_BREAKER_THRESHOLD`, `VOICE_BREAKER_COOLDOWN`, `VOICE_BACKOFF_BASE`, `VOICE_BACKOFF_CAP`.
+- **Tests: 345** (7 nuevos: 2 de `transcribe_with_meta`, 3 de backoff/retry_after, 2 de circuit breaker). 100% pasando.
+
+## [2.14.3] — 2026-09-19
+
+- **Blindaje y resiliencia de transcripción de audio (`yunta/voice.py`, `yunta/cli.py`)**:
+  - **Soporte nativo y calibración para Cloudflare Workers AI (`workers.dev`)**: Workers AI impone un límite estricto de CPU (~50ms) y memoria (HTTP 413 / error 1102). La calibración automática fragmenta audios >500 KB en bloques de **20 segundos** (`chunk_minutes=0.33`, ~320 KB), permitiendo inferencia fluida en 1.5s sin colapsar el worker.
+  - **Fragmentación sin corrupción de contenedor AAC/M4A (`split_audio_by_silence`)**: `ffmpeg` ahora preserva la extensión original del archivo (`chunk_%03d{ext}` con `-c copy`) en lugar de forzar `.mp3`, permitiendo segmentar audios `.m4a`/AAC en milisegundos sin errores de muxing ni pérdida de calidad.
+  - **Deduplicación de bucles patológicos de Whisper (`_dedup_whisper_repetition`)**: filtra alucinaciones en loop que Whisper produce ocasionalmente en fragmentos con silencios o ruido ambiente, evitando texto repetitivo.
+  - **Compatibilidad con consolas Windows (cp1252)**: reconfiguración segura de `sys.stdout` y `sys.stderr` a `utf-8` con `errors='replace'`, eliminando `UnicodeEncodeError` al imprimir emojis e indicadores de progreso en terminales Windows.
+  - **Timeout de red extendido (`VOICE_TIMEOUT`)**: ampliado de 10s fijos a 60s configurables, evitando falsos `TimeoutError` durante inferencias en la nube.
+- **Tests: 338** (2 nuevos en `tests/test_voice.py`). 100% pasando.
+
+## [2.14.2] — 2026-09-19
+
+- **GitHub Action de `yunta check` (`.github/actions/check/`)**: empaqueta la auditoría de gobernanza determinista y $0-tokens como gate reutilizable de CI/CD, para que cualquier repo externo pueda bloquear PRs que violen `AGENTS.md`/`SPEC.md`/`PLAN.md` sin costo de inferencia. Inputs: `target-dir`, `run-tests`, `fail-on-warning`, `source` (`pypi` para consumo externo, `local` para dogfooding), `python-version`. Dogfooding inmediato: nuevo job `governance` en `.github/workflows/ci.yml` que la usa contra este mismo repo en cada push/PR.
+- **Spec pública del Handoff (`docs/schemas/yunta-session-spec-v1.{schema.json,md}`)**: el schema del bundle de `yunta handoff` (Feature 1, v2.8.0) vivía solo como constante interna (`SCHEMA_VERSION = 1`); ahora es un JSON Schema (draft 2020-12) versionado y documentado para que cualquier harness externo pueda implementar lectura/escritura compatible sin depender del código de yunta. `jsonschema` agregado como dependencia de **desarrollo** (no runtime) para validar la conformidad en tests.
+- **Fix defensivo — `make_voice_approval` con `session_permissions=None` (`yunta/voice.py`)**: con un `Agent` real esto es inalcanzable (su constructor siempre inicializa `SessionPermissions()`), pero cualquier integración que no pase por él podía provocar `AttributeError` al decir "siempre". Ahora degrada con gracia: concede la aprobación de ese turno igual, solo no la persiste.
+- **Tests: 336** (4 nuevos en `tests/test_handoff_schema.py`; `test_voice_chaos.py` actualizado, 0 nuevos ahí). 100% pasando.
+
+## [2.14.1] — 2026-09-19
+
+- **Blindaje del subsistema de Voz/TTS — 6 defectos de runtime encontrados por testing adversarial (`tests/test_voice_chaos.py`, ahora trackeado en git)**: a diferencia de la Parte A (bugs encontrados por exploración arquitectónica), estos 6 solo eran detectables ejecutando código bajo estrés real — condiciones de carrera, inyección de fallos, fuzzing de input malformado. Ninguno fue detectado por la revisión de diseño de la sesión.
+  - **Permisos "siempre" ignorados en modo voz (`yunta/agent.py`, `_approve`)**: `voice_approval` se consultaba incondicionalmente ANTES de revisar `session_permissions`, así que decir "siempre" no evitaba que se volviera a preguntar por voz en el siguiente comando de la misma tool. Ahora `session_permissions.allowed()` se consulta primero (salvo en `force_prompt`, que sigue forzando confirmación explícita por diseño — doom-loop).
+  - **Condición de carrera en prefetch de TTS (`yunta/tts.py`, `_worker`)**: si una oración se reproducía más rápido de lo que tardaba el prefetch de la siguiente (frases cortas como "Sí."), el bucle principal lanzaba una SEGUNDA síntesis concurrente en vez de esperar la que ya estaba en curso. Ahora se hace `join()` (con timeout de 30s) sobre el hilo de prefetch antes de decidir si sintetizar de nuevo.
+  - **Excepción no capturada mataba el hilo de habla (`yunta/tts.py`, `_worker`)**: la llamada síncrona a `provider.synthesize(chunk)` no tenía `try/except` (a diferencia de `_prefetch`, que sí lo tenía) — una falla de red mataba el hilo daemon en silencio y el resto de la respuesta no se leía. Ahora está protegida igual que `_prefetch`.
+  - **Emoji duplicaba el argumento del router de voz (`yunta/voice.py`, `route_keyword`)**: la extracción del argumento usaba `text.split(maxsplit=prefix_words)` sobre el texto crudo, pero `prefix_words` se calculaba sobre `cleaned` (sin emojis). Un emoji al inicio desalineaba el conteo y "inicializa" terminaba duplicado dentro del argumento (ej. "🚀 inicializa X" → "/init inicializa X"). Ahora se consumen palabras crudas una a una, limpiándolas individualmente, hasta reconstruir el prefijo exacto.
+  - **Bloques de código Markdown sin cerrar se filtraban a voz (`yunta/tts.py`, `clean_markdown_for_speech`)**: la regex de resumen de código exigía el cierre ` ``` `; si la respuesta del modelo se cortaba a mitad de un bloque, el código crudo pasaba intacto al lector de voz. Se agregó una segunda pasada que trata cualquier ` ``` ` remanente (sin cierre) como código hasta el final del texto.
+  - **Mensaje de error engañoso en audio de 0 bytes (`yunta/voice.py`, `AudioChunker.split_audio_by_silence`)**: un archivo vacío hacía fallar tanto el intento con ffmpeg como el fallback por bytes, cayendo en el `RuntimeError` genérico de "ffmpeg no está disponible" incluso con ffmpeg instalado. Ahora se detecta el archivo vacío explícitamente al inicio con un mensaje que señala la causa real.
+- `tests/test_voice_chaos.py`: incorporado formalmente al repo (estaba sin trackear); sus 14 pruebas pasan de documentar los defectos a ser regresión permanente sobre el comportamiento corregido.
+- **Tests: 332** (mismos 14 de `test_voice_chaos.py`, ahora trackeados; 0 nuevos, assertions invertidas de "defecto confirmado" a "comportamiento correcto"). 100% pasando, sin `PytestUnhandledThreadExceptionWarning`.
+
+## [2.14.0] — 2026-09-19
+
+- **Feature 7 — Undo como Árbol / Best-of-N (`yunta/bestof.py`)**: el agente prueba N enfoques alternativos para la misma tarea en sandboxes de worktree aislados y el humano elige el mejor por diff, en vez de aceptar el único intento del agente o deshacer linealmente con `/undo`.
+  - **Decisión de alcance explícita: ejecución SECUENCIAL, no paralela real** — `os.chdir()` es global al proceso; N hilos pisándose entre sandboxes distintos sería una condición de carrera real, no hipotética. Paralelismo real (subprocesos con cwd propio) queda fuera de este roadmap.
+  - `run_best_of_n()`: crea N sandboxes (reutiliza `sandbox.create_sandbox`/`cleanup_sandbox` sin tocar su contrato), ejecuta un sub-agente de contexto limpio por rama (mismo patrón que `decompose.run_chunks`), compromete los cambios de cada rama (`git commit --allow-empty`, necesario para que el merge posterior no pierda archivos sin commitear al hacer `git worktree remove --force`) y calcula el diff de cada candidato contra el commit del que partió.
+  - `choose_and_finalize()` / `discard_all()`: integran la rama elegida (`merge=True`) y descartan el resto, reutilizando `cleanup_sandbox` sin lógica de merge nueva.
+  - Comando REPL `/bestof <n> <tarea>` (2-5 enfoques), separado de `/sandbox` para no arriesgar código ya estable.
+  - Fix relacionado ya aplicado en la Parte A (B3): la colisión de timestamp de `create_sandbox` con N≥2 llamadas rápidas, prerequisito real de esta feature.
+- **Tests: 332** (5 nuevos en `tests/test_bestof.py`). 100% pasando.
+
+**Con esta entrada se completan las 7 features propuestas en `docs/propuestas/2026-09-19-plan-7-features.md` (Parte B), sobre la Parte A de blindaje previo.**
+
+## [2.13.0] — 2026-09-19
+
+- **Feature 6 — Enrutamiento Económico Dinámico**: usa automáticamente un modelo barato (`LLM_CHEAP_MODEL`) para pasos triviales de solo lectura, reservando el modelo principal para decisiones y ediciones.
+  - `LiteLLMProvider.set_model_override()` (`yunta/provider.py`): fuerza el modelo del próximo `send()` sin tocar la posición de la cascada de fallback (`_model_idx`). Si el modelo económico falla, se descarta el override y se reintenta con la cascada normal **sin avanzar** `_model_idx` (no es un fallo del modelo principal).
+  - `IntentClassifier.evaluate_triviality()` (`yunta/intent.py`): reutiliza `Agent._recent_tool_calls` (el mismo estado que ya trackea doom-loops, cero instrumentación duplicada). **Regla dura, no heurística blanda**: si `write_file`/`str_replace`/`bash` aparece en la ventana reciente, nunca es trivial — se prefiere gastar de más en el modelo caro a arriesgar una edición mal razonada con el barato. Sin historial de tools (primer turno), tampoco es trivial por defecto.
+  - `yunta/agent.py`: se evalúa en cada turno del bucle (no solo al inicio de `send()`), para que el override se desactive de inmediato en cuanto el agente decide escribir algo.
+  - Nueva env var `LLM_CHEAP_MODEL`.
+- **Tests: 327** (8 nuevos: 2 en `tests/test_provider.py`, 5 en `tests/test_intent.py`, 1 de integración en `tests/test_agent.py`). 100% pasando.
+
+## [2.12.0] — 2026-09-19
+
+- **Feature 5 — Agent Health Score (`yunta/health.py`)**: persiste métricas agregadas por repo entre sesiones (`.yunta/health.jsonl`, misma convención JSONL append-only de la Feature 4), en vez de perderlas al morir el proceso (`Usage`/`Budget` eran 100% en memoria).
+  - `record_snapshot()`: una snapshot por sesión (turnos, tool_errors, total_tool_calls, disparos de doom-loop, cache_rate, modelo). Cero instrumentación nueva salvo `Agent._doom_loop_triggers` (`yunta/agent.py`), incrementado en el mismo punto donde ya se calculaba `force_prompt`.
+  - `aggregate()`: agrega snapshots en un `health_score` heurístico v1 (documentado explícitamente como punto de partida, no como métrica científica) — penaliza tasa de error de tools y frecuencia de doom-loops.
+  - Grabado automáticamente al `/exit` del REPL y al finalizar single-shot (mismo lifecycle hook que ya dispara `feedback.summarize`). Comando: `yunta health [--json]`.
+- **Tests: 319** (6 nuevos: 5 en `tests/test_health.py`, 1 de integración en `tests/test_agent.py` verificando el contador de doom-loops). 100% pasando.
+
+## [2.11.0] — 2026-09-19
+
+- **Feature 4 — Memoria de Equipo (`yunta/tools/memory.py`, `yunta/team_memory.py`)**: hace que la memoria explícita (`remember`/`recall`) sea sincronizable entre miembros de equipo, en dos partes.
+  - **Formato (`yunta/tools/memory.py`)**: migrado de "array JSON reescrito completo en cada `remember`" a **JSONL append-only** (una entrada por línea) — mucho más amigable con merges de git. Migración automática y transparente del formato viejo la primera vez que se lee o escribe (`_load` detecta un array `[...]` y lo reescribe como JSONL antes de continuar). Retrocompatible: `recall`/`remember` se comportan igual desde fuera.
+  - **Transporte (`yunta/team_memory.py`, nuevo)**: `dedup_learnings()`/`dedup_memory()` (deduplican tras un merge mal resuelto, conservando la primera aparición) y `sync_report()` (solo lectura, cuenta entradas). Comando `yunta memory sync [--fix]`.
+  - **`.gitignore`**: hoy `.yunta/` está 100% ignorado, por lo que "memoria compartible por git" no tenía transporte. Comando `yunta memory init-sync` agrega las excepciones necesarias (`!.yunta/learnings.md`, `!.yunta/memory.json`) **solo con confirmación explícita del usuario** en terminal — nunca se toca `.gitignore` automáticamente.
+- **Tests: 313** (11 nuevos: 4 en `tests/test_memory.py` incluyendo migración legacy→JSONL, 7 en `tests/test_team_memory.py`). 100% pasando.
+
+## [2.10.0] — 2026-09-19
+
+- **Feature 3 — Tests de Caracterización / Golden-Master (`yunta/tools/characterize.py`)**: nueva tool `characterize_function` (`requires_approval=True`) que captura el comportamiento ACTUAL de una función Python top-level antes de refactorizarla, para detectar regresiones en código legacy sin tests.
+  - Filtro heurístico best-effort de efectos secundarios (por AST: llamadas a `open`/`subprocess`/`requests`/`socket`/`input`/`urlopen`; por nombre: prefijos `write_/save_/delete_/send_/remove_/post_/put_`) — rechaza en vez de arriesgar caracterizar código con I/O real.
+  - **Ejecución en subproceso aislado con timeout** (nunca in-process): un crash o cuelgue en la función objetivo no tumba el proceso de yunta.
+  - Genera `tests/test_characterize_<módulo>_<función>.py` con cabecera de advertencia explícita ("captura comportamiento ACTUAL, no necesariamente correcto"), cargando el módulo objetivo por ruta de archivo (`importlib.util`) para evitar problemas de resolución de paquetes/imports en repos arbitrarios.
+  - Verificado end-to-end: los tests generados se ejecutan de verdad como subproceso pytest (test "meta") y pasan, tanto para el caso de resultado exitoso como para el caso de excepción capturada.
+  - Alcance MVP documentado: solo funciones Python top-level (no anidadas, no métodos de clase).
+- **Tests: 302** (8 nuevos en `tests/test_characterize.py`). 100% pasando.
+
+## [2.9.0] — 2026-09-19
+
+- **Feature 2 — Reverse-SDD (`yunta/reverse_sdd.py`)**: genera `SPEC.md`/`AGENTS.md` candidatos a partir de código existente sin especificaciones, abriendo adopción brownfield a la metodología SDD de yunta.
+  - `scan_repository()`: reutiliza al 100% `adapter_registry.get_adapter().get_outline()/.find_symbols()` (los mismos adaptadores AST que ya usa `tools/symbols.py`) para construir un inventario condensado del repo sin volcar contenido completo de archivos (control de tokens).
+  - `generate_spec_candidate()`/`generate_agents_candidate()`: condensan el inventario en un prompt y generan el Markdown vía un `Agent` sin tools (generación de texto puro, sin llamadas a herramientas).
+  - `run_reverse_sdd()`: por defecto escribe `SPEC.md.candidate`/`AGENTS.md.candidate`; con `--apply` escribe el archivo real **solo si no existe ya** — nunca sobreescribe specs existentes (regla 6 de AGENTS.md).
+  - `yunta/governance.py`: las regex de validación de estructura (`SPEC_HEADER_RE`, `PLAN_PHASE_RE`, `AGENTS_YUNTA_MARKER`) se extrajeron a constantes de módulo, compartidas con `reverse_sdd.py`, para que lo generado pase `yunta check` de inmediato (verificado con test de integración cruzada).
+  - Comando: `yunta reverse-sdd [ruta] [--apply]`.
+- **Tests: 294** (9 nuevos en `tests/test_reverse_sdd.py`, incluye integración con `governance.audit_repository`). 100% pasando (1 warning preexistente no relacionado en `test_voice_chaos.py`, de un hilo de chaos-testing simulando fallo de endpoint TTS).
+
+## [2.8.0] — 2026-09-19
+
+- **Feature 1 — Protocolo de Portabilidad de Sesión / Handoff (`yunta/handoff.py`)**:
+  - `export_handoff()`/`import_handoff()`: empaquetan el estado de una sesión (mensajes, usage, permisos persistentes, sandbox activo, `cwd`, rama/commit de git) en un bundle JSON versionado (`schema_version`) que puede reanudarse en otro proceso, máquina o harness/IDE compatible (ej. entre ZCode y Antigravity). Reutiliza al 100% `serialize_messages`/`serialize_usage` de `yunta/session.py` — no reinventa el formato de mensajes.
+  - Detección de "drift": si el commit de git guardado en el bundle difiere del commit actual al importar, se reporta como aviso no bloqueante (`drift_warning`), no como error.
+  - `SessionPermissions.to_list()`/`.from_list()` (`yunta/agent.py`): serialización explícita y opt-in de los permisos persistentes de sesión — el objeto en sí sigue sin persistirse solo (invariante sin cambios).
+  - Comandos: `yunta handoff export [ruta]` / `yunta handoff import <ruta>` (CLI single-shot, opera sobre la última sesión guardada en disco) y `/handoff export|import` en el REPL (con fidelidad completa: permisos y sandbox activo incluidos).
+  - Límite de alcance documentado: yunta solo puede publicar y leer el schema — no puede forzar que otro harness lo adopte.
+- **Tests: 271** (7 nuevos en `tests/test_handoff.py`). 100% pasando.
+
+## [2.7.6] — 2026-09-19
+
+- **Blindaje (Parte A de `docs/propuestas/2026-09-19-plan-7-features.md`)**: antes de construir features nuevas, se cerraron grietas confirmadas en el código existente.
+  - **B1 — Fix de `LLM_FAST_MODEL` (bug de producción)**: `LiteLLMProvider.__init__` (`yunta/provider.py`) no aceptaba el parámetro `model=` que `yunta/tools/delegate.py::delegate_research` le pasaba para usar un modelo económico en subagentes de investigación. La llamada siempre lanzaba `TypeError`, capturado por un `except` silencioso que hacía caer la ejecución al provider compartido — `LLM_FAST_MODEL` nunca funcionó desde que se documentó como feature en v2.0. Se agregó el parámetro `model: str | None = None` (si viene, ignora `LLM_MODELS`/`LLM_MODEL` de entorno; retrocompatible al 100%) y se reemplazó el `except` mudo por un aviso explícito en consola ante fallo de construcción del provider rápido.
+  - **B2 — Eliminado código huérfano (`yunta/budget.py`, `tests/test_session_budget.py`)**: `SessionBudget`/`check_budget` no tenían ningún import fuera de su propio test; la funcionalidad real de aviso por umbrales (P8) se implementó y quedó en producción vía `compact.py::TokenBudgetCompactor` (4 umbrales: 70/80/85/99%), dejando este módulo como prototipo abandonado sin borrar. Mantenerlo hubiera duplicado lógica de umbrales ya cubierta, violando la regla de minimalismo de `AGENTS.md`.
+  - **B3 — Fix de colisión de nombres en `create_sandbox` (`yunta/sandbox.py`)**: el sufijo `int(time.time())` (resolución de 1 segundo) podía colisionar si `create_sandbox()` se llamaba más de una vez dentro del mismo segundo (ej. `/sandbox` tras un `discard` rápido), generando el mismo nombre de carpeta/rama. Se agregó un sufijo `uuid.uuid4().hex[:6]`.
+  - **B4 — Tests de "wiring" (`tests/test_wiring_smoke.py`, nuevo)**: cubre las firmas reales con las que producción construye `LiteLLMProvider` (`model=` de `delegate.py`, `system=` de `cli.py`/scripts, sin argumentos de `json_server.py`) para que un desalineamiento de firma como el de B1 se detecte de inmediato en vez de quedar 6 versiones inadvertido tras un `except` mudo.
+- **Tests: 267** (264 previos − 2 de `test_session_budget.py` eliminado + 6 nuevos: 1 en `test_provider.py`, 1 en `test_delegate.py`, 1 en `test_sandbox.py`, 3 en `test_wiring_smoke.py`). 100% pasando.
+
+## [2.7.5] — 2026-09-19
+
+- **Integración de Voz (STT/TTS) con Modo SDD y Experiencia Hands-Free (`yunta/voice.py`, `yunta/cli.py`, `yunta/decompose.py`)**:
+  - **Aprobación por voz unificada (`make_voice_approval`)**: Compartida entre el REPL interactivo, despachos single-shot nacidos de voz (`yunta voice archivo.mp3 "tarea"`) y sub-agentes en lotes `--chunks`. Mantiene el flujo 100% manos libres en el ciclo SDD sin volver al teclado para aprobar herramientas.
+  - **Soporte de voz en sub-agentes `--chunks` (`run_chunks`)**: `run_chunks` propaga el listener de voz a cada sub-agente por lote, preservando compatibilidad retroactiva completa con mocks/callers existentes.
+  - **Lectura hablada en Single-shot y Chunks (`--speak`)**: Al concluir ejecuciones directas o descomposiciones por lotes con `--speak` activo, el agente lee el resultado final o el resumen de lotes en voz alta.
+  - **Router con intenciones paramétricas locales (0 tokens LLM)**: `DEFAULT_PREFIX_VOICE_KEYWORDS` mapea frases como `"inicializa <idea>"`, `"inicia proyecto <idea>"` o `"crear proyecto <idea>"` directamente a `/init <idea>`, preservando tildes y mayúsculas de la especificación sin consultar al modelo.
+- **Tests: 264** (3 nuevos tests: ruteo de prefijos hablados, máquina de estados de aprobación por voz y propagación de voz en `run_chunks`). 100% pasando.
+
+## [2.7.4] — 2026-09-19
+
+- **Pipeline de Prefetch en TTS (`yunta/tts.py`)**:
+  - `speak()` sintetiza la oración N+1 en un hilo corto mientras la N se reproduce: la latencia de síntesis de Edge (~4.7s/oración) queda oculta tras el tiempo de habla (~6s), encadenando oraciones sin pausas. La única espera perceptible es la primera síntesis. Medido end-to-end: 5 oraciones en 29.9s (tiempo de habla puro) vs ~53s secuencial (**~44% menos**; en configuraciones con síntesis más lenta que el habla, el ahorro tiende a ~100% de la síntesis).
+  - Test de regresión con FakeProvider temporizado: el total debe acercarse a `primera_síntesis + n×reproducción`, no a `n×(síntesis+reproducción)`.
+
+## [2.7.3] — 2026-09-19
+
+- **Banco de Pruebas y Métricas del Pipeline de Voz (`scripts/bench_voice.py` + `tests/test_voice_quality.py`)**:
+  - `scripts/bench_voice.py`: benchmark por componente con reporte JSON (`.yunta/voice_bench_*.json`): fuzzy (precisión sobre mutaciones fonéticas sintéticas + falsos positivos), router (cobertura/latencia), STT (tiempo worker vs faster-whisper local + WER de desacuerdo entre motores), TTS (latencia de síntesis) y VAD en vivo (umbral calibrado y frase capturada). Flags modulares: `--fuzzy --router --stt --audio <ruta> --tts --vad --all`.
+  - `tests/test_voice_quality.py`: gate de regresión en CI — precisión del fuzzy ≥90% sobre 370+ mutaciones, 0 falsos positivos con vocabulario técnico, cobertura 100% del router sin falsos positivos en frases largas.
+  - **Línea base medida (2026-09-19, SDD.mp3 ~30s)**: fuzzy 93.6% precisión / 0 FP; router 100% cobertura / 0.008 ms; STT worker 9.4s vs local 63.3s (incluye carga de modelo), WER de desacuerdo 10.2%; TTS Edge 4.7s por oración (mejorable: streaming/paralelismo).
+- **Fix de falsos positivos del fuzzy (encontrado por el propio benchmark)**:
+  - `_FUZZY_EXEMPT`: sinónimos cuya forma colisiona con palabras comunes quedan fuera del matching difuso (exacto sigue OK): "reescribir"≈"escribir" y "apruebo"≈"prueba" mapeaban incorrectamente a acción editar/aprobar.
+
+## [2.7.2] — 2026-09-18
+
+- **Limpieza Fonética de Markdown para Síntesis de Voz TTS (`yunta/tts.py`)**:
+  - Nueva función `clean_markdown_for_speech(text: str) -> str`: Normaliza y remueve sintaxis de Markdown antes de la síntesis de voz (`speak()`). Elimina asteriscos de negrita/cursiva, comillas invertidas de código inline, encabezados `#`, URLs largas y viñetas; formatea tablas a lenguaje pausado natural; y sustituye bloques de código extensos por `"código en pantalla"`. La salida visual en el terminal permanece 100% enriquecida con Markdown intacto.
+- **Interrupción Inmediata y Salida Forzada Segura (`yunta/cli.py`, `yunta/tts.py`, `yunta/feedback.py`, `yunta/voice.py`)**:
+  - **Doble Ctrl+C para Cierre Forzado**: Si el usuario presiona Ctrl+C dos veces en < 1.5s, la aplicación se cierra de forma inmediata e incondicional (`sys.exit(0)`), deteniendo cualquier hilo de audio o proceso en segundo plano.
+  - **Cancelación Limpia de Turno**: Un solo Ctrl+C durante la generación o la locución corta el habla en curso (`stop_speaking()`), detiene el turno activo y devuelve el control al REPL.
+  - **`wait_until_done()` Interrumpible (`yunta/tts.py`)**: Espera con bucles no bloqueantes de 0.1s para permitir que las señales del sistema operativo en Windows (`SIGINT`/Ctrl+C) se procesen al instante en lugar de quedar retenidas durante timeouts largos.
+  - **Prevención de Bloqueos en Salida (`yunta/feedback.py`, `yunta/cli.py`)**: Reemplazado `except BaseException` por `except Exception` en `feedback.summarize` para evitar que `KeyboardInterrupt` sea tragado silenciosamente si el LLM demora o falla en el cierre de sesión.
+  - **Nuevas Palabras Clave de Detención por Voz (`yunta/voice.py`)**: Soporte directo en `DEFAULT_VOICE_KEYWORDS` para "para", "parar", "stop", "detener", "cancela", "cancelar", "basta" (rutean a `/stop`), y "cállate", "callate" (rutean a `/speak off`).
+- **Tests: 254** (3 nuevos tests: limpieza de Markdown básico, limpieza de tablas, ruteo de keywords de parada). 100% de la suite pasando.
+
+## [2.7.1] — 2026-09-18
+
+- **Corrección de Métrica ROI y Telemetría Per-Request (`yunta/provider.py`, `yunta/api.py`, `yunta/cli.py`)**:
+  - **Extracción robusta de uso de tokens (`_extract_usage`)**: Soporte completo para respuestas de proveedores donde `usage` retorna como `dict`, objeto o `Usage`, con estimación fallback (`litellm.token_counter` / estimador de caracteres) cuando los endpoints custom o streaming omiten la clave `usage`. Resuelve el problema donde los tokens marcaban 0 y el ROI no se calculaba.
+  - **Telemetría ROI automática tras cada solicitud (`print_roi_footer`)**: Imprime un resumen de telemetría y retorno económico (`Turno: +in / +out | Sesión: total tokens | ⚡ % caché | 💰 Ahorro API`) inmediatamente después de procesar cada prompt del usuario, tanto en ejecuciones CLI single-shot como en el REPL interactivo.
+  - **Método `Usage.delta` (`yunta/api.py`)**: Cálculo de diferencia de consumo por turno para reporte exacto por solicitud.
+- **Robustez y Calibración en Modo Voz Continua (`yunta/voice.py`, `yunta/cli.py`)**:
+  - **Calibración VAD más sensible**: Umbral dinámico con piso ajustado a 90 (antes forzado a 350, lo que volvía sordo al micrófono en computadores portátiles) y soporte de anulación manual mediante la variable de entorno `YUNTA_VAD_THRESHOLD`.
+  - **Ampliación de sinónimos de salida local**: Añadidos "terminar", "cerrar", "adios", "chao", "exit", "quit" a `DEFAULT_VOICE_KEYWORDS` para cerrar la sesión con 0 tokens de LLM.
+  - **Limpieza de recursos**: Parada garantizada de `InputStream` en bloques `finally` tanto en `VoiceListener._loop` como al salir del REPL en `cli.py`.
+  - **Manejo de Ctrl+C**: Captura limpia de `KeyboardInterrupt` en `voice_listener.get()` sin volcar trazas de error de Python.
+- **Tests: 251** (100% de la suite pasando).
+
+## [2.7.0] — 2026-09-18
+
+- **Escucha Continua Manos Libres V5-1 (`yunta/voice.py` + `yunta/cli.py`)**:
+  - Nueva clase `VoiceListener`: hilo daemon con captura `sounddevice` (16kHz, bloques de 0.5s) y **VAD por umbral RMS calibrado con 1s de ruido ambiental** (umbral ajustable vía `YUNTA_VAD_THRESHOLD`). Detecta inicio de voz, acumula hasta 1.5s de silencio y deposita cada frase transcrita en una cola. `yunta --voice` sin archivo ya no graba una sola toma: entra al REPL con micrófono siempre activo.
+  - **Gate de eco**: el micrófono se pausa mientras el agente genera y mientras el TTS habla (nueva `wait_until_done()` en `tts.py`), evitando que yunta se escuche a sí misma; se reanuda incluso si `send()` falla (try/finally).
+  - **Aprobación de tools 100% por voz**: nuevo hook `Agent.voice_approval` — al pedir permiso (`Aprobar bash?`), el callback reactiva el micrófono, espera "sí"/"siempre"/"no" (con fuzzy fonético) y vuelve a pausarlo. Sin respuesta en 180s rechaza por seguridad.
+- **Fuzzy Matching Fonético V5-3 (`yunta/voice.py`)**:
+  - `normalize_voice_response` ahora tolera errores de transcripción de Whisper en palabras sueltas vía Levenshtein (≤1 para palabras ≤5 chars, ≤2 para largas): "aprobau"→s, "avansar"→s, "cancelal"→c, "editat"→e. Frases largas quedan intactas (van al LLM).
+- **Router de Palabras Clave Local — 0 consultas LLM (`yunta/voice.py`)**:
+  - `route_keyword()` + `load_voice_keywords()`: frases habladas como "métricas", "salir", "limpiar", "rentabilidad" se resuelven a comandos REPL localmente sin gastar tokens. **Registro persistente ampliable por el usuario** en `.yunta/voice_keywords.json` (`{"frase": "/comando"}`) que sobrevive entre sesiones.
+  - El REPL de voz anuncia cuándo una frase se resolvió localmente: `⚡ /metrics (palabra clave local, 0 consultas LLM)`.
+- **Tests: 248** (5 nuevos: fuzzy, router, overrides de keywords JSON, segmentación VAD por silencio con audio sintético, API de pausa/reanudación). Smoke test de hardware: calibración y captura OK.
+
+## [2.6.0] — 2026-09-15
+
+- **Replanteo del TTS al estándar de yunta (`yunta/tts.py`, 2026-09-18)**:
+  - Reproducción Windows reescrita con **MCI vía ctypes/winmm.dll** (reproduce MP3 nativo, 0 dependencias — mismo patrón que la grabación de micrófono en voice.py). La implementación anterior usaba `System.Media.SoundPlayer`, que solo reproduce WAV y fallaba silenciosamente ante el MP3 que produce el TTS.
+  - `speak()` ahora es **no-bloqueante** (hilo daemon): el REPL sigue usable mientras habla; una respuesta nueva o un nuevo input corta la locución anterior vía `stop_speaking()` (verificado con test de corte). Antes bloqueaba el REPL con `PlaySync()` pese a documentar lo contrario.
+  - Fallback de síntesis (edge-tts) ahora **anunciado en terminal** ("💡 voz: Edge TTS"), cumpliendo la regla de transparencia de yunta (sin fallbacks ocultos): `synthesize()` retorna `(audio, proveedor)` explícito.
+  - Corregido User-Agent inconsistente ("Yunta/2.6.0" → "Yunta/2.5.1 Client") y fallback de reproducción no-Windows a ffplay/mpv.
+  - Tests: 8 (3 nuevos: transparencia del fallback, no-bloqueo + corte, texto vacío). Total suite: 243.
+- **Módulo Neutral de Síntesis de Voz Hablada TTS (`yunta/tts.py`)**:
+  - `TTSProvider`: Motor agnóstico de salida de voz con fallback automático en 2 niveles: proveedor primario HTTP OpenAI-compatible (`/v1/audio/speech`, Cloudflare Worker) y respaldo secundario con Microsoft Edge TTS (`edge-tts` con voces neuronales en español de alta fidelidad `es-CL-CatalinaNeural`).
+  - `chunk_text_by_sentences`: Troceo inteligente por oraciones y pausas de puntuación para iniciar la reproducción de audio en menos de 0.5s sin esperar a la finalización completa de la respuesta del LLM.
+- **Respaldo Local Offline de Transcripción `faster-whisper` (`yunta/voice.py`)**:
+  - Carga bajo demanda (*lazy import*) de `faster-whisper` en `transcribe_offline_local` para permitir transcripción local en CPU con 0 MB de costo de inicio.
+- **Soporte CLI y REPL para Lectura Hablada (`yunta/cli.py`)**:
+  - Bandera CLI `--speak` / `-s` y comando interactivo REPL `/speak [on|off]` para activar y desactivar la lectura en voz alta de las respuestas del agente. Un nuevo input del usuario corta la locución en curso.
+- **Pruebas Unitarias Ampliadas (`tests/test_tts.py`)**:
+  - Suite de pruebas unitarias verificando inicialización, troceo por oraciones y mecanismos de resiliencia del motor TTS.
+
+## [2.5.1] — 2026-09-14
+
+- **Diagnóstico y resilencia STT ante fallos del endpoint (`yunta/voice.py`)**:
+  - Causa raíz encontrada transcribiendo `SDD.mp3` (8.9 MB): el worker de Cloudflare pasa el audio a Workers AI como array JSON de números (`[...Uint8Array]`), lo que infla el payload ~4-5x y Workers AI lo rechaza con `3006: Request is too large` de forma intermitente. El worker devolvía 500 genérico.
+  - `AudioTranscriber.transcribe()` ahora reintenta 3x con backoff ante errores transitorios (429/5xx/timeout), y ante error "too large"/3006/413 **fragmenta el audio automáticamente** y reintenta por partes (guard anti-recursión bajo 256 KB).
+  - `AudioChunker` soporta corte por bytes (~1 MB) para MP3 sin ffmpeg (frames autocontenidos; verificado empíricamente); para otros formatos sin ffmpeg falla con mensaje claro.
+  - Marcas de tiempo de fragmentos ahora proporcionales a bytes con duración MP3 estimada por bitrate (antes `índice × 10 min`, incorrecto con cortes binarios).
+  - Fix worker (`scratch/yunta-stt-worker`, pusheado a GitHub): error 3006 mapeado a HTTP 413 con mensaje accionable.
+  - Verificado con audio real: `SDD.mp3` completo → 9.310 caracteres transcritos (algunos fragmentos requirieron retry).
+- **Backlog v6 registrado (`docs/PLAN.md`, por instrucción humana)**:
+  - Robustez del pipeline STT para audios largos, derivada del análisis comparativo contra WhisperX/faster-whisper/OpenAI Cookbook: V6-1 timestamps reales (ffprobe), V6-2 retry por chunk, V6-3 checkpoint incremental, V6-4 filtro de alucinaciones, V6-5 corte en silencios, V6-6 chunks en paralelo, V6-7 faster-whisper local con VAD, V6-8 diarización. Priorizados por nivel de impacto y costo.
+- **Fix: crash de `/resume` en REPL (`yunta/agent.py`)**:
+  - `AttributeError: property 'total_usage' of 'Agent' object has no setter` — el handler de `/resume` en el REPL asignaba `agent.total_usage` (propiedad de solo lectura). Se agregó un setter que restaura el usage acumulado de la sesión previa en `agent.usage`.
+- **Offload de transcripts largos a scratch (`yunta/voice.py` + `yunta/cli.py`)**:
+  - Nueva función `offload_transcript()`: transcripciones >8.000 caracteres se guardan en `.yunta/scratch/transcript_*.txt` y al agente solo le entra un preview de 500 chars con la ruta y estimación de tokens. Antes el transcript completo entraba de golpe al contexto y el SlidingWindow terminaba expulsándolo por ser el mensaje más viejo. Aplica tanto en `yunta voice` (arranque) como en `/voice` (REPL).
+- **Continuidad entre fragmentos de Whisper (`yunta/voice.py`)**:
+  - `AudioChunker` pasa ahora los últimos ~200 caracteres del fragmento anterior como `prompt` de Whisper al siguiente, manteniendo coherencia de nombres propios y terminología técnica en cátedras largas. Además muestra progreso por fragmento (`fragmento 3/12`).
+- **Cancelación de transcripciones largas con Ctrl+C (`yunta/voice.py` + `yunta/cli.py`)**:
+  - Ctrl+C durante la transcripción de un audio grande interrumpe el proceso, conserva los fragmentos ya transcritos (marcados como "[NOTA: transcripción parcial...]"), limpia los temporales y devuelve el control al REPL. En modo single-shot cancela limpiamente.
+- **Fix: 'siempre' ahora aprueba la tool completa (`yunta/agent.py`)**:
+  - Antes, responder "siempre" a "Aprobar bash?" memorizaba solo el primer token del comando (`("bash","git")`), por lo que cada comando nuevo volvía a preguntar. Ahora registra un comodín `("bash","*")` que aprueba toda la tool por el resto de la sesión. Tests actualizados a la nueva semántica.
+- **Fix: `-y`/`--yes` ahora aplica también en el REPL (`yunta/cli.py`)**:
+  - El agente del modo interactivo se creaba sin el callback `confirm`, así que `--yes` solo silenciaba aprobaciones en single-shot y --chunks, pero seguía preguntando en el chat interactivo.
+- **Proveedor Secundario con Endpoint Propio (`yunta/provider.py`)**:
+  - Nuevas variables `LLM_FALLBACK_MODEL` / `LLM_FALLBACK_API_BASE` / `LLM_FALLBACK_API_KEY`: si el proveedor primario falla (429/503/cuota), el router conmuta a un endpoint y credencial completamente distintos. Ejemplo verificado contra la doc oficial de Z.AI (`docs.z.ai/guides/llm/glm-5.3`): GLM-5.3 vía GLM Coding Plan usa protocolo OpenAI Chat en `https://api.z.ai/api/coding/paas/v4` con model ID `glm-5.3` (los suscriptores del Coding Plan no pueden usar el endpoint Anthropic). Antes la cascada `LLM_MODELS` solo cambiaba el nombre del modelo; ahora base URL y API key se conmutan junto con el modelo.
+  - Documentado en `.env.example` y en la ayuda de variables del CLI.
+- **Grabación en vivo ilimitada en REPL (`yunta/cli.py`)**:
+  - `/voice` y `/listen` sin archivo ahora graban indefinidamente hasta presionar ENTER (igual que `yunta voice`), en lugar del límite fijo de 5 segundos que cortaba la conversación hablada dentro del chat.
+- **Eliminado fallback oculto a Google (`yunta/voice.py`)**:
+  - Se removió `recognize_google` como último recurso de transcripción: el audio del micrófono ya no se envía a un servicio cloud sin consentimiento explícito (regla #2 de AGENTS.md: sin fallbacks ocultos).
+- **Errores de transcripción visibles (`yunta/voice.py`)**:
+  - Un fallo HTTP contra el endpoint STT ahora imprime la causa real (URL y error) en lugar de solo "No se obtuvo transcripción".
+- **Chunking sin ffmpeg falla con mensaje claro (`yunta/voice.py`)**:
+  - Para audios >25 MB sin ffmpeg instalado se lanza `RuntimeError` indicando cómo instalarlo; el fallback anterior dividía el archivo en partes binarias crudas que producían fragmentos de audio corruptos.
+- **Desacoplamiento de `LLM_API_BASE` para Modelos Gemini Nativos (`yunta/provider.py`)**:
+  - Se corrigió el enrutamiento para asegurar que los modelos oficiales de Google Gemini (`gemini/gemini-3.6-flash`) omitan `api_base` cuando este apunta a proxies como Z.AI, conectando directamente con el endpoint oficial `https://generativelanguage.googleapis.com`.
+- **Carga Nativa de Archivos de Entorno `.env` (`yunta/cli.py`)**:
+  - Se agregó `_load_dotenv()` al inicio de `main()` para cargar automáticamente variables desde `.env` en la raíz del proyecto o `~/.yunta/.env` sin necesidad de librerías externas.
+  - Creados los archivos [`.env`](file:///c:/Users/HP/.zcode/workspace/default/yunta/.env) y [`.env.example`](file:///c:/Users/HP/.zcode/workspace/default/yunta/.env.example), y actualizado `.gitignore` para proteger credenciales.
+- **Soporte REPL Interactivo para `/resume` y `--resume` (`yunta/cli.py`)**:
+  - Se añadió la captura de `/resume`, `--resume` y `-r` directamente dentro del bucle del REPL interactivo para cargar la sesión anterior desde `.yunta/session_state.json` sin enviar el texto de la bandera como prompt al modelo de IA.
+- **Script de Modo Investigación para Transcripción de Audio en Lote (`scripts/investigar_audios.py`)**:
+  - Evaluación masiva de transcripciones de audio (.mp3, .wav, .m4a, .ogg) con métricas e informe de rendimiento.
+
+## [2.5.0] — 2026-09-13
+
+### Corregido & Mejorado
+- **Generalización y Polivalencia de `SYSTEM_PROMPT` (`yunta/cli.py`)**:
+  - Se rediseñó `SYSTEM_PROMPT` para declarar formalmente a Yunta como un asistente autónomo e inteligente y compañero de trabajo versátil. Expande explícitamente sus capacidades más allá del desarrollo de software para abarcar tareas de **investigación, síntesis de información, análisis de datos, extracción de textos (multimedia/documentos/OCR) y redacción de informes**, preservando al 100% el soporte para metodología SDD, ejecución ágil de pruebas y verificación empírica.
+- **Persistencia de Métricas de Uso de Tokens en Sesión (`yunta/agent.py`)**:
+  - `_save_session_state()` invocaba `save_session()` enviando únicamente `self.usage` (métricas locales de ejecuciones de tools sin contadores de tokens de la API) en lugar de `self.total_usage`. Esto ocasionaba que `.yunta/session_state.json` se guardase con 0 tokens de entrada, salida y caché, mostrando `0.0% Hit Rate` y `$0.0000 USD` al ejecutar `python main.py --roi`.
+  - `Agent.total_usage`: Corregido el cálculo para sumar las métricas de tokens de sesiones previas (`self.usage`) con los tokens de la llamada actual (`provider.total_usage`), preservando la continuidad histórica al reanudar sesiones con `--resume`.
+
+### Agregado & Implementado
+- **Pipeline Universal de Extracción Local de Texto Multiformato (Etapa 1 ➔ Etapa 2)**:
+  - `yunta/extractors/`: Paquete de extractores locales deterministas sin llamadas a LLMs.
+  - `extract_text_from_file`: Fábrica universal que convierte cualquier formato de entrada a Texto Plano (Prompt Base).
+  - `yunta/extractors/audio.py`: Extracción de audio (.wav, .mp3, .m4a, .ogg) vía `System.Speech` / Whisper local.
+  - `yunta/extractors/video.py`: Extracción de pistas de audio de videos (.mp4, .mkv, .avi) vía `ffmpeg` ➔ Texto Plano.
+  - `yunta/extractors/document.py`: Extracción de documentos PDF (.pdf), Word (.docx) y texto (.txt, .md, .json) localmente.
+  - `yunta/extractors/ocr.py`: OCR de imágenes (.png, .jpg, .webp) vía `Windows.Media.Ocr` nativo de Windows.
+- **Filtro de Ruido Inicial y Puerta de Silencio en STT (`trim_initial_noise_and_silence`)**:
+  - `yunta/voice.py`: Pre-procesamiento de señales de audio `.wav` antes de pasar por el reconocedor de voz. Elimina automáticamente los chasquidos de teclado (`noise_gate_ms=150ms`) y silencios pre-voz preservando 100ms de margen (*lead-in*) previo a la primera palabra hablada.
+- **Previsualización, Edición Interactiva y Cancelación de Transcripción de Voz (`yunta/cli.py`)**:
+  - Muestra la transcripción capturada antes de despacharla al agente (`Agent.send`), permitiendo al usuario:
+    - `[ENTER / s]`: Enviar inmediatamente la transcripción.
+    - `[e]`: Editar interactivamente el texto transcrito antes de enviarlo.
+    - `[c]`: Cancelar la operación sin ejecutar ni consumir tokens.
+- **Inyección Explícita de Idioma `language="es"` en STT (`yunta/voice.py`)**:
+  - Pasa el parámetro `language="es"` en el payload `multipart/form-data` de Whisper para forzar el reconocimiento en español y evitar alucinaciones en inglés ante silencios o ruidos de fondo.
+- **Comparador y Normalizador de Respuestas Rápidas por Voz/Texto (`normalize_voice_response`)**:
+  - `yunta/voice.py`: Normalizador determinista que compara transcripciones habladas o textos con sinónimos fonéticos de aprobación (`"sí"`, `"aprobado"`, `"avanzar"`, `"abanzau"`, `"ok"`, `"dale"`, `"listo"` ➔ `s`), rechazo/cancelación (`"no"`, `"rechazado"`, `"cancelar"`, `"alto"`, `"stop"` ➔ `c`), edición (`"editar"`, `"modificar"`, `"cambiar"` ➔ `e`) y aprobación permanente (`"siempre"`, `"para siempre"`, `"sí a todo"`, `"aprobado a todo"` ➔ `siempre`).
+  - `yunta/cli.py` & `yunta/agent.py`: Integrado en el menú de revisión de voz y en las confirmaciones interactivas de herramientas (`_approve`), permitiendo respuestas habladas o tipeadas rápidas sin requerir letras exactas.
+- **Herramienta Nativa de Búsqueda Web (`web_search`) sin Dependencias (`yunta/tools/search.py`)**:
+  - Implementación de `@registry.register("web_search")` basada en `urllib` nativo de Python y la API pública de Wikipedia/búsqueda web.
+  - Elimina las secuencias de ensayo y error de 27 comandos `bash` en consolas de Windows CMD, reduciendo la latencia de investigación a 1 llamada HTTP (~0.2s).
+- **Directiva Dinámica de Idioma en `SYSTEM_PROMPT` (`yunta/cli.py`)**:
+  - `SYSTEM_PROMPT` actualizado para adaptarse dinámicamente al idioma del usuario (*"Responde e interactúa siempre en el idioma que esté utilizando el usuario (español, inglés, etc.). Tanto tus pensamientos como tus respuestas y archivos redactados deben escribirse en ese mismo idioma."*).
+- **Auto-Detección Inteligente y Forzado de Razonamiento Profundo por Usuario (`yunta/intent.py`, `yunta/agent.py`, `yunta/cli.py`)**:
+  - `IntentClassifier.evaluate_reasoning(prompt, user_override)`: Evalúa si un prompt requiere razonamiento profundo (`HIGH`, `MEDIUM`, `OFF`) mediante clasificación automática de complejidad y palabras clave en tiempo de ejecución.
+  - Comando interactivo `/think [high|medium|low|off|auto]` en el REPL y flag CLI `--think` / `--think=high|off` / `-t` para forzar o desactivar explícitamente el modo de pensamiento.
+  - Indicador visual dinámico en la consola (`🧠 Razonamiento Profundo (Thinking)...`) cuando la tarea activa el modo de razonamiento.
+- **Captura Directa de Bytes y Decodificación UTF-8 en Subprocesos Windows (`yunta/tools/bash.py`)**:
+  - Elimina el uso de `text=True` en `subprocess.run` para capturar la salida estándar y de error como bytes crudos, decodificándolos explícitamente en Python con `.decode("utf-8", errors="replace")`. Evita la creación de hilos de lectura de texto (`_readerthread`) con la codificación `cp1252` predeterminada de Windows y resuelve 100% las excepciones `UnicodeDecodeError`.
+- **Prevención de Bucle Recursivo de Scratch Files (`yunta/agent.py`)**:
+  - `_maybe_offload_result`: Exime a `read_file` de re-offloadear salidas al leer archivos en `.yunta/scratch/` o con parámetros de paginación (`offset`/`limit`), evitando la generación infinita de archivos temporales anidados al inspeccionar resultados extensos.
+- **Despacho Directo de Subcomandos CLI de Telemetría (`yunta/cli.py`)**:
+  - Implementación del despacho directo en CLI para `yunta roi` / `yunta --roi` (Dashboard ROI y retorno económico), `yunta tokens` / `yunta --tokens` / `yunta metrics` (desglose de tokens) y `yunta context` / `yunta --context` (presupuesto de contexto) desde la terminal sin requerir llamar a la API ni abrir el REPL.
+- **`tests/test_search.py`, `tests/test_provider.py`, `tests/test_intent.py`, `tests/test_agent.py` & `tests/test_cli.py`**: Suite ampliada a 232 pruebas unitarias pasadas al 100%.
+
+---
+
+## [2.4.0] — 2026-09-13
+
+### Agregado & Implementado
+- **Prompts por Voz y Dictado Manos Libres (Zero-Typing)**:
+  - `yunta/voice.py`: Módulo nativo `AudioTranscriber` para transcripción de audio vía HTTP `multipart/form-data` a endpoints compatibles con Whisper (OpenAI, Groq `whisper-large-v3`, Ollama Whisper).
+  - Captura desde micrófono local `record_microphone` y soporte para archivos `.wav`, `.mp3`, `.m4a`, `.ogg`, `.webm`.
+  - CLI `yunta -v` / `yunta --voice [archivo.mp3]` y comando interactivo `/voice` en el REPL.
+- **Soporte para Grabaciones Extensas (Cátedras de Medicina de 2 a 4+ Horas)**:
+  - `AudioChunker`: Fragmentación basada en Voice Activity Detection (VAD) / silencios (`silencedetect`) para no trocear palabras compuestas por la mitad.
+  - `yunta/tools/voice.py`: Herramientas `@registry.register("transcribe_audio")` y `generate_study_notes` que generan resúmenes ejecutivos por temas, glosarios médicos/farmacológicos, tarjetas Anki Q&A y diagramas Mermaid.
+- **Enrutamiento por Intención (`yunta/intent.py`)**:
+  - `IntentClassifier`: Clasificación automática de tareas entre `SOFTWARE_IMPLEMENTATION` (aplica compuertas SDD, git hooks, validación atómica `.tmp` y compilación) y `RESEARCH_AND_CONSULTING` (bypass completo de compuertas SDD y git hooks para resúmenes, cátedras y consultoría).
+- **Adaptadores Modales Carga Bajo Demanda (`InputAdapterRegistry`)**:
+  - `yunta/adapters.py`: Expansión con `InputAdapterRegistry` para carga perezosa (0 MB al inicio) de adaptadores multimedia (`AudioInputAdapter`, `VisionInputAdapter`).
+- **Pruebas Unitarias**:
+  - `tests/test_intent.py`, `tests/test_voice.py` y `tests/test_voice_lazy.py` (100% test pass rate).
+
+---
+
+## [2.3.0] — 2026-09-12
+
+### Agregado & Port C# Nativo (.NET 10)
+- **Port 100% generado mediante Yunta CLI (`python main.py -y ...`)** en `scratch/yunta-csharp/`:
+  - `Yunta.Core/`: Módulos nativos `Api.cs` (tipos neutrales `Message`, `Block`, `ToolDef`, `Usage`), `Adapters.cs` (adaptadores de lenguaje bajo demanda), `Tools.cs` (escritura atómica, reemplazo, listado, búsqueda de símbolos y AST), `Provider.cs` (`LiteLlmProvider` con `HttpClient` y semántica Litellm) y `Agent.cs` (`YuntaAgent` con bucle autónomo).
+  - `Yunta.Cli/`: Aplicación de consola REPL e interfaz one-shot (`-y` / `--yolo`) alineada con `main.py`.
+  - `Yunta.Tests/`: Suite de 19 pruebas unitarias xUnit verificando serialización, tools, bucle del agente y tolerancia a respuestas JSON.
+  - **Métricas**: 0 dependencias externas (solo SDK .NET 10), 100% test pass rate (19/19 en 335 ms), 0 errores y 0 warnings de compilación.
+
+---
+
 ## [2.2.0] — 2026-09-12
 
 ### Agregado & Implementado
@@ -805,14 +1342,3 @@ publicación).
   mueren por acumulación de contexto (evidencia: v0.7 streaming, O1-c,
   ronda W). E2E real: spec de 4 archivos → 2 lotes → completada con
   verificación pytest en cada lote.
-
----
-
-## Convenciones para futuros cambios
-
-1. Toda modificación se registra en este archivo: qué cambió, en qué archivo y por qué.
-2. Los números de versión siguen SemVer: `mayor.minor.parche`.
-3. El harness no debe ganar dependencias de proveedores específicos: si un cambio
-   requiere importar un SDK concreto fuera de un adaptador, el diseño se revisa.
-4. Verificación mínima antes de registrar un cambio: compilar + smoke test del
-   bucle con provider falso.

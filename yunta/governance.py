@@ -7,6 +7,14 @@ import sys
 from pathlib import Path
 
 
+# Extraídas como constantes (Feature 2 / reverse_sdd.py las reutiliza para
+# garantizar que un SPEC.md/AGENTS.md generado por ingeniería inversa pase
+# esta misma auditoría de inmediato).
+SPEC_HEADER_RE = r"(#|##)\s+(Requerimientos|Objetivo|Vision|Especificaci|Problema|Scope|Overview)"
+PLAN_PHASE_RE = r"(Fase|Phase|Hito|Milestone|Backlog|Todo)"
+AGENTS_YUNTA_MARKER = "yunta"
+
+
 def _find_candidate_file(root: Path, names: list[str]) -> Path | None:
     for name in names:
         p = root / name
@@ -43,7 +51,7 @@ def audit_repository(target_dir: Path | str = ".", run_tests: bool = False) -> d
     spec_path = _find_candidate_file(root, ["SPEC.md", "docs/SPEC.md", "spec.md", "docs/spec.md"])
     if spec_path:
         content = spec_path.read_text(encoding="utf-8", errors="replace")
-        has_reqs = bool(re.search(r"(#|##)\s+(Requerimientos|Objetivo|Vision|Especificaci|Problema|Scope|Overview)", content, re.I))
+        has_reqs = bool(re.search(SPEC_HEADER_RE, content, re.I))
         rel_name = spec_path.relative_to(root).as_posix()
         result["checks"]["spec"] = {
             "status": "OK",
@@ -64,7 +72,7 @@ def audit_repository(target_dir: Path | str = ".", run_tests: bool = False) -> d
     plan_path = _find_candidate_file(root, ["PLAN.md", "docs/PLAN.md", "plan.md", "docs/plan.md"])
     if plan_path:
         content = plan_path.read_text(encoding="utf-8", errors="replace")
-        has_phases = bool(re.search(r"(Fase|Phase|Hito|Milestone|Backlog|Todo)", content, re.I))
+        has_phases = bool(re.search(PLAN_PHASE_RE, content, re.I))
         rel_name = plan_path.relative_to(root).as_posix()
         result["checks"]["plan"] = {
             "status": "OK",
@@ -85,7 +93,7 @@ def audit_repository(target_dir: Path | str = ".", run_tests: bool = False) -> d
     agents_path = _find_candidate_file(root, ["AGENTS.md", "docs/AGENTS.md", "agents.md", "docs/agents.md"])
     if agents_path:
         content = agents_path.read_text(encoding="utf-8", errors="replace")
-        has_yunta_rule = "yunta" in content.lower()
+        has_yunta_rule = AGENTS_YUNTA_MARKER in content.lower()
         rel_name = agents_path.relative_to(root).as_posix()
         if has_yunta_rule:
             result["checks"]["agents"] = {

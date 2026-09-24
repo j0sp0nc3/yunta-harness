@@ -37,8 +37,9 @@ Designed from the ground up to be completely independent of any single model pro
 - **Agnostic Prompt Caching**: Automatic injection of cache breakpoints (`cache_control`) for Anthropic Claude and automatic prefix caching support for OpenAI/DeepSeek/Gemini, cutting input token costs by up to 90% and reducing latency.
 - **Graceful Interrupt Handling (`Ctrl+C`)**: Cancel a long turn or running tool call instantly without crashing your REPL session or corrupting conversation history.
 - **Native MCP (Model Context Protocol) Support**: Connect local `stdio` MCP servers over JSON-RPC 2.0 without third-party agent libraries.
-- **Persistent Memory & Compound Learning**: Preserve key project facts across sessions (`.yunta/memory.json`) and store learned lessons (`.yunta/learnings.md`).
-- **Subagent Research Delegation**: Delegate intensive read-only exploration to secondary subagents without polluting the primary context window.
+- **Resilient Bidirectional Voice (STT + TTS)**: Microphone or file dictation (`yunta --voice`), serverless Cloudflare Worker transcription (`@cf/openai/whisper`) with local `faster-whisper` fallback, and spoken text-to-speech output (`yunta --speak` / `/speak`) powered by Cloudflare Workers AI TTS and `edge-tts` (`es-CL-CatalinaNeural`).
+- **Native `.env` File Support**: Automatic loading of environment variables and model configuration from `.env` in the project root or `~/.yunta/.env`.
+- **Transparent Session Resumption (`/resume` & `yunta --resume`)**: Auto-saving state on rate limits (429/503) and instant resumption in the REPL or terminal.
 
 ---
 
@@ -156,23 +157,27 @@ export LLM_API_KEY=dummy
 - `/permissions [clear]`: Lists persistent session permissions granted via 'always' or revokes them (`/permissions clear`).
 - `/roi`: Displays the ROI telemetry dashboard, cache hit rate, and estimated USD cost savings.
 - `/metrics`: Displays detailed execution metrics for tools, **startup tax**, errors, and interaction turns.
+- `/speak`: Enables or disables spoken text-to-speech reading (`/speak on` or `/speak off`).
+- `/resume`: Resumes the previous session state loaded from `.yunta/session_state.json`.
 - `/tokens`: Displays total token consumption and cache hit rate.
 - `/help`: Lists all available interactive commands.
 - `/clear`: Clears conversation history for the current session.
 - `/exit`: Saves session learnings to `.yunta/learnings.md` and exits.
 - `Ctrl+C`: Gracefully interrupts the current turn without leaving orphaned `tool_use` blocks.
 
-### Key Environment Variables
-- `LLM_MODEL`: Target provider/model (e.g., `openai/gpt-4o`, `anthropic/claude-3-7-sonnet`, `gemini/gemini-3.7-flash`, `ollama/llama3.3`).
+### Key Environment Variables (`.env`)
+- `LLM_MODEL`: Target provider/model (e.g., `openai/gpt-4o`, `anthropic/claude-3-7-sonnet`, `gemini/gemini-3.5-flash-lite`, `ollama/llama3.3`).
 - `LLM_MODELS`: Comma-separated priority list for automatic fallback router on 429/503/quota limit.
 - `LLM_API_BASE`: Base URL for custom OpenAI-compatible endpoints (e.g., `http://localhost:8000/v1`).
 - `LLM_API_KEY`: API Key or Bearer token.
+- `VOICE_MODEL`: Input STT model (`@cf/openai/whisper`).
+- `VOICE_API_BASE`: Cloudflare Worker STT endpoint (`https://yunta-stt-worker.../v1`).
+- `TTS_MODEL`: Output TTS model (`@cf/meta/mms-tts-spa`).
+- `TTS_VOICE`: Preferred neural voice (`es-CL-CatalinaNeural`).
 - `YUNTA_SYSTEM_PROMPT`: Overrides default system prompt.
 - `YUNTA_MAX_TOKENS`: Maximum token budget for multi-stage compaction (default: `128000`).
 - `YUNTA_MAX_MESSAGES`: Sliding window history limit (default: `40`).
 - `YUNTA_YES`: Enables non-interactive auto-approval for all tools (equivalent to `-y` / `--yes`).
-- `YUNTA_BLOCKLIST_EXTRA`: Path to extra regex blocklist file for bash tool safety.
-- `YUNTA_ALLOW_FORCE`: Set to `1` to allow `git push --force` in bash tool.
 
 
 ---

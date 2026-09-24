@@ -109,10 +109,12 @@ def decompose_task(provider, spec: str, max_attempts: int = 2) -> list[Subtask]:
 
 
 def run_chunks(provider, subtasks: list[Subtask], system: str,
-               confirm=None, start_from: int = 0, agent_cls=None) -> list[str]:
+               confirm=None, start_from: int = 0, agent_cls=None,
+               voice_listener=None) -> list[str]:
     """Ejecuta las subtareas SECUENCIALMENTE con un subagente de contexto limpio
     por lote. Ante error de cuota persiste el lote pendiente (P7) y relanza.
-    Devuelve los resúmenes de cada lote completado."""
+    Devuelve los resúmenes de cada lote completado.
+    voice_listener: si se pasa, cada sub-agente aprueba tools por voz (SDD hands-free)."""
     from .agent import Agent
 
     results = []
@@ -125,6 +127,9 @@ def run_chunks(provider, subtasks: list[Subtask], system: str,
             max_turns=15,
             confirm=confirm,
         )
+        if voice_listener is not None:
+            from .voice import make_voice_approval
+            sub.voice_approval = make_voice_approval(sub, voice_listener)
         prompt = (
             f"Subtarea {i + 1}/{total} — UNA tarea acotada, no la spec completa.\n"
             f"Objetivo: {t.goal}\n"
