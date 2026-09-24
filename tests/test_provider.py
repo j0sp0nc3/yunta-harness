@@ -583,3 +583,22 @@ def test_unsupported_reasoning_param_is_disabled_for_later_turns(monkeypatch):
     p.send(MSGS, tools=[], reasoning_effort="high")
     assert len(attempts) == 1, "el descarte ya se aprendio; no debe reintentarse"
     assert "thinking" not in attempts[0]
+
+
+def test_consecutive_user_messages_are_merged_for_strict_providers():
+    """Gemini y otros proveedores estrictos rechazan mensajes con turnos
+    consecutivos del mismo rol (ej. user seguido de user) con BadRequestError.
+    _to_litellm debe fusionarlos en un único mensaje de usuario."""
+    os.environ["LLM_MODEL"] = "gemini/gemini-3.6-flash"
+    litellm.completion = fake_completion
+
+    p = LiteLLMProvider()
+    msgs = [
+        Message(role=Role.USER, content=[Block(type=BlockType.TEXT, text="primera parte")]),
+        Message(role=Role.USER, content=[Block(type=BlockType.TEXT, text="segunda parte")]),
+    ]
+    p.send(msgs, tools=[])
+    user_msgs = [m for m in captured["messages"] if m["role"] == "user"]
+    assert len(user_msgs) == 1
+    assert "primera parte\n\nsegunda parte" in user_msgs[0]["content"]
+

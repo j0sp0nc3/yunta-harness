@@ -434,11 +434,29 @@ class LiteLLMProvider(Provider):
         if not self._disable_cache_control:
             system_block["cache_control"] = {"type": "ephemeral"}
         out = [{"role": "system", "content": [system_block]}] if self._system else []
+        raw_msgs = []
         for m in messages:
             if m.role == Role.ASSISTANT:
-                out.append(self._assistant_msg(m))
+                raw_msgs.append(self._assistant_msg(m))
             else:
-                out.extend(self._user_msgs(m))
+                raw_msgs.extend(self._user_msgs(m))
+
+        # Normalizar turnos consecutivos del mismo rol (ej. user + user)
+        # para proveedores estrictos como Gemini que rechazan turnos no alternados con BadRequestError
+        for d in raw_msgs:
+            if out and out[-1].get("role") == "user" and d.get("role") == "user":
+                c_prev = out[-1]["content"]
+                c_curr = d["content"]
+                if isinstance(c_prev, str) and isinstance(c_curr, str):
+                    out[-1]["content"] = f"{c_prev}\n\n{c_curr}"
+                elif isinstance(c_prev, list) and isinstance(c_curr, list):
+                    out[-1]["content"] = c_prev + c_curr
+                elif isinstance(c_prev, str) and isinstance(c_curr, list):
+                    out[-1]["content"] = [{"type": "text", "text": c_prev}] + c_curr
+                elif isinstance(c_prev, list) and isinstance(c_curr, str):
+                    out[-1]["content"] = c_prev + [{"type": "text", "text": c_curr}]
+            else:
+                out.append(d)
         return out
 
     def _assistant_msg(self, m: Message) -> dict:

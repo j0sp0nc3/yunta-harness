@@ -6,6 +6,15 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.14.28] — 2026-09-24
+
+Normalización de turnos consecutivos en el provider, orden cronológico de auto-feedback y transición a la cascada activa de modelos Gemini.
+
+- **`yunta/provider.py` — normalización de turnos consecutivos del mismo rol en `_to_litellm`**: proveedores como Google Gemini y Vertex AI exigen alternancia estricta entre turnos de usuario y modelo, rechazando peticiones con mensajes consecutivos de un mismo rol (`user` seguido de `user`) con HTTP 400 `BadRequestError: Please ensure that multiturn requests alternate between user and model or provide a valid role`. `_to_litellm` ahora fusiona limpiamente mensajes consecutivos de usuario en un único turno unificado, garantizando interoperabilidad neutral entre todos los proveedores sin excepciones espurias.
+- **`yunta/feedback.py` — orden cronológico en `FeedbackStore.summarize`**: el prompt de lecciones de auto-evaluación (`LESSON_PROMPT`) se anteponía a los mensajes de la sesión (`[LESSON_PROMPT] + messages`), violando la cronología natural y generando turnos consecutivos de usuario (`user + user`) al inicio de cada evaluación post-sesión. Se reordena a `messages + [LESSON_PROMPT]`, ejecutando la auto-evaluación con éxito en el primer intento y sin saltos de router.
+- **`.env` — transición a cascada activa y funcional de Gemini**: ante el agotamiento de saldo en `openai/glm-4.7` (`RateLimitError: Insufficient balance`), se configuró una cascada resiliente de modelos verificados en producción: `gemini/gemini-flash-lite-latest,gemini/gemini-3.5-flash-lite,gemini/gemini-3.6-flash` (primarios) con fallback a `gemini/gemini-3.1-flash-lite`.
+- **Suite de pruebas**: 1 test unitario nuevo en `tests/test_provider.py` (`test_consecutive_user_messages_are_merged_for_strict_providers`), suite completa en verde (440 tests pasando en 113s).
+
 ## [2.14.27] — 2026-09-24
 
 Dos self-heal en `yunta/provider.py` que desbloquean a Gemini como modelo primario y limpian la telemetría que V7-9 acababa de habilitar. Ambos salieron de mirar `llm_calls.jsonl` real, no de suponer: **15 llamadas, 9 fallidas (`failure_ratio` 0.60)** en una sola corrida de resumen.
