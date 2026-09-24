@@ -796,7 +796,7 @@ def _estimate_bitrate_bps(file_path: str) -> int:
 
 
 def _calibrate_chunk_minutes(
-    file_path: str, max_bytes: int, safety: float = 0.85, floor: float = 0.33, ceiling: float = 0.5
+    file_path: str, max_bytes: int, safety: float = 0.75, floor: float = 0.33, ceiling: float = 0.42
 ) -> float:
     """Calcula minutos por fragmento usando el bitrate real del audio en vez
     de asumir siempre el peor caso (Fase 4, 2026-09-20).
@@ -817,6 +817,18 @@ def _calibrate_chunk_minutes(
     daba 0 y esta función jamás calibraba nada, cayendo siempre al `floor`.
     Se agrega `_ffprobe_bitrate_bps` como segundo intento (cualquier
     formato que `ffprobe` entienda) antes de rendirse al `floor`.
+
+    V7-8 (2026-09-24): `safety` 0.85→0.75 y `ceiling` 0.5→0.42, medido
+    sobre la corrida real de 81 min. El corte por silencio de V6-5 mueve
+    cada límite hasta ±30% del tamaño de fragmento, y como mueve AMBOS
+    extremos, un fragmento puede estirarse hasta `chunk + 2×tolerancia` —
+    muy por encima de lo que sugiere el `ceiling`. Con los valores viejos
+    (objetivo 26.7s) aparecieron fragmentos de hasta 35.7s = ~583 KB, por
+    encima del límite de 500 KB, que la rama de archivo sobredimensionado
+    re-fragmentaba en silencio (12-14 casos en la corrida real).
+    Verificado con el archivo real (130,564 bps → límite duro de 31.37s
+    por fragmento): con 0.85/0.5 quedaban **12 fragmentos por encima del
+    límite**; con 0.75/0.42 el máximo baja a 30.9s y quedan **cero**.
     """
     bitrate = _estimate_bitrate_bps(file_path) or _ffprobe_bitrate_bps(file_path)
     if not bitrate:
@@ -1329,7 +1341,7 @@ class AudioChunker:
 
     @staticmethod
     def _calibrate_chunk_minutes(
-        file_path: str, max_bytes: int, safety: float = 0.85, floor: float = 0.33, ceiling: float = 0.5
+        file_path: str, max_bytes: int, safety: float = 0.75, floor: float = 0.33, ceiling: float = 0.42
     ) -> float:
         """Calcula minutos por fragmento usando el bitrate real del audio en vez
         de asumir siempre el peor caso (Fase 4, 2026-09-20). Ver `_calibrate_chunk_minutes`

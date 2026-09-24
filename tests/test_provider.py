@@ -461,6 +461,35 @@ def test_consume_stream_records_raw_finish_reason(monkeypatch):
     assert recorded["output_tokens"] == 9402
 
 
+def test_send_records_failed_calls_with_error(monkeypatch):
+    """V7-9: cuando la llamada al proveedor falla sin fallback disponible,
+    queda registrada con el tipo de error — antes el incidente era
+    completamente invisible en la telemetría."""
+    os.environ["LLM_MODEL"] = "openai/glm-4.7"
+
+    class FakeRateLimitError(Exception):
+        pass
+
+    def fake_completion_fails(**kwargs):
+        raise FakeRateLimitError("quota exceeded for this API key")
+
+    litellm.completion = fake_completion_fails
+
+    recorded = []
+    monkeypatch.setattr("yunta.llm_call_telemetry.record_llm_call", lambda **kw: recorded.append(kw))
+
+    p = LiteLLMProvider(system="sys")
+    try:
+        p.send(MSGS, tools=[])
+    except FakeRateLimitError:
+        pass
+
+    assert len(recorded) >= 1
+    assert recorded[0]["error"].startswith("FakeRateLimitError")
+    assert "quota exceeded" in recorded[0]["error"]
+    assert recorded[0]["finish_reason_raw"] == ""
+
+
 def test_llm_call_telemetry_failure_does_not_break_send(monkeypatch):
     """Si grabar la telemetria falla (disco lleno, etc.), la respuesta real
     del LLM no se pierde — mismo patron de resiliencia que voice_telemetry."""

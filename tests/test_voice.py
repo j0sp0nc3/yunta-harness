@@ -530,21 +530,22 @@ def test_estimate_bitrate_bps_returns_zero_for_non_mp3(tmp_path):
 
 def test_calibrate_chunk_minutes_uses_real_bitrate_within_bounds(tmp_path):
     """Bitrate real (128 kbps) da un valor entre floor y ceiling, distinto del
-    0.33 fijo anterior — el caso central que motiva la Fase 4."""
+    0.33 fijo anterior — el caso central que motiva la Fase 4.
+    V7-8: con safety=0.75 el valor baja de 0.4533 a 0.40."""
     f = tmp_path / "audio.mp3"
     f.write_bytes(b"\xff\xfb\x90\x00" + b"x" * 512)
     cm = AudioChunker._calibrate_chunk_minutes(str(f), max_bytes=500 * 1024)
-    assert 0.33 < cm < 0.5
-    assert cm == pytest.approx(0.4533, abs=0.001)
+    assert 0.33 < cm < 0.42
+    assert cm == pytest.approx(0.40, abs=0.001)
 
 
 def test_calibrate_chunk_minutes_clamps_to_ceiling_for_low_bitrate(tmp_path):
     """Bitrate bajo (32 kbps) permitiría fragmentos largos bajo el mismo límite
-    de bytes, pero el ceiling conservador (30s) no se supera."""
+    de bytes, pero el ceiling conservador no se supera (V7-8: 0.42 = 25.2s)."""
     f = tmp_path / "audio.mp3"
     f.write_bytes(b"\xff\xfb\x10\x00" + b"x" * 512)  # índice de bitrate 1 = 32 kbps
     cm = AudioChunker._calibrate_chunk_minutes(str(f), max_bytes=500 * 1024)
-    assert cm == 0.5
+    assert cm == 0.42
 
 
 def test_calibrate_chunk_minutes_clamps_to_floor_for_high_bitrate(tmp_path):
@@ -590,7 +591,7 @@ def test_workers_ai_calibrates_chunk_minutes_by_real_bitrate_for_mp3(tmp_path, m
     res = transcriber.transcribe(str(audio_file))
     assert res == "transcripcion fragmentada"
     _, kwargs = mock_chunker_cls.call_args
-    assert kwargs["chunk_minutes"] == pytest.approx(0.4533, abs=0.001)
+    assert kwargs["chunk_minutes"] == pytest.approx(0.40, abs=0.001)  # V7-8: safety 0.75
 
 
 def test_workers_ai_env_override_bypasses_calibration(tmp_path, monkeypatch):
@@ -1232,7 +1233,7 @@ def test_calibrate_chunk_minutes_uses_ffprobe_for_non_mp3(tmp_path, monkeypatch)
     monkeypatch.setattr(voice_module, "_ffprobe_bitrate_bps", lambda p: 130500)
 
     cm = AudioChunker._calibrate_chunk_minutes(str(f), max_bytes=500 * 1024)
-    assert cm == pytest.approx(0.4446, abs=0.001)
+    assert cm == pytest.approx(0.3923, abs=0.001)  # V7-8: safety 0.75
 
 
 def test_transcribe_large_audio_uses_ffprobe_real_durations_for_offsets(tmp_path, monkeypatch):

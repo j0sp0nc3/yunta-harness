@@ -34,6 +34,12 @@ class LLMCallSnapshot:
     finish_reason_raw: str
     streaming: bool
     tool_calls: int = 0
+    # V7-9 (2026-09-24): las llamadas que fallan (cuota agotada, rate
+    # limit, timeout) también dejan rastro. Antes solo se registraba el
+    # camino de éxito, así que un incidente de cuota que abortó una
+    # transcripción real quedó completamente invisible: 0 entradas pese a
+    # varios intentos. `error` vacío = la llamada tuvo éxito.
+    error: str = ""
 
 
 def record_llm_call(
@@ -44,9 +50,10 @@ def record_llm_call(
     finish_reason_raw: str,
     streaming: bool = False,
     tool_calls: int = 0,
+    error: str = "",
     path: Path | str = DEFAULT_LLM_CALLS_PATH,
 ) -> None:
-    """Append-only: una entrada JSON por llamada a `send()`."""
+    """Append-only: una entrada JSON por llamada a `send()`, exitosa o no."""
     snap = LLMCallSnapshot(
         timestamp=time.time(),
         model=model,
@@ -56,6 +63,7 @@ def record_llm_call(
         finish_reason_raw=finish_reason_raw,
         streaming=streaming,
         tool_calls=tool_calls,
+        error=error,
     )
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -89,14 +97,27 @@ def aggregate_llm_calls(path: Path | str = DEFAULT_LLM_CALLS_PATH, limit: int | 
     if not calls:
         return {"calls": 0}
     n = len(calls)
-    total_out = sum(c.get("output_tokens", 0) for c in calls)
-    total_secs = sum(c.get("elapsed_secs", 0.0) for c in calls)
-    length_truncated = sum(1 for c in calls if c.get("finish_reason_raw") == "length")
+    # V7-9: las llamadas fallidas no aportan tokens ni velocidad de
+    # generación — se cuentan aparte para no ensuciar el promedio de
+    # tokens/seg con ceros de intentos que nunca produjeron texto.
+    failed = [c for c in calls if c.get("error")]
+    ok = [c for c in calls if not c.get("error")]
+    total_out = sum(c.get("output_tokens", 0) for c in ok)
+    total_secs = sum(c.get("elapsed_secs", 0.0) for c in ok)
+    length_truncated = sum(1 for c in ok if c.get("finish_reason_raw") == "length")
     tokens_per_sec = (total_out / total_secs) if total_secs > 0 else 0.0
+    errores = {}
+    for c in failed:
+        tipo = str(c.get("error", "")).split(":")[0]
+        errores[tipo] = errores.get(tipo, 0) + 1
     return {
         "calls": n,
+        "successful_calls": len(ok),
+        "failed_calls": len(failed),
+        "failure_ratio": round(len(failed) / n, 4),
+        "errors_by_type": errores,
         "total_output_tokens": total_out,
         "avg_tokens_per_sec": round(tokens_per_sec, 2),
         "length_truncated_calls": length_truncated,
-        "length_truncated_ratio": round(length_truncated / n, 4),
+        "length_truncated_ratio": round(length_truncated / len(ok), 4) if ok else 0.0,
     }

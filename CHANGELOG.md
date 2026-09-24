@@ -6,6 +6,19 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.14.26] — 2026-09-24
+
+Dos correcciones derivadas de la **corrida completa a escala real** (81.78 min, 189 fragmentos, `VOICE_REUSE_CONNECTION=1` + `VOICE_PARALLEL_WORKERS=4`): STT en **319.6s (RTF 15.35x)** contra 2265.7s del mejor baseline, **-85.9%**, sin un solo 429 ni disparo de breaker.
+
+- **`yunta/voice.py` — V7-8: `safety` 0.85→0.75 y `ceiling` 0.5→0.42 en `_calibrate_chunk_minutes`**: el corte por silencio de V6-5 mueve **ambos** extremos de cada fragmento hasta ±30% del tamaño objetivo, así que un fragmento puede estirarse hasta `chunk + 2×tolerancia` — muy por encima de lo que sugiere el `ceiling`. En la corrida real aparecieron fragmentos de hasta 35.7s (~583 KB) sobre el límite de 500 KB, que la rama de archivo sobredimensionado re-fragmentaba **en silencio** (12-14 casos, sin aviso en el log, con pérdida del estado del circuit breaker y 14 snapshots anidados que ensuciaban `aggregate_voice`).
+  - Verificado sobre el archivo real (130,564 bps → límite duro de 31.37s/fragmento): con 0.85/0.5 quedaban **12 fragmentos por encima del límite**; con 0.75/0.42 el máximo baja a 30.9s y quedan **cero**.
+  - **Costo honesto del arreglo**: los fragmentos pasan de ~185 a ~209 (+13% de peticiones). Contra las ~197 peticiones reales del esquema anterior (185 + 12 re-fragmentadas), el neto son **~12 peticiones más**. Se acepta porque elimina la pérdida de estado del breaker, la re-fragmentación silenciosa y la contaminación de la telemetría; con W=4 el costo en tiempo es ~3% del total.
+  - 4 tests de calibración actualizados a los valores nuevos (0.40 para 128 kbps, 0.42 de ceiling, 0.3923 para 130.5 kbps).
+- **`yunta/provider.py`, `yunta/llm_call_telemetry.py` — V7-9: registrar también las llamadas LLM fallidas**: `_record_llm_call` solo corría en el camino de éxito, así que el incidente de cuota agotada que abortó el resumen de la corrida real dejó `llm_calls.jsonl` en **0 entradas pese a varios intentos** — completamente invisible.
+  - `LLMCallSnapshot` gana `error: str = ""` (vacío = éxito); `send()` registra en el bloque `except` antes de decidir fallback, con tipo de excepción y mensaje truncado a 200 caracteres.
+  - `aggregate_llm_calls` separa éxitos de fallos: `successful_calls`, `failed_calls`, `failure_ratio`, `errors_by_type`. Los fallos ya no contaminan `avg_tokens_per_sec` (antes sumaban 0 tokens al promedio) ni `length_truncated_ratio`.
+  - 3 tests nuevos: rastro del error y conteo separado, agregado sin división por cero cuando todas fallan, y registro desde `send()` con el tipo de excepción real.
+
 ## [2.14.25] — 2026-09-23
 
 - **`tests/test_provider.py` — corrección de regresión propia: los tests contaminaban `.yunta/llm_calls.jsonl`**: la telemetría agregada en v2.14.21 (V7-5) graba a una ruta **relativa** (`.yunta/llm_calls.jsonl`), o sea resuelta contra el directorio de trabajo. Los 17 tests preexistentes de `test_provider.py` llaman a `LiteLLMProvider.send()` con un `litellm.completion` falso y **sin mockear la telemetría**, así que cada corrida de la suite escribía ~154 entradas sintéticas (`out=10` tokens, `elapsed≈0s`, 59K tokens/seg) al archivo real del repo — enterrando exactamente las llamadas reales que ese archivo existe para medir.

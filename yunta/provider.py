@@ -86,6 +86,7 @@ class LiteLLMProvider(Provider):
 
     def send(self, messages: list[Message], tools: list[ToolDef], on_text=None, reasoning_effort: str | None = None) -> Response:
         while True:
+            attempt_start = time.monotonic()
             current_model = self._override_model or self.model()
             kwargs = {
                 "model": current_model,
@@ -198,6 +199,15 @@ class LiteLLMProvider(Provider):
             except Exception as e:
                 err_str = str(e).lower()
                 err_name = type(e).__name__
+                # V7-9 (2026-09-24): registrar también el camino de fallo. Antes
+                # solo se grababa el éxito, así que un incidente de cuota que
+                # abortó una transcripción real de 81 min dejó `llm_calls.jsonl`
+                # en 0 entradas pese a varios intentos — invisible por completo.
+                self._record_llm_call(
+                    current_model, Usage(), time.monotonic() - attempt_start, "",
+                    streaming=on_text is not None, tool_calls_count=0,
+                    error=f"{err_name}: {str(e)[:200]}",
+                )
                 if "unsupportedparam" in err_name.lower() or "not support parameter" in err_str:
                     reasoning_effort = "off"
                     os.environ["LLM_REASONING_EFFORT"] = "off"
@@ -222,7 +232,7 @@ class LiteLLMProvider(Provider):
 
     def _record_llm_call(
         self, model: str, usage: Usage, elapsed_secs: float, finish_reason_raw: str | None,
-        streaming: bool, tool_calls_count: int,
+        streaming: bool, tool_calls_count: int, error: str = "",
     ) -> None:
         """V7-5 (2026-09-22): registra el `finish_reason` crudo del proveedor
         (no el `StopReason` mapeado, que colapsa `"length"` en `OTHER`) para
@@ -238,6 +248,7 @@ class LiteLLMProvider(Provider):
                 finish_reason_raw=finish_reason_raw or "",
                 streaming=streaming,
                 tool_calls=tool_calls_count,
+                error=error,
             )
         except Exception:
             pass
