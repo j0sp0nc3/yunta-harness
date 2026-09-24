@@ -40,6 +40,20 @@ class LiteLLMProvider(Provider):
         self._system = system
         self.total_usage = Usage()
         self._override_model: str | None = None  # Feature 6: enrutamiento económico dinámico
+        # V7-10 (2026-09-24): algunos tiers rechazan el almacenamiento de
+        # contexto cacheado por completo (Gemini free tier responde HTTP 429
+        # `TotalCachedContentStorageTokensPerModelFreeTier limit=0` ante
+        # CUALQUIER petición con `cache_control`). Se desactiva solo tras
+        # verlo fallar, no por adelantado: el caché ahorra dinero real donde
+        # sí funciona y no se sacrifica preventivamente.
+        self._disable_cache_control = False
+        # V7-11 (2026-09-24): el self-heal de `reasoning_effort` solo escribia
+        # LLM_REASONING_EFFORT, pero `agent.py` pasa el effort explicito en
+        # CADA turno y el parametro gana sobre la variable de entorno — asi
+        # que el mismo UnsupportedParamsError se repetia turno tras turno
+        # (4 veces en una corrida real de 6 llamadas utiles). Se recuerda en
+        # la instancia para que el reintento ocurra una sola vez.
+        self._disable_reasoning = False
         # Proveedor secundario opcional (endpoint + credencial propios):
         # se activa solo si todos los modelos primarios fallan.
         self._n_primary = len(self._models)
@@ -116,7 +130,10 @@ class LiteLLMProvider(Provider):
                 kwargs["user"] = session_id
                 kwargs["metadata"] = {"session_id": session_id}
 
-            effort = reasoning_effort or os.environ.get("LLM_REASONING_EFFORT")
+            if self._disable_reasoning:
+                effort = "off"
+            else:
+                effort = reasoning_effort or os.environ.get("LLM_REASONING_EFFORT")
             if effort:
                 clean_effort = effort.lower().strip()
                 if clean_effort in ("high", "profundo", "on", "1", "true"):
@@ -211,6 +228,20 @@ class LiteLLMProvider(Provider):
                 if "unsupportedparam" in err_name.lower() or "not support parameter" in err_str:
                     reasoning_effort = "off"
                     os.environ["LLM_REASONING_EFFORT"] = "off"
+                    self._disable_reasoning = True  # V7-11: no repetir el descarte cada turno
+                    continue
+                # V7-10: el tier rechaza el caché de contexto por completo
+                # (no es saturación: `limit=0` significa "no disponible aquí").
+                # Se reintenta sin `cache_control` en vez de dar por muerto al
+                # modelo — sin esto, un fallback a un tier sin caché no puede
+                # responder NINGUNA petición con system prompt.
+                if not self._disable_cache_control and (
+                    "cachedcontentstorage" in err_str
+                    or "cached_content" in err_str
+                    or ("cache_control" in err_str and "not support" in err_str)
+                ):
+                    print(f"\n[Cache: {current_model} rechaza el caché de contexto ({err_name}); reintentando sin cache_control]")
+                    self._disable_cache_control = True
                     continue
                 is_fallback_candidate = any(
                     x in err_str or x in err_name.lower()
@@ -399,18 +430,10 @@ class LiteLLMProvider(Provider):
         return out
 
     def _to_litellm(self, messages: list[Message]) -> list[dict]:
-        out = [
-            {
-                "role": "system",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": self._system,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ],
-            }
-        ] if self._system else []
+        system_block: dict = {"type": "text", "text": self._system}
+        if not self._disable_cache_control:
+            system_block["cache_control"] = {"type": "ephemeral"}
+        out = [{"role": "system", "content": [system_block]}] if self._system else []
         for m in messages:
             if m.role == Role.ASSISTANT:
                 out.append(self._assistant_msg(m))

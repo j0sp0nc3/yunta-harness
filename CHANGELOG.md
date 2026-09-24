@@ -6,6 +6,24 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.14.27] — 2026-09-24
+
+Dos self-heal en `yunta/provider.py` que desbloquean a Gemini como modelo primario y limpian la telemetría que V7-9 acababa de habilitar. Ambos salieron de mirar `llm_calls.jsonl` real, no de suponer: **15 llamadas, 9 fallidas (`failure_ratio` 0.60)** en una sola corrida de resumen.
+
+- **V7-10: reintentar sin `cache_control` cuando el tier rechaza el caché de contexto**: el free tier de Gemini responde HTTP 429 `TotalCachedContentStorageTokensPerModelFreeTier limit=0` ante **cualquier** petición que lleve `cache_control`. Como el bloque de system prompt siempre lo llevaba, el modelo no podía responder **nada** — eso, y no una cuota agotada, fue lo que dejó sin resumen a la corrida del 2026-09-23.
+  - `_to_litellm` deja de emitir `cache_control` una vez que `self._disable_cache_control` se activa; la activación ocurre **solo tras ver el fallo**, no preventivamente: donde el caché funciona ahorra dinero real (29.5% de hit medido en esta misma corrida, ~$0.023 USD).
+  - Diagnóstico honesto de por qué se veía como problema de cuota: el error llega como `RateLimitError`, el mismo tipo que una saturación transitoria. `limit=0` es la señal que lo distingue — no es "vuelve más tarde", es "aquí no existe".
+- **V7-11: recordar el descarte de `reasoning_effort` entre turnos**: el self-heal de parámetros no soportados solo escribía `LLM_REASONING_EFFORT=off`, pero `agent.py:197` pasa el effort **explícito en cada turno** y el parámetro gana sobre la variable de entorno. Resultado medido: el mismo `UnsupportedParamsError` se repitió **4 veces en una corrida de 6 llamadas útiles**, una por turno.
+  - Ahora se recuerda en la instancia (`self._disable_reasoning`), mismo patrón que V7-10.
+  - **Alcance honesto**: litellm rechaza este parámetro del lado cliente, así que los reintentos costaban 0.02-0.13s cada uno — el arreglo **no acelera nada perceptible**. Lo que arregla es que `failure_ratio` vuelva a significar algo: 0.60 era mayoritariamente ruido auto-infligido, no incidentes reales.
+- **4 tests nuevos** en `tests/test_provider.py` (24 en el archivo): reintento sin caché con el mensaje real de Vertex AI, caché intacto en proveedores que sí lo aceptan, y el descarte de reasoning aprendido entre dos `send()` consecutivos.
+
+### Validación empírica (resumen de la cátedra, con Gemini primario)
+
+El resumen de "Conductas motivadas" que quedó pendiente desde la corrida del 2026-09-23 **se generó correctamente** (`.yunta/scratch/resumen_conductas_motivadas.md`): 58,576 tokens de entrada, 1,629 de salida, 2 tool calls.
+
+- **Predicción falsada**: `finish_reason == "length"` apareció en **0 de 6** llamadas exitosas (`length_truncated_ratio: 0.0`). La sospecha de truncamiento por `max_tokens` que motivó V7-5 —los 9,402 tokens de salida idénticos entre las corridas 1 y 2— **no se reproduce aquí**. Salvedad importante: esta corrida fue con Gemini, y la anomalía original fue con GLM-4.7; la hipótesis queda **sin probar para GLM**, no descartada. Lo que sí quedó demostrado es que el instrumento distingue el caso cuando ocurre.
+
 ## [2.14.26] — 2026-09-24
 
 Dos correcciones derivadas de la **corrida completa a escala real** (81.78 min, 189 fragmentos, `VOICE_REUSE_CONNECTION=1` + `VOICE_PARALLEL_WORKERS=4`): STT en **319.6s (RTF 15.35x)** contra 2265.7s del mejor baseline, **-85.9%**, sin un solo 429 ni disparo de breaker.

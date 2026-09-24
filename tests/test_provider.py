@@ -504,3 +504,82 @@ def test_llm_call_telemetry_failure_does_not_break_send(monkeypatch):
     assert r.content[0].text == "ok"
 
 
+
+
+def test_send_retries_without_cache_control_when_tier_rejects_cache(monkeypatch):
+    """V7-10: el free tier de Gemini responde HTTP 429
+    `TotalCachedContentStorageTokensPerModelFreeTier limit=0` ante CUALQUIER
+    peticion con `cache_control`. Sin este self-heal el modelo no podia
+    responder NADA (todo mensaje lleva system prompt), que es exactamente lo
+    que bloqueo el resumen de la catedra el 2026-09-23."""
+    os.environ["LLM_MODEL"] = "gemini/gemini-3-flash-preview"
+    os.environ.pop("LLM_FALLBACK_MODEL", None)
+
+    class FakeRateLimitError(Exception):
+        pass
+
+    seen = []
+
+    def fake_completion_cache_rejected(**kwargs):
+        seen.append(kwargs["messages"])
+        if len(seen) == 1:
+            raise FakeRateLimitError(
+                "VertexAIException - Quota exceeded for quota metric "
+                "'TotalCachedContentStorageTokensPerModelFreeTier' limit=0"
+            )
+        return fake_completion(**kwargs)
+
+    litellm.completion = fake_completion_cache_rejected
+
+    p = LiteLLMProvider(system="sys")
+    r = p.send(MSGS, tools=[])
+
+    assert r.content[0].text == "ok"
+    assert len(seen) == 2, "debe reintentar exactamente una vez"
+    assert "cache_control" in seen[0][0]["content"][0], "el primer intento SI pide cache"
+    assert "cache_control" not in seen[1][0]["content"][0], "el reintento NO pide cache"
+
+
+def test_cache_control_stays_enabled_for_providers_that_accept_it():
+    """El self-heal de V7-10 no debe sacrificar el cache preventivamente:
+    donde funciona ahorra dinero real (29.5% de hit medido en produccion)."""
+    os.environ["LLM_MODEL"] = "openai/glm-4.7"
+    litellm.completion = fake_completion
+
+    p = LiteLLMProvider(system="sys")
+    p.send(MSGS, tools=[])
+
+    assert p._disable_cache_control is False
+    assert "cache_control" in captured["messages"][0]["content"][0]
+
+
+def test_unsupported_reasoning_param_is_disabled_for_later_turns(monkeypatch):
+    """V7-11: `agent.py` pasa `reasoning_effort` explicito en cada turno y el
+    parametro gana sobre LLM_REASONING_EFFORT, asi que el self-heal anterior
+    se perdia entre llamadas: una corrida real de 6 llamadas utiles gasto 4
+    reintentos repitiendo el mismo descarte. Debe recordarse en la instancia."""
+    os.environ["LLM_MODEL"] = "gemini/gemini-3-flash-preview"
+    os.environ.pop("LLM_FALLBACK_MODEL", None)
+
+    class UnsupportedParamsError(Exception):
+        pass
+
+    attempts = []
+
+    def fake_completion_rejects_thinking(**kwargs):
+        attempts.append(kwargs)
+        if "thinking" in kwargs:
+            raise UnsupportedParamsError("model does not support parameter thinking")
+        return fake_completion(**kwargs)
+
+    litellm.completion = fake_completion_rejects_thinking
+
+    p = LiteLLMProvider(system="sys")
+    p.send(MSGS, tools=[], reasoning_effort="high")
+    assert len(attempts) == 2, "primer turno: un fallo + un reintento"
+
+    # Segundo turno: el caller vuelve a pedir "high" (como hace agent.py).
+    attempts.clear()
+    p.send(MSGS, tools=[], reasoning_effort="high")
+    assert len(attempts) == 1, "el descarte ya se aprendio; no debe reintentarse"
+    assert "thinking" not in attempts[0]
