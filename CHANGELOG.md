@@ -6,6 +6,20 @@ sin historial previo.
 
 Formato: fecha, cambios agregados/modificados/eliminados, y motivo.
 
+## [2.15.0] — 2026-09-24
+
+Soporte a JEV (System One de TypeSafe AI) como Gatekeeper de Seguridad para ejecución de herramientas.
+
+- **`yunta/jev.py` — Cliente JEV y Gatekeeper de micro-decisiones**:
+  - `JevClient`: cliente neutral implementado exclusivamente con la biblioteca estándar (`urllib.request` / `json`), sin dependencias de SDKs de terceros ni frameworks (Reglas 1 y 3 de `AGENTS.md`). Soporta la API de JEV (`https://api.typesafe.ai/v1/systemone`) con preguntas tipadas (`Noul` probabilístico, `Score` numérico 1-5 y `Choice` categórico).
+  - `JevGatekeeper`: evalúa el riesgo intrínseco y potencial destructivo de una herramienta antes de su ejecución (`is_destructive`, `risk_score`, `action`).
+- **`yunta/agent.py` — Salvaguarda en el bucle de herramientas**:
+  - Detección proactiva de comandos críticos o destructivos (`rm -rf`, `DROP TABLE`, mutaciones irreversibles): alerta al usuario con advertencia detallada (`[JEV Gatekeeper] ⚠️ Acción de alto riesgo detectada (nivel: 5/5, destructivo: 99%)`) y fuerza confirmación humana explícita.
+  - Clasificación de comandos benignos de bajo riesgo (`risk_score <= 1` y acción `allow`): auto-aprobación con reporte informativo, reduciendo fricción operativa.
+  - Resiliencia y degradación elegante: si `JEV_API_KEY` no está configurada o si el endpoint no responde, el agente degrada transparentemente a la política nativa de `requires_approval` sin alterar el flujo ni lanzar excepciones.
+- **`.env.example`**: documentación de variables de entorno opcionales (`JEV_API_KEY`, `JEV_API_BASE`, `JEV_GATEKEEPER`).
+- **Suite de pruebas**: 8 tests unitarios e integrados en `tests/test_jev.py` (de 440 a 448 tests pasando al 100% en verde).
+
 ## [2.14.28] — 2026-09-24
 
 Normalización de turnos consecutivos en el provider, orden cronológico de auto-feedback y transición a la cascada activa de modelos Gemini.

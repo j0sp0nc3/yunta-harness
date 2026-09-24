@@ -136,6 +136,13 @@ class Agent:
         # con escucha continua). Si está seteado, reemplaza todo prompt de permiso.
         self.voice_approval = None
         self.voice_keywords = None
+        self.jev_gatekeeper = None
+        try:
+            from .jev import JevGatekeeper
+            if JevGatekeeper.is_available():
+                self.jev_gatekeeper = JevGatekeeper()
+        except Exception:
+            pass
 
     def send(self, prompt: str) -> str:
         from .intent import IntentClassifier
@@ -371,14 +378,41 @@ class Agent:
             detail = f"[PAUSA DOOM-LOOP: repetición x{repeat_count} de {name}] {detail}".strip()
 
         print(f"[tool] {name} {raw_input}")
-        if (tool.requires_approval or force_prompt) and not self._approve(
-            name, detail, raw_input, force_prompt=force_prompt
+
+        # Integración JEV Gatekeeper (System One)
+        needs_approval = tool.requires_approval or force_prompt
+        jev_forced = False
+        if self.jev_gatekeeper is not None:
+            assessment = self.jev_gatekeeper.assess_tool(name, raw_input)
+            if assessment is not None:
+                if assessment.is_destructive or assessment.risk_score >= 4 or assessment.action == "block":
+                    jev_forced = True
+                    prob_pct = int(assessment.destructive_prob * 100)
+                    jev_alert = (
+                        f"[JEV Gatekeeper] ⚠️ Acción de alto riesgo detectada "
+                        f"(nivel: {assessment.risk_score}/5, destructivo: {prob_pct}%). "
+                        f"Recomendación: {assessment.action.upper()}."
+                    )
+                    print(jev_alert)
+                    detail = f"{jev_alert}\n{detail}".strip() if detail else jev_alert
+                    needs_approval = True
+                elif assessment.risk_score <= 1 and not assessment.is_destructive and assessment.action == "allow":
+                    if not force_prompt:
+                        print("[JEV Gatekeeper] ✅ Acción evaluada como segura (nivel 1/5).")
+                        needs_approval = False
+
+        if needs_approval and not self._approve(
+            name, detail, raw_input, force_prompt=(force_prompt or jev_forced)
         ):
             self.usage.tool_errors += 1
             err_denied = (
                 f"user denied this tool call (doom-loop pause: {repeat_count} repeats)"
                 if force_prompt
-                else "user denied this tool call"
+                else (
+                    "user denied this tool call (JEV high-risk flag)"
+                    if jev_forced
+                    else "user denied this tool call"
+                )
             )
             return err_denied, True
 
@@ -482,12 +516,8 @@ class Agent:
         # V5-1: en modo voz continua la aprobación es 100% hablada
         if self.voice_approval is not None:
             return self.voice_approval(name, detail)
-        if not force_prompt:
-            if self.confirm is not None:
-                return self.confirm(name, detail)
-        else:
-            if self.confirm is not None:
-                return self.confirm(name, detail)
+        if self.confirm is not None:
+            return self.confirm(name, detail)
 
         if detail:
             print(detail, end="")
