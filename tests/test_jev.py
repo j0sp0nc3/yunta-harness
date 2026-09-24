@@ -29,19 +29,27 @@ class FakeProvider:
 
 def test_jev_client_config(monkeypatch):
     monkeypatch.delenv("JEV_API_KEY", raising=False)
-    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.delenv("JEV_MODEL", raising=False)
+    monkeypatch.delenv("JEV_API_BASE", raising=False)
     client = JevClient()
     assert not client.is_configured
 
     monkeypatch.setenv("JEV_API_KEY", "jev-test-key-123")
+    monkeypatch.setenv("JEV_API_BASE", "https://api.example.com/v1/decisions")
     client2 = JevClient()
     assert client2.is_configured
     assert client2.api_key == "jev-test-key-123"
-    assert client2.api_base == "https://api.typesafe.ai/v1/systemone"
+    assert client2.api_base == "https://api.example.com/v1/decisions"
+
+    # Soporte a modelo agnóstico (ej. Ollama local o cualquier LLM)
+    client3 = JevClient(model="ollama/qwen2.5:0.5b")
+    assert client3.is_configured
+    assert client3.model == "ollama/qwen2.5:0.5b"
 
 
 def test_jev_client_evaluate_success(monkeypatch):
     monkeypatch.setenv("JEV_API_KEY", "test-key")
+    monkeypatch.setenv("JEV_API_BASE", "https://api.example.com/v1/decisions")
     client = JevClient()
 
     mock_resp = MagicMock()
@@ -64,9 +72,26 @@ def test_jev_client_evaluate_success(monkeypatch):
         mock_urlopen.assert_called_once()
 
 
+def test_jev_client_evaluate_agnostic_llm(monkeypatch):
+    """Verifica que JevClient puede usar cualquier modelo estándar vía Provider neutral."""
+    resp_text = json.dumps({
+        "destructive": {"value": False, "probability": 0.05},
+        "risk": {"value": 1, "confidence": 0.95},
+        "action": {"value": "allow", "confidence": 0.98},
+    })
+    fake_provider = FakeProvider(responses=[
+        Response(stop_reason=StopReason.END_TURN, content=[Block(type=BlockType.TEXT, text=resp_text)])
+    ])
+    client = JevClient(model="ollama/qwen2.5:0.5b", provider=fake_provider)
+    result = client.evaluate({"tool": "list_dir"}, {})
+    assert result["action"]["value"] == "allow"
+    assert result["risk"]["value"] == 1
+
+
 def test_jev_gatekeeper_availability(monkeypatch):
     monkeypatch.delenv("JEV_API_KEY", raising=False)
-    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.delenv("JEV_MODEL", raising=False)
+    monkeypatch.delenv("JEV_API_BASE", raising=False)
     monkeypatch.delenv("JEV_GATEKEEPER", raising=False)
     assert not JevGatekeeper.is_available()
 

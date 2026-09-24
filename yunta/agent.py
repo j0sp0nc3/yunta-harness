@@ -140,7 +140,7 @@ class Agent:
         try:
             from .jev import JevGatekeeper
             if JevGatekeeper.is_available():
-                self.jev_gatekeeper = JevGatekeeper()
+                self.jev_gatekeeper = JevGatekeeper(provider=self.provider)
         except Exception:
             pass
 

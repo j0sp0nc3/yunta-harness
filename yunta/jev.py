@@ -1,8 +1,11 @@
-"""Módulo de integración con JEV (System One de TypeSafe AI) para Yunta.
+"""Módulo de decisiones rápidas System One / JEV para Yunta.
 
-Implementa un gatekeeper de decisiones rápidas, probabilísticas y tipadas
-(Noul, Choice, Score) para evaluar el riesgo de ejecución de herramientas
-y proteger la integridad del entorno sin depender de frameworks externos.
+Agnóstico al proveedor por construcción (Regla 1 y 2 de AGENTS.md):
+- Puede conectarse a endpoints nativos de JEV (TypeSafe AI u otros).
+- Puede usar cualquier modelo local o remoto de inferencia rápida
+  (ej. Ollama, Groq, OpenAI, Gemini Flash Lite) vía JEV_MODEL / JEV_API_BASE.
+- Emite micro-decisiones tipadas (Noul/booleano, Choice/categórico, Score/numérico)
+  para evaluar riesgo de herramientas sin acoplarse a un vendor específico.
 """
 
 from dataclasses import dataclass
@@ -14,7 +17,7 @@ import urllib.request
 
 @dataclass
 class JevAssessment:
-    """Evaluación estructurada emitida por JEV para una llamada de herramienta."""
+    """Evaluación estructurada emitida para una llamada de herramienta."""
     is_destructive: bool
     destructive_prob: float
     risk_score: int
@@ -24,52 +27,79 @@ class JevAssessment:
 
 
 class JevClient:
-    """Cliente neutral y minimalista para la API de JEV (TypeSafe AI)."""
+    """Cliente neutral y agnóstico para decisiones rápidas de System One."""
 
-    DEFAULT_API_BASE = "https://api.typesafe.ai/v1/systemone"
     DEFAULT_TIMEOUT = 3.0
 
     def __init__(
         self,
+        model: str | None = None,
         api_key: str | None = None,
         api_base: str | None = None,
         timeout: float | None = None,
+        provider=None,
     ):
+        self.model = (
+            model
+            or os.environ.get("JEV_MODEL", "")
+        ).strip()
         self.api_key = (
             api_key
-            or os.environ.get("JEV_API_KEY")
-            or os.environ.get("TYPESAFE_API_KEY")
-            or ""
+            or os.environ.get("JEV_API_KEY", "")
         ).strip()
         self.api_base = (
             api_base
-            or os.environ.get("JEV_API_BASE")
-            or self.DEFAULT_API_BASE
+            or os.environ.get("JEV_API_BASE", "")
         ).strip()
         self.timeout = (
             timeout
             if timeout is not None
             else float(os.environ.get("JEV_TIMEOUT", str(self.DEFAULT_TIMEOUT)))
         )
+        self._provider = provider
 
     @property
     def is_configured(self) -> bool:
-        return bool(self.api_key)
+        """Configurado si se define una clave, un endpoint o un modelo de decisión."""
+        return bool(self.api_key or self.api_base or self.model or self._provider)
 
     def evaluate(self, state: dict, questions: dict) -> dict:
-        """Envía un estado y preguntas tipadas a JEV y retorna las decisiones."""
+        """Evalúa el estado contra preguntas tipadas usando el backend configurado.
+
+        Soporta:
+        1. Endpoints HTTP dedicados a System One / micro-decisiones (vía JEV_API_BASE).
+        2. Modelos LLM/SLM rápidos neutrales (vía JEV_MODEL o el Provider de Yunta).
+        """
         if not self.is_configured:
-            raise ValueError("JEV_API_KEY no configurada.")
+            raise ValueError(
+                "JEV no está configurado. Especifica JEV_MODEL (ej. ollama/qwen2.5:0.5b) "
+                "o JEV_API_BASE para tu endpoint de decisiones."
+            )
+
+        # Modo 1: Endpoint HTTP dedicado (si api_base está definido y apunta a un servicio de decisiones)
+        if self.api_base and not self.model:
+            return self._evaluate_native(state, questions)
+
+        # Modo 2: Modelo rápido agnóstico (a través del Provider neutral de Yunta)
+        return self._evaluate_llm(state, questions)
+
+    def _evaluate_native(self, state: dict, questions: dict) -> dict:
+        """Despacho a endpoint HTTP de micro-decisiones."""
+        if not self.api_base:
+            raise ValueError("JEV_API_BASE no está configurado.")
 
         payload = json.dumps({"state": state, "questions": questions}).encode("utf-8")
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "yunta-harness/jev",
+        }
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
         req = urllib.request.Request(
             self.api_base,
             data=payload,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-                "User-Agent": "yunta-harness/jev",
-            },
+            headers=headers,
             method="POST",
         )
 
@@ -79,22 +109,68 @@ class JevClient:
                 return data["decisions"]
             return data
 
+    def _evaluate_llm(self, state: dict, questions: dict) -> dict:
+        """Evaluación agnóstica usando el Provider neutral de Yunta (sin SDKs externos)."""
+        from .api import Block, BlockType, Message, Role
+        from .provider import LiteLLMProvider
+
+        provider = self._provider
+        if provider is None:
+            chosen_model = self.model or os.environ.get("LLM_MODEL", "")
+            if not chosen_model:
+                raise ValueError("No hay modelo configurado para JEV (define JEV_MODEL o LLM_MODEL).")
+            provider = LiteLLMProvider(model=chosen_model)
+
+        prompt = (
+            "Eres un evaluador de decisiones rápidas tipo System One. "
+            "Analiza el siguiente contexto de herramienta y responde ÚNICAMENTE con un JSON válido "
+            "con las decisiones exactas solicitadas sin explicaciones ni markdown:\n\n"
+            f"ESTADO: {json.dumps(state, ensure_ascii=False)}\n"
+            f"PREGUNTAS: {json.dumps(questions, ensure_ascii=False)}\n\n"
+            "Formato de respuesta obligatorio:\n"
+            "{\n"
+            '  "destructive": {"value": true/false, "probability": 0.0-1.0},\n'
+            '  "risk": {"value": 1-5, "confidence": 0.0-1.0},\n'
+            '  "action": {"value": "allow"|"ask_user"|"block", "confidence": 0.0-1.0}\n'
+            "}"
+        )
+
+        resp = provider.send(
+            messages=[Message(role=Role.USER, content=[Block(type=BlockType.TEXT, text=prompt)])],
+            tools=[],
+        )
+        content = ""
+        for b in resp.content:
+            if b.type == BlockType.TEXT and b.text:
+                content += b.text
+
+        clean_json = content.strip().strip("```json").strip("```").strip()
+        try:
+            return json.loads(clean_json)
+        except Exception:
+            return {
+                "destructive": {"value": False, "probability": 0.0},
+                "risk": {"value": 2, "confidence": 0.5},
+                "action": {"value": "allow", "confidence": 0.5},
+            }
+
 
 class JevGatekeeper:
-    """Gatekeeper de seguridad para llamadas de herramientas usando JEV."""
+    """Gatekeeper de seguridad agnóstico para llamadas de herramientas."""
 
-    def __init__(self, client: JevClient | None = None):
-        self.client = client or JevClient()
+    def __init__(self, client: JevClient | None = None, provider=None):
+        self.client = client or JevClient(provider=provider)
 
     @classmethod
     def is_available(cls) -> bool:
-        """Retorna True si JEV está habilitado explícitamente o tiene clave configurada."""
+        """Disponible si el usuario configuró JEV_MODEL, JEV_API_BASE, JEV_API_KEY o JEV_GATEKEEPER=1."""
         enabled_flag = os.environ.get("JEV_GATEKEEPER", "").strip().lower()
         if enabled_flag in ("0", "false", "off", "no"):
             return False
         return bool(
-            os.environ.get("JEV_API_KEY")
-            or os.environ.get("TYPESAFE_API_KEY")
+            os.environ.get("JEV_MODEL")
+            or os.environ.get("JEV_API_KEY")
+            or os.environ.get("JEV_API_BASE")
             or enabled_flag in ("1", "true", "on", "yes")
         )
 
@@ -136,10 +212,9 @@ class JevGatekeeper:
         try:
             decisions = self.client.evaluate(state, questions)
         except Exception:
-            # Fallback seguro: ante fallo de red o timeout de JEV, degradar limpiamente
+            # Fallback seguro: ante fallo de red o timeout, degradar limpiamente
             return None
 
-        # Parsear respuestas tolerando variaciones de esquema de JEV
         dest_data = decisions.get("destructive", {})
         risk_data = decisions.get("risk", {})
         action_data = decisions.get("action", {})
@@ -173,11 +248,8 @@ class JevGatekeeper:
         """
         assessment = self.assess_tool(tool_name, raw_input)
         if assessment is None:
-            # Si JEV no está disponible o falló, se respeta el comportamiento estándar
             return default_requires_approval and not auto_confirm, ""
 
-        # 1. Acciones destructivas o de riesgo crítico (Score >= 4 o destructive)
-        # INCLUSO en modo auto_confirm, JEV actúa como salvaguarda dura.
         if assessment.is_destructive or assessment.risk_score >= 4 or assessment.action == "block":
             prob_pct = int(assessment.destructive_prob * 100)
             warning = (
@@ -187,12 +259,9 @@ class JevGatekeeper:
             )
             return True, warning
 
-        # 2. Acciones clasificadas con certeza como seguras (Score 1 y no destructivo)
         if assessment.risk_score <= 1 and not assessment.is_destructive and assessment.action == "allow":
-            # Auto-aprobable con confianza
             return False, "[JEV Gatekeeper] ✅ Acción evaluada como segura (nivel 1/5)."
 
-        # 3. Caso intermedio (Score 2 o 3): mantener la política por defecto
         if auto_confirm:
             return False, ""
         return default_requires_approval, ""
