@@ -173,6 +173,7 @@ def test_blocklist_rm_rf_dentro_de_cwd_permitido(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "sub").mkdir()
     _bash_cmd("rm -rf ./sub")  # dentro de cwd: permitido
+    assert not (tmp_path / "sub").exists(), "el comando permitido debe haberse ejecutado"
 
 
 def test_blocklist_curl_piped_to_sh():
@@ -191,10 +192,22 @@ def test_blocklist_git_push_force():
 
 
 def test_blocklist_git_push_force_con_env(monkeypatch):
+    """Con YUNTA_ALLOW_FORCE=1 el blocklist deja pasar `git push --force`. Se
+    verifica que el comando LLEGA a ejecutarse, sin ejecutarlo. La versión
+    anterior lo corría de verdad desde la raíz del repo —un `git push --force
+    origin master` real en cada corrida de la suite y en el hook de cada commit—
+    suponiendo que "fallará por no ser repo", cuando el cwd sí era el repo."""
     monkeypatch.setenv("YUNTA_ALLOW_FORCE", "1")
-    # con YUNTA_ALLOW_FORCE=1 no se bloquea; ejecutará y fallará por no ser repo
-    out = _bash_cmd("git push --force origin master")
-    assert isinstance(out, str)
+    ran = []
+
+    def fake_run(cmd, **kwargs):
+        ran.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr("yunta.tools.bash.subprocess.run", fake_run)
+    _bash_cmd("git push --force origin master")
+    assert len(ran) == 1
+    assert "git push --force origin master" in ran[0]
 
 
 def test_blocklist_mkfs():

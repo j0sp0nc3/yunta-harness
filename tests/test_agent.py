@@ -32,7 +32,8 @@ def tool_call_blocks(messages):
     ]
 
 
-def test_loop_executes_tool_and_finishes(capsys):
+def test_loop_executes_tool_and_finishes(capsys, tmp_path):
+    (tmp_path / "README.md").write_text("# yunta\n", encoding="utf-8")  # no depender del README real
     p = FakeProvider(
         [
             Response(
@@ -408,15 +409,18 @@ def test_session_permissions_always_skips_same_pattern(monkeypatch):
     assert prompts2 == [], "no debió volver a preguntar para el mismo patrón"
 
 
-def test_session_permissions_pattern_is_per_first_token(monkeypatch):
-    """'siempre' aprueba la tool completa: un comando distinto NO vuelve a preguntar (V2.5.1)."""
+def test_session_permissions_siempre_approves_the_whole_tool(monkeypatch):
+    """'siempre' aprueba la tool completa: un comando distinto NO vuelve a preguntar (V2.5.1).
+    Antes se llamaba `..._pattern_is_per_first_token`: el nombre del
+    comportamiento ANTERIOR (permiso acotado al primer token), que este test ya
+    no verifica —verifica justo lo contrario."""
     agent, _ = _approval_scenario(monkeypatch, ["siempre"])
     assert agent.session_permissions.allowed("bash", "rm temporal.txt")
 
     p = FakeProvider(
         [
             Response(
-                content=[tool_use("2", "bash", '{"command":"curl http://x"}')],
+                content=[tool_use("2", "bash", '{"command":"echo otro-comando"}')],
                 stop_reason=StopReason.TOOL_USE,
             ),
             Response(content=[Block(type=BlockType.TEXT, text="ok")], stop_reason=StopReason.END_TURN),
@@ -425,7 +429,7 @@ def test_session_permissions_pattern_is_per_first_token(monkeypatch):
     prompts = []
     monkeypatch.setattr("builtins.input", lambda _p="": (prompts.append(_p), "s")[1])
     p2_agent = Agent(provider=p, system="s", auto_save=False, session_permissions=agent.session_permissions)
-    p2_agent.send("usa curl")
+    p2_agent.send("usa otro comando")
     assert prompts == [], "'siempre' debió aprobar cualquier comando de bash sin volver a preguntar"
 
 

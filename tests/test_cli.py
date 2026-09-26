@@ -77,18 +77,6 @@ def test_permissions_lists_empty_then_registered_pattern(monkeypatch, tmp_path, 
     # Secuencia: consultar vacío, salir. Luego un segundo REPL con permiso previo:
     # usamos un solo arranque: primero /permissions (vacío) y, tras inyectar un
     # permiso vía agente de la MISMA sesión, /permissions otra vez.
-    def run_with_inputs(inputs):
-        it = iter(inputs)
-
-        def fake_input(prompt=""):
-            try:
-                return next(it)
-            except StopIteration:
-                raise KeyboardInterrupt
-
-        monkeypatch.setattr("builtins.interaction_input_holder", None, raising=False)
-        monkeypatch.setattr("builtins.input", fake_input)
-
     # Arranque 1: /permissions sin permisos → vacío
     _run_repl(monkeypatch, captured, ["/permissions", "/exit"])
     out1 = capsys.readouterr().out

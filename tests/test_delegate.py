@@ -88,9 +88,10 @@ def test_no_subset_sends_all_definitions():
     assert set(p.tool_names()) == expected_names
 
 
-def test_subset_only_filters_definitions_not_execution():
+def test_subset_only_filters_definitions_not_execution(tmp_path):
     """La ejecución sigue siendo registry.get: una tool fuera del subset
     no se anuncia pero sí se ejecuta si el modelo la invoca."""
+    (tmp_path / "README.md").write_text("# yunta\n", encoding="utf-8")  # no depender del README real
     p = FakeProvider(read_file_then("ok"))
     a = Agent(provider=p, system="s", confirm=lambda n, d: True, tools=[registry.get("read_file")])
     a.send("x")

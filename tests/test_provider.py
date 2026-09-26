@@ -15,16 +15,8 @@ from yunta.provider import LiteLLMProvider  # noqa: E402
 from yunta.tools import registry  # noqa: E402
 
 
-@pytest.fixture(autouse=True)
-def _isolate_llm_call_telemetry(tmp_path, monkeypatch):
-    """V7-5 (2026-09-22): `LiteLLMProvider.send()` graba telemetría por
-    llamada a `.yunta/llm_calls.jsonl` — una ruta RELATIVA, o sea resuelta
-    contra el directorio de trabajo. Sin aislar, cada corrida de esta suite
-    escribía ~154 entradas sintéticas (out=10 tokens, elapsed≈0s) al archivo
-    real del repo, enterrando las llamadas reales que ese archivo existe
-    para medir. Mismo tipo de contaminación ya corregido para
-    `voice_health.jsonl` en v2.14.13."""
-    monkeypatch.chdir(tmp_path)
+# El aislamiento del cwd (telemetría `.yunta/llm_calls.jsonl`, v2.14.25) y del
+# entorno vive ahora en tests/conftest.py, para toda la suite.
 
 
 captured = {}
@@ -41,8 +33,11 @@ def fake_completion(**kwargs):
     )
 
 
-def setup_function(_):
-    litellm.completion = fake_completion
+@pytest.fixture(autouse=True)
+def _fake_completion(monkeypatch):
+    # Antes era `setup_function` con una asignación directa sin teardown: el
+    # fake quedaba instalado para todos los tests que corrían después.
+    monkeypatch.setattr(litellm, "completion", fake_completion)
 
 
 MSGS = [
@@ -152,11 +147,18 @@ def test_missing_model_fails_clearly():
     env["LLM_MODEL"] = ""
     env["LLM_MODELS"] = ""
     env["YUNTA_NO_DOTENV"] = "1"
-    r = subprocess.run(
-        [sys.executable, "-c", "from yunta.provider import LiteLLMProvider; LiteLLMProvider(system='s')"],
-        capture_output=True,
-        text=True,
-        env=env,
+    # El subproceso informa de dónde importó el provider antes de construirlo.
+    # Sin esta comprobación, en un worktree el test verificaba el yunta
+    # instalado (repo principal) y seguía pasando con la regla 2 rota.
+    code = (
+        "import sys, yunta.provider as p; "
+        "print(p.__file__, file=sys.stderr); "
+        "p.LiteLLMProvider(system='s')"
+    )
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env)
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    assert os.path.normcase(repo_root) in os.path.normcase(r.stderr), (
+        f"el subproceso importó otro yunta, no el de este checkout:\n{r.stderr[:300]}"
     )
     assert r.returncode != 0
     assert "LLM_MODEL" in r.stderr

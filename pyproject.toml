@@ -65,3 +65,12 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["yunta*"]
+
+[tool.pytest.ini_options]
+# Solo tests/: sin esto, `pytest` en la raíz (y `yunta check --tests`, que usa
+# el hook de pre-commit) recolectaba scratch/, no versionado, cuyo código de
+# módulo cargaba el .env real al importarse.
+testpaths = ["tests"]
+# Importar siempre el yunta de ESTE checkout y no el instalado en modo
+# editable, que apunta al repo principal (en un worktree se probaba otro código).
+pythonpath = ["."]
