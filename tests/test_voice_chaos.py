@@ -20,6 +20,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import pytest
+
 from yunta.api import Block, BlockType, Message, Role, Usage
 from yunta.agent import Agent, SessionPermissions
 from yunta.voice import (
@@ -255,15 +257,23 @@ class TestMarkdownCleanAdversarial:
             res = clean_markdown_for_speech(inp)
             assert isinstance(res, str)
 
-    def test_sentence_chunker_handles_floating_points_and_abbreviations(self):
-        """Verifica cómo se comporta el troceador ante abreviaciones como 'Dr.':
-        el punto provoca que 'El Dr.' se separe de 'Pérez'."""
-        text = "La version 2.7.5 de Yunta funciona bien. El Dr. Perez aprobo."
-        chunks = chunk_text_by_sentences(text)
-        # 'Dr.' provoca partición indeseada
-        assert "El Dr." in chunks, (
-            "El troceador separa 'El Dr.' como oración independiente debido al punto."
-        )
+    def test_sentence_chunker_keeps_version_numbers_intact(self):
+        """Los puntos de un número de versión no parten la oración."""
+        chunks = chunk_text_by_sentences("La version 2.7.5 de Yunta funciona bien. El Dr. Perez aprobo.")
+        assert chunks[0] == "La version 2.7.5 de Yunta funciona bien."
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="Bug conocido: el troceador corta tras abreviaturas ('El Dr.' | 'Perez aprobo.'), "
+        "y el TTS mete una pausa a mitad de oración. Si este test empieza a pasar, el bug "
+        "se arregló: quitar el xfail.",
+    )
+    def test_sentence_chunker_keeps_abbreviations_in_the_same_sentence(self):
+        """Antes este caso vivía en un test que EXIGÍA el corte ('El Dr.' como
+        oración aparte) bajo un nombre que prometía manejarlo bien: arreglar el
+        bug lo hacía fallar."""
+        chunks = chunk_text_by_sentences("La version 2.7.5 de Yunta funciona bien. El Dr. Perez aprobo.")
+        assert "El Dr. Perez aprobo." in chunks
 
 
 # ============================================================================

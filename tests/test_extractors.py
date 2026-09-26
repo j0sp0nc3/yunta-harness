@@ -35,7 +35,15 @@ def test_extract_ocr_graceful(tmp_path):
     assert "sample.png" in res
 
 
-def test_extract_url_graceful():
+def test_extract_url_routes_youtube_links_to_the_youtube_extractor(monkeypatch):
+    """Verifica el enrutamiento sin tocar la red. La versión anterior no podía
+    fallar (las tres salidas de la rama YouTube contienen "YouTube") y ejecutaba
+    yt-dlp real contra YouTube, que si fallaban los subtítulos intentaba bajar
+    el audio del video."""
+    def no_ytdlp(*args, **kwargs):
+        raise FileNotFoundError("yt-dlp no instalado")
+
+    monkeypatch.setattr("yunta.extractors.url.subprocess.run", no_ytdlp)
     res = extract_text_from_file("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
-    assert "YouTube" in res
+    assert res.startswith("### Video de YouTube")
 
