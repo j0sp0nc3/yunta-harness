@@ -197,3 +197,71 @@ def test_telemetry_recording_failure_does_not_break_transcription(tmp_path, monk
 
     result = chunker.transcribe_large_audio(str(tmp_path / "audio.mp3"))
     assert "texto ok" in result
+
+
+# ==================== V7-12: reintentos de nube ====================
+
+def test_cloud_retries_defaults_to_zero_when_not_passed(tmp_path):
+    path = tmp_path / "voice_health.jsonl"
+    record_voice_snapshot(
+        total_fragments=5, cloud_fragments=5, local_fragments=0,
+        errors_handled=0, breaker_trips=0, elapsed_secs=10.0,
+        audio_duration_secs=50.0, outcome="completed", path=path,
+    )
+    line = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+    assert line["cloud_retries"] == 0
+
+
+def test_record_and_aggregate_cloud_retries_roundtrip(tmp_path):
+    """Se SUMA (conteo de eventos, como errors_handled/breaker_trips), no se
+    promedia; el ratio por fragmento es lo comparable entre corridas, porque
+    el mismo audio se partió en 189 y en 214 fragmentos en dos corridas."""
+    path = tmp_path / "voice_health.jsonl"
+    record_voice_snapshot(
+        total_fragments=214, cloud_fragments=214, local_fragments=0,
+        errors_handled=0, breaker_trips=0, elapsed_secs=384.9,
+        audio_duration_secs=4906.7, outcome="completed", cloud_retries=7, path=path,
+    )
+    record_voice_snapshot(
+        total_fragments=189, cloud_fragments=189, local_fragments=0,
+        errors_handled=0, breaker_trips=0, elapsed_secs=319.6,
+        audio_duration_secs=4906.7, outcome="completed", cloud_retries=3, path=path,
+    )
+
+    first = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+    assert first["cloud_retries"] == 7
+
+    stats = aggregate_voice(path)
+    assert stats["total_cloud_retries"] == 10
+    assert stats["retries_per_fragment"] == round(10 / 403, 4)
+    assert stats["total_errors_handled"] == 0, "reintentos y fallbacks no se mezclan"
+
+
+def test_aggregate_voice_tolerates_snapshots_without_cloud_retries(tmp_path):
+    """Guarda de los 26 snapshots ya en disco (anteriores a V7-12). Aportan 0,
+    que para ellos significa "no medido", NO "no hubo reintentos"."""
+    path = tmp_path / "voice_health.jsonl"
+    old_snapshot = {
+        "timestamp": 1.0, "total_fragments": 189, "cloud_fragments": 189,
+        "local_fragments": 0, "errors_handled": 0, "breaker_trips": 0,
+        "elapsed_secs": 319.6, "audio_duration_secs": 4906.7, "rtf": 15.35,
+        "outcome": "completed", "network_wait_p50": 2.84, "hallucinations_filtered": 0,
+    }
+    path.write_text(json.dumps(old_snapshot) + "\n", encoding="utf-8")
+
+    stats = aggregate_voice(path)
+
+    assert stats["sessions"] == 1
+    assert stats["total_cloud_retries"] == 0
+    assert stats["retries_per_fragment"] == 0.0
+
+
+def test_aggregate_voice_retries_per_fragment_without_fragments_is_zero(tmp_path):
+    """Sin fragmentos no hay división por cero."""
+    path = tmp_path / "voice_health.jsonl"
+    record_voice_snapshot(
+        total_fragments=0, cloud_fragments=0, local_fragments=0,
+        errors_handled=0, breaker_trips=0, elapsed_secs=1.0,
+        audio_duration_secs=0.0, outcome="partial", cloud_retries=0, path=path,
+    )
+    assert aggregate_voice(path)["retries_per_fragment"] == 0.0

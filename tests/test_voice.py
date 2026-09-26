@@ -1924,3 +1924,298 @@ def test_multithreading_http_connection_isolation():
     assert len(connections) == 2
     assert connections[0] is not connections[1]
 
+
+
+# ==================== V7-12: telemetría de reintentos de nube ====================
+#
+# Motivación medida (2026-09-24, 214 fragmentos, W=4, keep-alive): el snapshot
+# registró `errors_handled: 0` mientras stdout mostraba 7 errores reales que se
+# reintentaron con éxito (4× HTTP 500, 3× TimeoutError). `errors_handled` solo
+# cuenta abandonos totales (fallback a local); un reintento exitoso no dejaba
+# rastro. `cloud_retries` cuenta los round-trips extra pagados.
+
+def _retry_transcriber(monkeypatch, outcomes):
+    """Transcriber cuyo `_post_transcription` recorre `outcomes` en orden: una
+    excepción se lanza, un str se devuelve. Backoff y jitter neutralizados."""
+    transcriber = AudioTranscriber(api_base="http://fake-endpoint.test/v1")
+    monkeypatch.setattr("yunta.voice.time.sleep", lambda s: None)
+    monkeypatch.setattr("yunta.voice.random.uniform", lambda a, b: 0.0)
+    monkeypatch.setattr(transcriber, "transcribe_offline_local", lambda p: "")
+    calls = {"n": 0}
+
+    def fake_post(path, prompt=""):
+        outcome = outcomes[calls["n"]]
+        calls["n"] += 1
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(transcriber, "_post_transcription", fake_post)
+    return transcriber, calls
+
+
+def test_transcribe_with_meta_counts_retries_that_eventually_succeeded(monkeypatch, tmp_path):
+    """Test cabecera de V7-12: es exactamente el escenario que la corrida real
+    del 2026-09-24 dejó invisible — la nube falla, se reintenta, y termina bien."""
+    from yunta.voice import _TranscribeError
+
+    transcriber, calls = _retry_transcriber(monkeypatch, [
+        _TranscribeError("HTTP 500: 8006", 500, "8006: invalid data"),
+        _TranscribeError("TimeoutError: timed out", None, ""),
+        "texto recuperado",
+    ])
+    f = tmp_path / "a.mp3"
+    f.write_bytes(b"x" * 100)
+
+    text, meta = transcriber.transcribe_with_meta(str(f))
+
+    assert text == "texto recuperado"
+    assert calls["n"] == 3
+    assert meta["cloud_retries"] == 2
+    assert meta["source"] == "cloud"
+    assert meta["cloud_failed"] is False, "terminó bien: no es un fallback"
+
+
+def test_transcribe_with_meta_reports_zero_retries_on_first_try_success(monkeypatch, tmp_path):
+    transcriber, _ = _retry_transcriber(monkeypatch, ["ok"])
+    f = tmp_path / "a.mp3"
+    f.write_bytes(b"x" * 100)
+
+    _, meta = transcriber.transcribe_with_meta(str(f))
+
+    assert meta["cloud_retries"] == 0
+
+
+def test_transcribe_with_meta_counts_retries_when_cloud_finally_gives_up(monkeypatch, tmp_path):
+    """Invariante de no-doble-conteo: 3 intentos fallidos son 2 reintentos, no 3.
+    El tercer intento —el que se rinde— ya lo cuenta `errors_handled` vía
+    `cloud_failed`; contarlo también acá describiría el mismo evento dos veces."""
+    from yunta.voice import _TranscribeError
+
+    transcriber, calls = _retry_transcriber(monkeypatch, [
+        _TranscribeError("HTTP 503", 503, "unavailable"),
+        _TranscribeError("HTTP 503", 503, "unavailable"),
+        _TranscribeError("HTTP 503", 503, "unavailable"),
+    ])
+    f = tmp_path / "a.mp3"
+    f.write_bytes(b"x" * 100)
+
+    _, meta = transcriber.transcribe_with_meta(str(f))
+
+    assert calls["n"] == 3
+    assert meta["cloud_retries"] == 2
+    assert meta["cloud_failed"] is True
+
+
+def test_skip_cloud_meta_reports_zero_retries(monkeypatch, tmp_path):
+    """Con el breaker abierto (`skip_cloud=True`) la red nunca se toca."""
+    transcriber, calls = _retry_transcriber(monkeypatch, [])
+    f = tmp_path / "a.mp3"
+    f.write_bytes(b"x" * 100)
+
+    _, meta = transcriber.transcribe_with_meta(str(f), skip_cloud=True)
+
+    assert calls["n"] == 0
+    assert meta["cloud_retries"] == 0
+    assert meta["cloud_attempted"] is False
+
+
+def test_non_retryable_error_does_not_count_as_retry(monkeypatch, tmp_path):
+    """Un 400 no es reintentable: se rinde al primer intento, sin round-trip extra."""
+    from yunta.voice import _TranscribeError
+
+    transcriber, calls = _retry_transcriber(monkeypatch, [
+        _TranscribeError("HTTP 400: bad request", 400, "bad request"),
+    ])
+    f = tmp_path / "a.mp3"
+    f.write_bytes(b"x" * 100)
+
+    _, meta = transcriber.transcribe_with_meta(str(f))
+
+    assert calls["n"] == 1
+    assert meta["cloud_retries"] == 0
+    assert meta["cloud_failed"] is True
+
+
+def test_record_telemetry_accumulates_cloud_retries():
+    chunker = AudioChunker(AudioTranscriber())
+    chunker._record_telemetry({"source": "cloud", "cloud_retries": 2})
+    chunker._record_telemetry({"source": "cloud", "cloud_retries": 1})
+    chunker._record_telemetry({"source": "cloud", "cloud_retries": 0})
+
+    assert chunker._telem_cloud_retries == 3
+
+
+def test_record_telemetry_tolerates_meta_without_cloud_retries():
+    """Metas viejas (y las que muchos tests construyen a mano) no traen la
+    clave: el contador queda en 0 y el resto de la telemetría sigue igual."""
+    chunker = AudioChunker(AudioTranscriber())
+    chunker._record_telemetry({"source": "cloud", "cloud_attempted": True, "cloud_failed": False})
+
+    assert chunker._telem_cloud_retries == 0
+    assert chunker._telem_cloud == 1
+
+
+def _retrying_meta_transcriber(retries_per_chunk):
+    class MetaTranscriber(AudioTranscriber):
+        def transcribe_with_meta(self, file_path, prompt="", skip_cloud=False):
+            return "ok", {
+                "source": "cloud", "cloud_attempted": True, "cloud_failed": False,
+                "cloud_retries": retries_per_chunk,
+            }
+    return MetaTranscriber()
+
+
+def test_transcribe_large_audio_passes_cloud_retries_to_telemetry(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("VOICE_PARALLEL_WORKERS", raising=False)
+    chunks = [str(tmp_path / f"c{i}.mp3") for i in range(3)]
+    for c in chunks:
+        Path(c).write_bytes(b"\xff\xfb\x90\x00" + b"x" * 512)
+
+    chunker = AudioChunker(_retrying_meta_transcriber(2))
+    chunker.split_audio_by_silence = lambda fp, *a, **k: chunks
+    recorded = MagicMock()
+    monkeypatch.setattr("yunta.voice_telemetry.record_voice_snapshot", recorded)
+
+    chunker.transcribe_large_audio("audio.mp3")
+
+    _, kwargs = recorded.call_args
+    assert kwargs["cloud_retries"] == 6
+    assert kwargs["errors_handled"] == 0, "reintentos exitosos no son fallbacks"
+
+
+def test_cloud_retries_counted_from_parallel_workers(tmp_path, monkeypatch):
+    """Guarda de thread-safety: `_record_telemetry` corre en los hilos worker.
+    Si el incremento saliera de `_state_lock`, este conteo podría perder
+    actualizaciones bajo contención."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("VOICE_PARALLEL_WORKERS", "4")
+    chunks = [str(tmp_path / f"c{i}.mp3") for i in range(24)]
+    for c in chunks:
+        Path(c).write_bytes(b"\xff\xfb\x90\x00" + b"x" * 512)
+
+    chunker = AudioChunker(_retrying_meta_transcriber(1))
+    chunker.split_audio_by_silence = lambda fp, *a, **k: chunks
+    recorded = MagicMock()
+    monkeypatch.setattr("yunta.voice_telemetry.record_voice_snapshot", recorded)
+
+    chunker.transcribe_large_audio("audio.mp3")
+
+    _, kwargs = recorded.call_args
+    assert kwargs["workers_used"] == 4
+    assert kwargs["cloud_retries"] == 24
+
+
+# ==================== V7-13: cuerpo 2xx ilegible en la rama keep-alive ====================
+#
+# `json.loads(resp_body)` estaba fuera de todo try/except: un 2xx con cuerpo no-JSON
+# lanzaba un `json.JSONDecodeError` que el `except _TranscribeError` del bucle de
+# reintentos no atrapaba, y mataba la transcripción entera. Es la rama de producción
+# (`VOICE_REUSE_CONNECTION=1`).
+
+def _keepalive_transcriber(monkeypatch, bodies):
+    monkeypatch.setenv("VOICE_REUSE_CONNECTION", "1")
+    transcriber = AudioTranscriber(api_base="https://api.example.com/v1")
+    calls = {"n": 0}
+
+    def fake_reuse(endpoint, payload, headers, timeout):
+        body = bodies[calls["n"]]
+        calls["n"] += 1
+        return body
+
+    monkeypatch.setattr(transcriber, "_post_multipart_reuse", fake_reuse)
+    return transcriber, calls
+
+
+def test_post_transcription_reuse_non_json_body_raises_retryable_transcribe_error(monkeypatch, tmp_path):
+    from yunta.voice import _TranscribeError
+
+    transcriber, _ = _keepalive_transcriber(monkeypatch, ["<html>502 Bad Gateway</html>"])
+    f = tmp_path / "chunk.mp3"
+    f.write_bytes(b"audio-content")
+
+    with pytest.raises(_TranscribeError) as exc_info:
+        transcriber._post_transcription(f)
+
+    assert exc_info.value.retryable is True
+    assert exc_info.value.too_large is False
+    assert "502 Bad Gateway" in str(exc_info.value), "el operador debe ver qué devolvió"
+
+
+def test_post_transcription_reuse_non_dict_json_raises_transcribe_error(monkeypatch, tmp_path):
+    """JSON válido que no es objeto: `json.loads("null")` → None, y el `.get`
+    siguiente revienta con AttributeError. También debe ser reintentable."""
+    from yunta.voice import _TranscribeError
+
+    transcriber, _ = _keepalive_transcriber(monkeypatch, ["null"])
+    f = tmp_path / "chunk.mp3"
+    f.write_bytes(b"audio-content")
+
+    with pytest.raises(_TranscribeError) as exc_info:
+        transcriber._post_transcription(f)
+
+    assert exc_info.value.retryable is True
+
+
+def test_malformed_reuse_body_is_retried_not_fatal(monkeypatch, tmp_path):
+    """Prueba de integración: el test que habría atrapado el crash original.
+    Basura una vez, luego JSON válido ⇒ un reintento, no una corrida muerta."""
+    monkeypatch.setattr("yunta.voice.time.sleep", lambda s: None)
+    monkeypatch.setattr("yunta.voice.random.uniform", lambda a, b: 0.0)
+    transcriber, calls = _keepalive_transcriber(monkeypatch, [
+        "<html>cloudflare edge error</html>",
+        '{"text": "recuperado tras basura"}',
+    ])
+    f = tmp_path / "chunk.mp3"
+    f.write_bytes(b"audio-content")
+
+    text, meta = transcriber.transcribe_with_meta(str(f))
+
+    assert text == "recuperado tras basura"
+    assert calls["n"] == 2
+    assert meta["cloud_retries"] == 1
+    assert meta["source"] == "cloud"
+
+
+def test_malformed_reuse_body_with_3006_is_not_classified_as_too_large(monkeypatch, tmp_path):
+    """`_TranscribeError` deriva `too_large` de "3006" en `detail`. Si el cuerpo
+    ilegible se pasara como `detail`, una página de error que casualmente
+    contenga "3006" mandaría el fragmento a re-fragmentación en vez de
+    reintentarlo. Guarda la decisión de `detail=""`, fácil de deshacer
+    "arreglándola" más adelante."""
+    from yunta.voice import _TranscribeError
+
+    transcriber, _ = _keepalive_transcriber(monkeypatch, ["<html>ray id 3006-abc</html>"])
+    f = tmp_path / "chunk.mp3"
+    f.write_bytes(b"audio-content")
+
+    with pytest.raises(_TranscribeError) as exc_info:
+        transcriber._post_transcription(f)
+
+    assert exc_info.value.too_large is False
+    assert exc_info.value.retryable is True
+
+
+def test_cloud_retries_reach_the_real_telemetry_file(tmp_path, monkeypatch):
+    """Integración SIN mockear `record_voice_snapshot`. Los tests de arriba lo
+    reemplazan por un MagicMock, que acepta cualquier kwarg: no detectarían
+    que la función real no conoce `cloud_retries`. En ese caso la llamada
+    lanzaría TypeError, el `except Exception: pass` de `transcribe_large_audio`
+    se lo tragaría, y se perdería TODA la telemetría de voz sin un aviso."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("VOICE_PARALLEL_WORKERS", raising=False)
+    chunks = [str(tmp_path / f"c{i}.mp3") for i in range(3)]
+    for c in chunks:
+        Path(c).write_bytes(b"\xff\xfb\x90\x00" + b"x" * 512)
+
+    chunker = AudioChunker(_retrying_meta_transcriber(1))
+    chunker.split_audio_by_silence = lambda fp, *a, **k: chunks
+
+    chunker.transcribe_large_audio("audio.mp3")
+
+    health = tmp_path / ".yunta" / "voice_health.jsonl"
+    assert health.exists(), "el snapshot no se escribió: la telemetría se perdió en silencio"
+    snap = json.loads(health.read_text(encoding="utf-8").splitlines()[-1])
+    assert snap["cloud_retries"] == 3
+    assert snap["total_fragments"] == 3

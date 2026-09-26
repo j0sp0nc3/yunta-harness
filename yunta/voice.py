@@ -419,6 +419,12 @@ class AudioTranscriber:
         # cliente es lento", no una contabilidad perfecta de cada micro-etapa.
         method_start = time.monotonic()
         network_wait = 0.0
+        # V7-12 (2026-09-25): round-trips extra pagados por este fragmento. Se
+        # suma SOLO donde un reintento está garantizado (antes del sleep del
+        # backoff), nunca en el intento final que se rinde: ese ya lo cuenta
+        # `errors_handled` vía `cloud_failed`, y contarlo acá describiría el
+        # mismo evento dos veces.
+        retries = 0
 
         def _meta(source: str, cloud_attempted: bool, cloud_failed: bool, hallucination_filtered: bool = False) -> dict:
             return {
@@ -428,6 +434,7 @@ class AudioTranscriber:
                 "network_wait_secs": network_wait,
                 "total_secs": time.monotonic() - method_start,
                 "hallucination_filtered": hallucination_filtered,
+                "cloud_retries": retries,
             }
 
         # V7-6 (2026-09-22): detecta si `_clean_transcription` descartó el
@@ -498,6 +505,7 @@ class AudioTranscriber:
                         base = float(os.environ.get("VOICE_BACKOFF_BASE", "1.0")) * (2 ** attempt)
                         wait = min(base + random.uniform(0, base), cap)
                     print(f"⚠️ {err}. Reintentando en {wait:.1f}s (intento {attempt + 2}/3)...")
+                    retries += 1
                     time.sleep(wait)
                     continue
                 break
@@ -564,10 +572,25 @@ class AudioTranscriber:
             if self.api_key:
                 headers["Authorization"] = f"Bearer {self.api_key}"
             resp_body = self._post_multipart_reuse(endpoint, payload, headers, timeout)
-            data = json.loads(resp_body)
-            text = data.get("text")
-            if text is None and isinstance(data.get("result"), dict):
-                text = data.get("result", {}).get("text")
+            try:
+                data = json.loads(resp_body)
+                text = data.get("text")
+                if text is None and isinstance(data.get("result"), dict):
+                    text = data.get("result", {}).get("text")
+            except (ValueError, AttributeError, TypeError) as err:
+                # V7-13 (2026-09-25): un 2xx con cuerpo ilegible (página de
+                # error HTML de un proxy de borde, respuesta truncada, JSON que
+                # no es objeto) era un error crudo que escapaba del
+                # `except _TranscribeError` del bucle de reintentos y mataba la
+                # transcripción entera. Ahora es reintentable, como en la rama
+                # urlopen. `detail=""` a propósito: `_TranscribeError` deriva
+                # `too_large` de "3006" en `detail`, y un cuerpo basura que lo
+                # contenga por azar mandaría el fragmento a re-fragmentación en
+                # vez de reintentarlo. El cuerpo igual llega por el mensaje.
+                raise _TranscribeError(
+                    f"Respuesta 2xx ilegible del endpoint ({type(err).__name__}): {resp_body[:200]}",
+                    None, "",
+                ) from err
             return (text or "").strip()
 
         req = urllib.request.Request(endpoint, data=payload, method="POST")
@@ -1011,11 +1034,19 @@ class AudioChunker:
         self._cb_tripped_count = 0  # telemetría (Fase 3)
         # Telemetría (Fase 3, 2026-09-20): contadores agregados por
         # transcripción, grabados a .yunta/voice_health.jsonl al terminar
-        # (ver yunta/voice_telemetry.py). errors_handled cuenta FRAGMENTOS
-        # con al menos un error de nube manejado, no reintentos individuales.
+        # (ver yunta/voice_telemetry.py). `_telem_errors` (→ errors_handled)
+        # cuenta fragmentos en los que la nube se RINDIÓ y se cayó a Whisper
+        # local — no errores reintentados con éxito. (Corregido 2026-09-25:
+        # este comentario afirmaba lo contrario, y una corrida real con 7
+        # errores reintentados registró errors_handled: 0.)
         self._telem_cloud = 0
         self._telem_local = 0
         self._telem_errors = 0
+        # V7-12 (2026-09-25): reintentos de nube, incluidos los que terminaron
+        # bien. Alarma distinta de `_telem_errors`: un fallback degrada la
+        # calidad del fragmento; un reintento exitoso solo cuesta tiempo y
+        # llamadas, con salida idéntica.
+        self._telem_cloud_retries = 0
         # V7-2 (2026-09-22): tiempo de espera de red (network_wait, dentro de
         # `_post_transcription`) separado del resto de `transcribe_with_meta`
         # (processing) por fragmento — convierte en dato medible la anomalía
@@ -1076,6 +1107,7 @@ class AudioChunker:
                 self._telem_local += 1
             if meta.get("cloud_attempted") and meta.get("cloud_failed"):
                 self._telem_errors += 1
+            self._telem_cloud_retries += int(meta.get("cloud_retries", 0) or 0)
             network_wait = meta.get("network_wait_secs")
             total = meta.get("total_secs")
             if network_wait is not None and total is not None:
@@ -1166,6 +1198,10 @@ class AudioChunker:
                 cloud_fragments=self._telem_cloud,
                 local_fragments=self._telem_local,
                 errors_handled=self._telem_errors,
+                # Lectura sin lock correcta: el camino paralelo hace
+                # `executor.shutdown(wait=True)` antes de llegar acá, y el join
+                # de los workers establece happens-before con sus escrituras.
+                cloud_retries=self._telem_cloud_retries,
                 network_wait_p50=percentile(self._telem_network_wait, 50),
                 network_wait_p95=percentile(self._telem_network_wait, 95),
                 network_wait_max=max(self._telem_network_wait, default=0.0),

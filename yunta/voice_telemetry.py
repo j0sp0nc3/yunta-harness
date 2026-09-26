@@ -60,6 +60,14 @@ class VoiceSnapshot:
     # relleno conocida de Whisper (V6-4) — antes no había forma de saber si
     # ese filtro ayudó en una corrida real.
     hallucinations_filtered: int = 0
+    # V7-12 (2026-09-25): reintentos de nube, incluidos los que terminaron
+    # bien. `errors_handled` solo cuenta fallbacks a Whisper local, así que una
+    # corrida real con 7 errores reintentados con éxito registró 0 errores.
+    # Snapshots anteriores a este campo leen 0, que para ELLOS significa "no
+    # medido", no "no hubo reintentos": en al menos dos corridas previas sí
+    # los hubo (se ven como outliers de `processing_max`, porque el sleep del
+    # backoff cae fuera de `network_wait`).
+    cloud_retries: int = 0
 
 
 def record_voice_snapshot(
@@ -79,6 +87,7 @@ def record_voice_snapshot(
     processing_max: float = 0.0,
     workers_used: int = 1,
     hallucinations_filtered: int = 0,
+    cloud_retries: int = 0,
     path: Path | str = DEFAULT_VOICE_HEALTH_PATH,
 ) -> None:
     """Append-only: una snapshot JSON por transcripción de audio grande."""
@@ -102,6 +111,7 @@ def record_voice_snapshot(
         processing_max=processing_max,
         workers_used=workers_used,
         hallucinations_filtered=hallucinations_filtered,
+        cloud_retries=cloud_retries,
     )
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -142,11 +152,13 @@ def aggregate_voice(path: Path | str = DEFAULT_VOICE_HEALTH_PATH, limit: int | N
     total_errors = sum(s.get("errors_handled", 0) for s in snapshots)
     total_trips = sum(s.get("breaker_trips", 0) for s in snapshots)
     total_hallucinations_filtered = sum(s.get("hallucinations_filtered", 0) for s in snapshots)
+    total_cloud_retries = sum(s.get("cloud_retries", 0) for s in snapshots)
     avg_rtf = sum(s.get("rtf", 0.0) for s in snapshots) / n
 
     cloud_ratio = (total_cloud / total_fragments) if total_fragments else 0.0
     errors_per_fragment = (total_errors / total_fragments) if total_fragments else 0.0
     hallucinations_per_fragment = (total_hallucinations_filtered / total_fragments) if total_fragments else 0.0
+    retries_per_fragment = (total_cloud_retries / total_fragments) if total_fragments else 0.0
 
     # V7-2: promedio entre sesiones de los percentiles ya calculados por
     # sesión (no se guardan los tiempos crudos por fragmento en el JSONL,
@@ -177,4 +189,6 @@ def aggregate_voice(path: Path | str = DEFAULT_VOICE_HEALTH_PATH, limit: int | N
         "avg_processing_p50": round(avg_processing_p50, 3),
         "avg_processing_p95": round(avg_processing_p95, 3),
         "max_processing": round(max_processing, 3),
+        "total_cloud_retries": total_cloud_retries,
+        "retries_per_fragment": round(retries_per_fragment, 4),
     }

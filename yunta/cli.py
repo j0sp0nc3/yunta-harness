@@ -367,7 +367,7 @@ def run_health(as_json: bool = False, voice: bool = False) -> None:
         print(f"│ 🎙️  Transcripciones registradas:        {stats['sessions']:>6}               │")
         print(f"│ 📦 Fragmentos totales (acumulado):      {stats['total_fragments']:>10,}          │")
         print(f"│ ☁️  Proporción nube/total:               {stats['cloud_ratio']:>6.1%}              │")
-        print(f"│ ⚠️  Errores manejados por fragmento:     {stats['errors_per_fragment']:>6.2f}              │")
+        print(f"│ ⚠️  Fallback a local por fragmento:      {stats['errors_per_fragment']:>6.2f}              │")
         print(f"│ 🔌 Disparos de circuit breaker:         {stats['total_breaker_trips']:>6}               │")
         print(f"│ ⏱️  RTF promedio (>1 = más rápido que tiempo real): {stats['avg_rtf']:>6.2f}x     │")
         # V7-2 (2026-09-22): desglose red vs procesamiento por fragmento —
@@ -376,6 +376,9 @@ def run_health(as_json: bool = False, voice: bool = False) -> None:
         print(f"│ ⚙️  Procesamiento p50/p95/max (seg): {stats.get('avg_processing_p50', 0.0):>5.2f}/{stats.get('avg_processing_p95', 0.0):>5.2f}/{stats.get('max_processing', 0.0):>5.2f}   │")
         # V7-6 (2026-09-22): 0.0 en sesiones registradas antes de esta fase.
         print(f"│ 🗑️  Fragmentos descartados (alucinación): {stats.get('total_hallucinations_filtered', 0):>6}             │")
+        # V7-12 (2026-09-25): reintentos de nube que SÍ terminaron bien, hasta
+        # ahora invisibles. 0.0 en sesiones anteriores = no medido, no "cero".
+        print(f"│ 🔁 Reintentos de nube por fragmento:    {stats.get('retries_per_fragment', 0.0):>6.2f}              │")
         print("└────────────────────────────────────────────────────────┘\n")
         return
 
